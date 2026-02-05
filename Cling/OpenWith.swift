@@ -30,6 +30,7 @@ struct OpenWithPickerView: View {
     @State private var fuzzy: FuzzyClient = FUZZY
 
     func openWithApp(_ app: URL) {
+        RH.trackRun(fileURLs.compactMap(\.existingFilePath))
         NSWorkspace.shared.open(
             fileURLs, withApplicationAt: app, configuration: .init(),
             completionHandler: { _, _ in }
@@ -75,6 +76,7 @@ struct OpenWithActionButtons: View {
     var buttons: some View {
         ForEach(fuzzy.openWithAppShortcuts.sorted(by: \.key.lastPathComponent), id: \.0.path) { app, key in
             Button(action: {
+                RH.trackRun(selectedResults)
                 NSWorkspace.shared.open(selectedResults.map(\.url), withApplicationAt: app, configuration: .init(), completionHandler: { _, _ in })
             }) {
                 HStack(spacing: 0) {
@@ -83,7 +85,7 @@ struct OpenWithActionButtons: View {
                 }
             }
         }
-        .buttonStyle(BorderlessTextButton(color: .fg.warm.opacity(0.8)))
+        .buttonStyle(.borderlessText(color: .fg.warm.opacity(0.8)))
     }
 
     var body: some View {
@@ -112,11 +114,11 @@ struct OpenWithActionButtons: View {
                 Divider().frame(height: 16)
                 ShareButton(urls: selectedResults.map(\.url))
                     .bold()
-                    .buttonStyle(BorderlessTextButton())
+                    .buttonStyle(.borderlessText)
             }
         }
         .font(.system(size: 10))
-        .buttonStyle(TextButton(color: .fg.warm.opacity(0.9)))
+        .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
         .lineLimit(1)
     }
 

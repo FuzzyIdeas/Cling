@@ -19,7 +19,7 @@ class AppManager {
         guard let name = lastFrontmostApp?.name else {
             return false
         }
-        return name.contains(/tty|term/)
+        return name.contains(/tty|term/.ignoresCase())
     }
 
     var lastFrontmostApp: NSRunningApplication? {

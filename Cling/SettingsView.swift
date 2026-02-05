@@ -2,6 +2,7 @@ import Defaults
 import LaunchAtLogin
 import Lowtech
 import LowtechIndie
+import LowtechPro
 import SwiftUI
 
 extension Binding<Int> {
@@ -21,13 +22,17 @@ struct SettingsView: View {
     @Default(.checkForUpdates) private var checkForUpdates
     @Default(.updateCheckInterval) private var updateCheckInterval
     @Default(.showWindowAtLaunch) private var showWindowAtLaunch
+    @Default(.showDockIcon) private var showDockIcon
     @Default(.keepWindowOpenWhenDefocused) private var keepWindowOpenWhenDefocused
+    @Default(.defaultResultsMode) private var defaultResultsMode
+    @Default(.windowAppearance) private var windowAppearance
+    @Default(.blockedPrefixes) private var blockedPrefixes
+    @Default(.blockedContains) private var blockedContains
     @Default(.maxResultsCount) private var maxResultsCount
     @Default(.enableGlobalHotkey) private var enableGlobalHotkey
     @Default(.showAppKey) private var showAppKey
     @Default(.triggerKeys) private var triggerKeys
     @Default(.searchScopes) private var searchScopes
-    @Default(.fasterSearchLessOptimalResults) private var fasterSearchLessOptimalResults
     @Default(.externalVolumes) private var externalVolumes
 
     private func selectApp(type: String, onCompletion: @escaping (URL) -> Void) {
@@ -42,13 +47,18 @@ struct SettingsView: View {
         }
     }
 
-    @State private var showShellAlert = false
-    @State private var shellIntegrationMessage = ""
+    @State private var showCLIAlert = false
+    @State private var cliInstallMessage = ""
+    @State private var cliInstallSuccess = false
     @EnvironmentObject var env: EnvState
 
     var body: some View {
         Form {
             LaunchAtLogin.Toggle()
+            Toggle("Show Dock icon", isOn: $showDockIcon)
+                .onChange(of: showDockIcon) {
+                    NSApp.setActivationPolicy(showDockIcon ? .regular : .accessory)
+                }
 
             HStack {
                 (
@@ -76,22 +86,47 @@ struct SettingsView: View {
                     }
                 }.truncationMode(.middle)
             }
-
             HStack {
                 (
-                    Text("Shell Integration")
-                        + Text("\nIntegrates Cling with your shell as a `cling` function")
+                    Text("Shelf app")
+                        + Text("\nUsed for shelving files with ⌘F (e.g. Yoink, Dropover)")
                         .round(11, weight: .regular).foregroundColor(.secondary)
                 ).fixedSize()
                 Spacer()
-                Button("Install") {
-                    shellIntegrationMessage = ShellIntegration.addClingFunction()
-                    showShellAlert = true
+                Button(shelfApp.filePath?.stem ?? "None") {
+                    selectApp(type: "Shelf") { url in
+                        shelfApp = url.path
+                    }
+                }.truncationMode(.middle)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    (
+                        Text("Command Line Tool")
+                            + Text("\nInstalls `cling` to ~/.local/bin/ for searching from the terminal")
+                            .round(11, weight: .regular).foregroundColor(.secondary)
+                    ).fixedSize()
+                    Spacer()
+                    Button(CLING_CLI_LINK.exists ? "Reinstall" : "Install") {
+                        cliInstallMessage = ShellIntegration.installCLI()
+                        cliInstallSuccess = CLING_CLI_LINK.exists
+                        showCLIAlert = true
+                    }
+                    .truncationMode(.middle)
                 }
-                .truncationMode(.middle)
-                .alert("Shell Integration", isPresented: $showShellAlert, actions: {}) {
-                    Text(shellIntegrationMessage)
+                if CLING_CLI_LINK.exists {
+                    Text("Installed at \(CLING_CLI_LINK.shellString)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
                 }
+            }
+            .alert(
+                cliInstallSuccess ? "CLI Installed" : "Installation Failed",
+                isPresented: $showCLIAlert,
+                actions: {}
+            ) {
+                Text(cliInstallMessage)
             }
 
             Toggle(isOn: $showWindowAtLaunch) {
@@ -104,7 +139,39 @@ struct SettingsView: View {
             Toggle(isOn: $keepWindowOpenWhenDefocused) {
                 (
                     Text("Keep window open when the app is in background")
-                        + Text("\nDon't hide the window when clicking outside the app or when focusing another app")
+                        + Text("\nDon't close, only hide the window when clicking outside the app")
+                        .round(11, weight: .regular).foregroundColor(.secondary)
+                ).fixedSize()
+            }
+            HStack {
+                Picker(selection: $defaultResultsMode) {
+                    ForEach(DefaultResultsMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                } label: {
+                    (
+                        Text("Default results")
+                            + Text("\nWhat to show when no query or filter is active")
+                            .round(11, weight: .regular).foregroundColor(.secondary)
+                    ).fixedSize()
+                }
+                if defaultResultsMode == .runHistory {
+                    Button("Reset") {
+                        RH.clearAll()
+                        FUZZY.updateDefaultResults()
+                    }
+                    .font(.system(size: 11))
+                }
+            }
+
+            Picker(selection: $windowAppearance) {
+                ForEach(WindowAppearance.allCases.filter(\.available), id: \.self) { appearance in
+                    Text(appearance.rawValue).tag(appearance)
+                }
+            } label: {
+                (
+                    Text("Window style")
+                        + Text("\nChoose the window background appearance")
                         .round(11, weight: .regular).foregroundColor(.secondary)
                 ).fixedSize()
             }
@@ -124,30 +191,41 @@ struct SettingsView: View {
             Section(header: Text("Search")) {
                 Section(header: Text("Search scopes")) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Toggle(isOn: SearchScope.root.binding) {
-                            (
-                                Text("System")
-                                    + Text("\nSearches system files and applications\nFolders: `/System`, `/Applications`, `/Library`, `/usr`, `/bin`, `/sbin`, `/opt`")
-                                    .font(.system(size: 11)).foregroundColor(.secondary)
-                            ).fixedSize()
-                        }
                         Toggle(isOn: SearchScope.home.binding) {
                             (
                                 Text("Home")
-                                    + Text("\nSearches the user home directory (`~`) excluding `~/Library`")
+                                    + Text("\nUser home directory (`~`) excluding `~/Library`")
+                                    .font(.system(size: 11)).foregroundColor(.secondary)
+                            ).fixedSize()
+                        }
+                        Toggle(isOn: SearchScope.applications.binding) {
+                            (
+                                Text("Applications")
+                                    + Text("\n`/Applications`, `/System/Applications`")
                                     .font(.system(size: 11)).foregroundColor(.secondary)
                             ).fixedSize()
                         }
                         Toggle(isOn: SearchScope.library.binding) {
-                            (
-                                Text("Library")
-                                    + Text("\nSearches the user library directory (`~/Library`)")
-                                    .font(.system(size: 11)).foregroundColor(.secondary)
-                            ).fixedSize()
-                        }
+                            VStack(alignment: .leading, spacing: 1) {
+                                HStack(spacing: 6) { Text("Library"); ProBadge() }
+                                Text("User library directory (`~/Library`)").font(.system(size: 11)).foregroundColor(.secondary)
+                            }.fixedSize()
+                        }.disabled(!proactive)
+                        Toggle(isOn: SearchScope.system.binding) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                HStack(spacing: 6) { Text("System"); ProBadge() }
+                                Text("`/System`").font(.system(size: 11)).foregroundColor(.secondary)
+                            }.fixedSize()
+                        }.disabled(!proactive)
+                        Toggle(isOn: SearchScope.root.binding) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                HStack(spacing: 6) { Text("Root"); ProBadge() }
+                                Text("`/usr`, `/bin`, `/sbin`, `/opt`, `/etc`, `/Library`, `/var`, `/private`").font(.system(size: 11)).foregroundColor(.secondary)
+                            }.fixedSize()
+                        }.disabled(!proactive)
 
                         Divider()
-                        VolumeListView()
+                        VolumeListView().disabled(!proactive)
                     }.padding(.leading, 10)
                 }
 
@@ -158,53 +236,118 @@ struct SettingsView: View {
                             .round(11, weight: .regular).foregroundColor(.secondary)
                     ).fixedSize()
                     Spacer()
-                    Slider(value: $maxResultsCount.d, in: 1 ... 100, step: 1) {
-                        Text("\(Int(maxResultsCount))")
-                    }.frame(width: 150)
-                }
-
-                HStack {
-                    (
-                        Text("Ignore File")
-                            + Text("\nUses gitignore syntax for excluding files from the index")
-                            .round(11, weight: .regular).foregroundColor(.secondary)
-                    ).fixedSize()
-                    Spacer()
-
-                    Button(action: { showHelp.toggle() }) {
-                        Image(systemName: "questionmark.circle").foregroundColor(.secondary)
-                    }
-                    .sheet(isPresented: $showHelp) {
-                        VStack(spacing: 5) {
-                            HStack {
-                                Button(action: { showHelp = false }) {
-                                    Image(systemName: "xmark")
-                                        .font(.heavy(7))
-                                        .foregroundColor(.bg.warm)
-                                }
-                                .buttonStyle(FlatButton(color: .fg.warm.opacity(0.6), circle: true, horizontalPadding: 5, verticalPadding: 5))
-                                .padding(.top, 8).padding(.leading, 8)
-                                Spacer()
+                    HStack(spacing: 8) {
+                        Picker("", selection: $maxResultsCount) {
+                            Text("100").tag(100)
+                            Text("500").tag(500)
+                            if proactive {
+                                Text("1000").tag(1000)
+                                Text("2000").tag(2000)
+                                Text("5000").tag(5000)
+                                Text("10000").tag(10000)
                             }
-
-                            IgnoreHelpText().padding()
                         }
-                        .frame(width: 500)
-                    }.buttonStyle(BorderlessTextButton())
-
-                    Button("Edit Ignore File") {
-                        NSWorkspace.shared.open([fsignore.url], withApplicationAt: editorApp.fileURL ?? "/Applications/TextEdit.app".fileURL!, configuration: .init(), completionHandler: { _, _ in })
-                    }.truncationMode(.middle)
+                        .frame(width: 120)
+                    }
                 }
 
-                Toggle(isOn: $fasterSearchLessOptimalResults) {
-                    (
-                        Text("Faster search, with less optimal results")
-                            + Text("\nUses a more speed oriented algorithm but may return less accurate results")
-                            .round(11, weight: .regular).foregroundColor(.secondary)
-                    ).fixedSize()
+            }
+
+            Section(header: Text("Index Exclusions")) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        (
+                            Text("Home Ignore File")
+                                + Text("\nUses gitignore syntax for excluding files from the index")
+                                .round(11, weight: .regular).foregroundColor(.secondary)
+                        ).fixedSize()
+                        Spacer()
+
+                        Button(action: { showHelp.toggle() }) {
+                            Image(systemName: "questionmark.circle").foregroundColor(.secondary)
+                        }
+                        .sheet(isPresented: $showHelp) {
+                            VStack(spacing: 5) {
+                                HStack {
+                                    Button(action: { showHelp = false }) {
+                                        Image(systemName: "xmark")
+                                            .font(.heavy(7))
+                                            .foregroundColor(.bg.warm)
+                                    }
+                                    .buttonStyle(FlatButton(color: .fg.warm.opacity(0.6), circle: true, horizontalPadding: 5, verticalPadding: 5))
+                                    .padding(.top, 8).padding(.leading, 8)
+                                    Spacer()
+                                }
+
+                                IgnoreHelpText().padding()
+                            }
+                            .frame(width: 500)
+                        }.buttonStyle(.borderlessText)
+                    }
+
+                    TextEditor(text: $fsignoreContent)
+                        .font(.system(size: 11, design: .monospaced))
+                        .frame(height: 200)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary, lineWidth: 0.5))
+                        .onChange(of: fsignoreContent) {
+                            fsignoreSaveTask?.cancel()
+                            fsignoreSaveTask = DispatchWorkItem { [fsignoreContent] in
+                                FUZZY.fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 5
+                                try? fsignoreContent.write(to: fsignore.url, atomically: true, encoding: .utf8)
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: fsignoreSaveTask!)
+                        }
+
+                    HStack {
+                        Button("Apply & Reindex") {
+                            fsignoreSaveTask?.cancel()
+                            FUZZY.fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 5
+                            try? fsignoreContent.write(to: fsignore.url, atomically: true, encoding: .utf8)
+                            FUZZY.refresh(pauseSearch: false, scopes: [.home, .library])
+                        }
+                        .disabled(fuzzy.backgroundIndexing)
+                        .help("Save the ignore file and reindex Home and Library scopes")
+                        Spacer()
+                        Button("Edit Ignore File") {
+                            NSWorkspace.shared.open([fsignore.url], withApplicationAt: editorApp.fileURL ?? "/Applications/TextEdit.app".fileURL!, configuration: .init(), completionHandler: { _, _ in })
+                        }.truncationMode(.middle)
+                    }
                 }
 
+                Section(header: Text("Global Blocklist")) {
+                    Text("Applied on all scopes (including root and live index) before the home ignore file, using fast byte matching without gitignore overhead. One pattern per line. Lines starting with `#` are ignored.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 4)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Prefix matching").font(.system(size: 11, weight: .semibold))
+                        Text("Blocks paths that start with any of these strings").font(.system(size: 10)).foregroundStyle(.secondary)
+                        TextEditor(text: $blockedPrefixes)
+                            .font(.system(size: 11, design: .monospaced))
+                            .frame(height: 100)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Contains matching").font(.system(size: 11, weight: .semibold))
+                        Text("Blocks paths containing any of these strings anywhere").font(.system(size: 10)).foregroundStyle(.secondary)
+                        TextEditor(text: $blockedContains)
+                            .font(.system(size: 11, design: .monospaced))
+                            .frame(height: 120)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
+                    }
+
+                    Button("Apply & Reindex") {
+                        PathBlocklist.shared.rebuild()
+                        FUZZY.refresh(pauseSearch: false)
+                    }
+                    .disabled(fuzzy.backgroundIndexing)
+                    .help("Rebuild the blocklist and trigger a full reindex")
+                }
             }
 
             if let updater = updateManager.updater {
@@ -220,6 +363,47 @@ struct SettingsView: View {
                 }
             }
 
+            if let pro = PM.pro {
+                LicenseView(pro: pro)
+                #if DEBUG
+                    HStack {
+                        Button("Reset Trial") {
+                            AppDelegate.shared?.resetTrial()
+                        }
+                        Button("Expire Trial") {
+                            AppDelegate.shared?.expireTrial()
+                        }
+                    }
+                #endif
+            }
+
+            #if DEBUG
+                Section(header: Text("Scoring Config (Debug)")) {
+                    TextEditor(text: $scoringJSON)
+                        .font(.system(size: 11, design: .monospaced))
+                        .frame(height: 300)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary, lineWidth: 0.5))
+                    HStack {
+                        Button("Apply") {
+                            if let config = ScoringConfig.fromJSON(scoringJSON) {
+                                config.save()
+                                reloadScoringConfig()
+                            }
+                        }
+                        Button("Reset to Defaults") {
+                            ScoringConfig.default.save()
+                            reloadScoringConfig()
+                            scoringJSON = ScoringConfig.default.toJSON()
+                        }
+                        Spacer()
+                        if ScoringConfig.fromJSON(scoringJSON) == nil {
+                            Text("Invalid JSON").foregroundColor(.red).font(.system(size: 11))
+                        }
+                    }
+                }
+            #endif
+
         }
         .formStyle(.grouped)
         .padding()
@@ -231,12 +415,17 @@ struct SettingsView: View {
         }
     }
 
+    @State private var fuzzy = FUZZY
     @State private var showHelp = false
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
+    @State private var fsignoreContent: String = (try? String(contentsOf: fsignore.url, encoding: .utf8)) ?? ""
+    @State private var fsignoreSaveTask: DispatchWorkItem?
+    @State private var scoringJSON: String = ScoringConfig.load().toJSON()
 
     @Default(.editorApp) private var editorApp
     @Default(.terminalApp) private var terminalApp
+    @Default(.shelfApp) private var shelfApp
 }
 
 struct IgnoreHelpText: View {
@@ -354,9 +543,10 @@ struct VolumeListView: View {
         VStack(alignment: .leading) {
             HStack {
                 (
-                    Text("External Volumes")
-                        + Text("\nIndex external or network drives")
-                        .font(.system(size: 11)).foregroundColor(.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) { Text("External Volumes"); ProBadge() }
+                        Text("Index external or network drives").font(.system(size: 11)).foregroundColor(.secondary)
+                    }
                 ).fixedSize()
             }
 
@@ -379,6 +569,13 @@ struct VolumeListView: View {
                     Image(systemName: "externaldrive")
                     Text(volume.name.string)
                     Spacer()
+                    if !fuzzy.backgroundIndexing, fuzzy.enabledVolumes.contains(volume) {
+                        Button(action: { fuzzy.indexVolume(volume) }) {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Reindex \(volume.name.string)")
+                    }
                     Text(volume.shellString)
                         .monospaced()
                         .foregroundColor(.secondary)
@@ -452,5 +649,16 @@ extension TimeInterval {
                 ? "\(months) month\(months > 1 ? "s" : "")"
                 : "\(months) month\(months > 1 ? "s" : "") \(weeks) week\(weeks > 1 ? "s" : "")"
         }
+    }
+}
+
+struct ProBadge: View {
+    var body: some View {
+        Text("PRO")
+            .font(.system(size: 8, weight: .heavy))
+            .foregroundColor(.white)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1.5)
+            .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(Color.orange))
     }
 }

@@ -7,14 +7,41 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		C73B310C2D526500003DB5EA /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = C73B310B2D526500003DB5EA /* SwiftTerm */; };
 		C74B68A12D50F95800FCDEBA /* Ignore in Frameworks */ = {isa = PBXBuildFile; productRef = C74B68A02D50F95800FCDEBA /* Ignore */; };
+		C7605CC82F77D87C0087B195 /* ClingCLI in Copy CLI */ = {isa = PBXBuildFile; fileRef = C7605CC02F77D81A0087B195 /* ClingCLI */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		C7605CD02F77E0000087B195 /* ArgumentParser in Frameworks */ = {isa = PBXBuildFile; productRef = C7605CCF2F77E0000087B195 /* ArgumentParser */; };
 		C76172292D50F5D000D78B4F /* Lowtech in Frameworks */ = {isa = PBXBuildFile; productRef = C76172282D50F5D000D78B4F /* Lowtech */; };
 		C761722B2D50F5D000D78B4F /* LowtechIndie in Frameworks */ = {isa = PBXBuildFile; productRef = C761722A2D50F5D000D78B4F /* LowtechIndie */; };
+		C761722D2D50F5D000D78B4F /* LowtechPro in Frameworks */ = {isa = PBXBuildFile; productRef = C761722C2D50F5D000D78B4F /* LowtechPro */; };
 		C7FE59F12D635D1500141592 /* ClopSDK in Frameworks */ = {isa = PBXBuildFile; productRef = C7FE59F02D635D1500141592 /* ClopSDK */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		C7605CBE2F77D81A0087B195 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = /usr/share/man/man1/;
+			dstSubfolderSpec = 0;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 1;
+		};
+		C7605CC72F77D86C0087B195 /* Copy CLI */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 12;
+			files = (
+				C7605CC82F77D87C0087B195 /* ClingCLI in Copy CLI */,
+			);
+			name = "Copy CLI";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		C7605CC02F77D81A0087B195 /* ClingCLI */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ClingCLI; sourceTree = BUILT_PRODUCTS_DIR; };
+		C7605FC42F7831E50087B195 /* Lowtech */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = Lowtech; path = ../Lowtech; sourceTree = SOURCE_ROOT; };
 		C76172132D50E43600D78B4F /* Cling.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Cling.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -23,12 +50,18 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				tags,
 			);
 			target = C76172122D50E43600D78B4F /* Cling */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		C7605CC12F77D81A0087B195 /* ClingCLI */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ClingCLI;
+			sourceTree = "<group>";
+		};
 		C76172152D50E43600D78B4F /* Cling */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -40,15 +73,23 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		C7605CBD2F77D81A0087B195 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C7605CD02F77E0000087B195 /* ArgumentParser in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C76172102D50E43600D78B4F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				C74B68A12D50F95800FCDEBA /* Ignore in Frameworks */,
 				C76172292D50F5D000D78B4F /* Lowtech in Frameworks */,
-				C73B310C2D526500003DB5EA /* SwiftTerm in Frameworks */,
 				C7FE59F12D635D1500141592 /* ClopSDK in Frameworks */,
 				C761722B2D50F5D000D78B4F /* LowtechIndie in Frameworks */,
+				C761722D2D50F5D000D78B4F /* LowtechPro in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,7 +106,9 @@
 		C761720A2D50E43600D78B4F = {
 			isa = PBXGroup;
 			children = (
+				C7605FC42F7831E50087B195 /* Lowtech */,
 				C76172152D50E43600D78B4F /* Cling */,
+				C7605CC12F77D81A0087B195 /* ClingCLI */,
 				C74B689F2D50F95800FCDEBA /* Frameworks */,
 				C76172142D50E43600D78B4F /* Products */,
 			);
@@ -75,6 +118,7 @@
 			isa = PBXGroup;
 			children = (
 				C76172132D50E43600D78B4F /* Cling.app */,
+				C7605CC02F77D81A0087B195 /* ClingCLI */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -82,6 +126,29 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		C7605CBF2F77D81A0087B195 /* ClingCLI */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C7605CC42F77D81A0087B195 /* Build configuration list for PBXNativeTarget "ClingCLI" */;
+			buildPhases = (
+				C7605CBC2F77D81A0087B195 /* Sources */,
+				C7605CBD2F77D81A0087B195 /* Frameworks */,
+				C7605CBE2F77D81A0087B195 /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				C7605CC12F77D81A0087B195 /* ClingCLI */,
+			);
+			name = ClingCLI;
+			packageProductDependencies = (
+				C7605CCF2F77E0000087B195 /* ArgumentParser */,
+			);
+			productName = ClingCLI;
+			productReference = C7605CC02F77D81A0087B195 /* ClingCLI */;
+			productType = "com.apple.product-type.tool";
+		};
 		C76172122D50E43600D78B4F /* Cling */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = C76172222D50E43700D78B4F /* Build configuration list for PBXNativeTarget "Cling" */;
@@ -89,6 +156,7 @@
 				C761720F2D50E43600D78B4F /* Sources */,
 				C76172102D50E43600D78B4F /* Frameworks */,
 				C76172112D50E43600D78B4F /* Resources */,
+				C7605CC72F77D86C0087B195 /* Copy CLI */,
 			);
 			buildRules = (
 			);
@@ -101,8 +169,8 @@
 			packageProductDependencies = (
 				C76172282D50F5D000D78B4F /* Lowtech */,
 				C761722A2D50F5D000D78B4F /* LowtechIndie */,
+				C761722C2D50F5D000D78B4F /* LowtechPro */,
 				C74B68A02D50F95800FCDEBA /* Ignore */,
-				C73B310B2D526500003DB5EA /* SwiftTerm */,
 				C7FE59F02D635D1500141592 /* ClopSDK */,
 			);
 			productName = Cling;
@@ -116,9 +184,12 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 1620;
-				LastUpgradeCheck = 1620;
+				LastSwiftUpdateCheck = 2640;
+				LastUpgradeCheck = 2640;
 				TargetAttributes = {
+					C7605CBF2F77D81A0087B195 = {
+						CreatedOnToolsVersion = 26.4;
+					};
 					C76172122D50E43600D78B4F = {
 						CreatedOnToolsVersion = 16.2;
 					};
@@ -134,9 +205,9 @@
 			mainGroup = C761720A2D50E43600D78B4F;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				C7605CCE2F77E0000087B195 /* XCRemoteSwiftPackageReference "swift-argument-parser" */,
 				C76172272D50F5D000D78B4F /* XCRemoteSwiftPackageReference "Lowtech" */,
 				C76172332D50F8B100D78B4F /* XCRemoteSwiftPackageReference "swift-ignore" */,
-				C74B68F62D5264BB00FCDEBA /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 				C7FE59EF2D635CDC00141592 /* XCRemoteSwiftPackageReference "ClopSDK" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -145,6 +216,7 @@
 			projectRoot = "";
 			targets = (
 				C76172122D50E43600D78B4F /* Cling */,
+				C7605CBF2F77D81A0087B195 /* ClingCLI */,
 			);
 		};
 /* End PBXProject section */
@@ -160,6 +232,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		C7605CBC2F77D81A0087B195 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C761720F2D50E43600D78B4F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -170,6 +249,46 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		C7605CC52F77D81A0087B195 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ClingCLI/ClingCLI.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = RDDXV84A73;
+				ENABLE_HARDENED_RUNTIME = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lowtechguys.ClingCLI;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		C7605CC62F77D81A0087B195 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ClingCLI/ClingCLI.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = RDDXV84A73;
+				ENABLE_HARDENED_RUNTIME = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lowtechguys.ClingCLI;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 		C76172202D50E43700D78B4F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -204,7 +323,9 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = RDDXV84A73;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -228,6 +349,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -267,7 +389,9 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = RDDXV84A73;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -284,6 +408,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
@@ -294,11 +419,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Cling/Cling.entitlements;
-				CODE_SIGN_STYLE = Automatic;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1.2.2;
+				CURRENT_PROJECT_VERSION = 2.0.0;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"Cling/Preview Content\"";
-				DEVELOPMENT_TEAM = RDDXV84A73;
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = RDDXV84A73;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -311,9 +439,10 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 2.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lowtechguys.Cling;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -325,11 +454,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Cling/Cling.entitlements;
-				CODE_SIGN_STYLE = Automatic;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1.2.2;
+				CURRENT_PROJECT_VERSION = 2.0.0;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"Cling/Preview Content\"";
-				DEVELOPMENT_TEAM = RDDXV84A73;
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = RDDXV84A73;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -342,9 +474,10 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 2.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lowtechguys.Cling;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -353,6 +486,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		C7605CC42F77D81A0087B195 /* Build configuration list for PBXNativeTarget "ClingCLI" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C7605CC52F77D81A0087B195 /* Debug */,
+				C7605CC62F77D81A0087B195 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		C761720E2D50E43600D78B4F /* Build configuration list for PBXProject "Cling" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -374,12 +516,12 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		C74B68F62D5264BB00FCDEBA /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+		C7605CCE2F77E0000087B195 /* XCRemoteSwiftPackageReference "swift-argument-parser" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
+			repositoryURL = "https://github.com/apple/swift-argument-parser";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 1.2.5;
+				minimumVersion = 1.5.0;
 			};
 		};
 		C76172272D50F5D000D78B4F /* XCRemoteSwiftPackageReference "Lowtech" */ = {
@@ -395,7 +537,7 @@
 			repositoryURL = "https://github.com/alin23/swift-ignore";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.1.2;
+				minimumVersion = 1.0.0;
 			};
 		};
 		C7FE59EF2D635CDC00141592 /* XCRemoteSwiftPackageReference "ClopSDK" */ = {
@@ -409,15 +551,15 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		C73B310B2D526500003DB5EA /* SwiftTerm */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = C74B68F62D5264BB00FCDEBA /* XCRemoteSwiftPackageReference "SwiftTerm" */;
-			productName = SwiftTerm;
-		};
 		C74B68A02D50F95800FCDEBA /* Ignore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C76172332D50F8B100D78B4F /* XCRemoteSwiftPackageReference "swift-ignore" */;
 			productName = Ignore;
+		};
+		C7605CCF2F77E0000087B195 /* ArgumentParser */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C7605CCE2F77E0000087B195 /* XCRemoteSwiftPackageReference "swift-argument-parser" */;
+			productName = ArgumentParser;
 		};
 		C76172282D50F5D000D78B4F /* Lowtech */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -428,6 +570,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C76172272D50F5D000D78B4F /* XCRemoteSwiftPackageReference "Lowtech" */;
 			productName = LowtechIndie;
+		};
+		C761722C2D50F5D000D78B4F /* LowtechPro */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C76172272D50F5D000D78B4F /* XCRemoteSwiftPackageReference "Lowtech" */;
+			productName = LowtechPro;
 		};
 		C7FE59F02D635D1500141592 /* ClopSDK */ = {
 			isa = XCSwiftPackageProductDependency;

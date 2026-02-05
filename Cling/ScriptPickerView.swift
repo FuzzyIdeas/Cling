@@ -12,44 +12,32 @@ struct ScriptPickerView: View {
     @State private var scriptName = ""
     @State private var selectedRunner: ScriptRunner? = .zsh
     @State private var scriptManager = SM
+    @State private var confirmScript: URL? = nil
+    @State private var deleteScript: URL? = nil
 
     func scriptButton(_ script: URL) -> some View {
-        HStack {
-            Button(action: {
-                scriptManager.run(script: script, args: fileURLs.map(\.path))
-                dismiss()
-            }) {
-                HStack {
-                    Image(nsImage: icon(for: script))
-                    Text(script.lastPathComponent.ns.deletingPathExtension)
-
-                    if let shortcut = scriptManager.scriptShortcuts[script] {
-                        Spacer()
-                        Text(String(shortcut).uppercased()).monospaced().bold().foregroundColor(.secondary)
-                    }
+        ScriptRowButton(
+            script: script,
+            scriptManager: scriptManager,
+            onRun: {
+                if scriptManager.scriptsWithConfirm.contains(script) {
+                    confirmScript = script
+                } else {
+                    scriptManager.run(script: script, args: fileURLs.map(\.path))
+                    dismiss()
                 }
-            }
-            .buttonStyle(FlatButton(color: .bg.primary.opacity(0.4), textColor: .primary))
-            .ifLet(scriptManager.scriptShortcuts[script]) {
-                $0.keyboardShortcut(KeyEquivalent($1), modifiers: [])
-            }
-
-            Button(action: {
-                openInEditor(script)
-            }) {
-                Image(systemName: "pencil")
-            }
-            .buttonStyle(FlatButton(color: .bg.primary.opacity(0.4), textColor: .primary))
-            .ifLet(scriptManager.scriptShortcuts[script]) {
-                $0.keyboardShortcut(KeyEquivalent($1), modifiers: [.command, .shift])
-                    .help("Edit script in \(Defaults[.editorApp].filePath?.stem ?? "TextEdit") (⌘⇧\($1)")
-            }
+            },
+            onDelete: { deleteScript = script }
+        )
+        .ifLet(scriptManager.scriptShortcuts[script]) {
+            $0.keyboardShortcut(KeyEquivalent($1), modifiers: [])
         }
     }
 
     @ViewBuilder
     var scriptList: some View {
-        ForEach(scriptManager.scriptURLs.sorted(by: \.lastPathComponent), id: \.path) { script in
+        let paths = fileURLs.compactMap(\.filePath)
+        ForEach(scriptManager.scriptURLs.sorted(by: \.lastPathComponent).filter { scriptManager.isEligible($0, forPaths: paths) }, id: \.path) { script in
             scriptButton(script)
         }.focusable(false)
     }
@@ -63,7 +51,7 @@ struct ScriptPickerView: View {
                 Button("\(scriptsFolder.shellString)") {
                     NSWorkspace.shared.open(scriptsFolder.url)
                 }
-                .buttonStyle(TextButton())
+                .buttonStyle(.text)
                 .font(.mono(10))
                 .padding(.top, 2)
                 .focusable(false)
@@ -84,6 +72,40 @@ struct ScriptPickerView: View {
         .sheet(isPresented: $isShowingAddScript, onDismiss: createNewScript) {
             AddScriptView(name: $scriptName, selectedRunner: $selectedRunner)
         }
+        .alert(
+            "Run \(confirmScript?.lastPathComponent.ns.deletingPathExtension ?? "script")?",
+            isPresented: Binding(get: { confirmScript != nil }, set: { if !$0 { confirmScript = nil } })
+        ) {
+            Button("Run") {
+                if let script = confirmScript {
+                    scriptManager.run(script: script, args: fileURLs.map(\.path))
+                    confirmScript = nil
+                    dismiss()
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                confirmScript = nil
+            }
+        } message: {
+            Text("This will run on \(fileURLs.count) file\(fileURLs.count == 1 ? "" : "s")")
+        }
+        .alert(
+            "Delete \(deleteScript?.lastPathComponent.ns.deletingPathExtension ?? "script")?",
+            isPresented: Binding(get: { deleteScript != nil }, set: { if !$0 { deleteScript = nil } })
+        ) {
+            Button("Delete", role: .destructive) {
+                if let script = deleteScript {
+                    try? FileManager.default.removeItem(at: script)
+                    deleteScript = nil
+                    scriptManager.fetchScripts()
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                deleteScript = nil
+            }
+        } message: {
+            Text("This will permanently delete the script file")
+        }
     }
 
     func createNewScript() {
@@ -92,8 +114,8 @@ struct ScriptPickerView: View {
         let newScript = scriptsFolder / "\(scriptName.safeFilename).\(ext)"
 
         do {
-            let shebang = selectedRunner?.shebang ?? "#!/bin/zsh"
-            try "\(shebang)\n".write(to: newScript.url, atomically: true, encoding: .utf8)
+            let runner = selectedRunner ?? .zsh
+            try "\(runner.shebang)\n\(runner.template)".write(to: newScript.url, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: newScript.string)
             newScript.edit()
         } catch {
@@ -133,7 +155,7 @@ struct ScriptActionButtons: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 3) {
                         scriptList
-                    }.buttonStyle(BorderlessTextButton(color: .fg.warm.opacity(0.8)))
+                    }.buttonStyle(.borderlessText(color: .fg.warm.opacity(0.8)))
                 }.disabled(selectedResults.isEmpty || scriptManager.process != nil)
             }
 
@@ -141,7 +163,7 @@ struct ScriptActionButtons: View {
             clopButton
         }
         .font(.system(size: 10))
-        .buttonStyle(TextButton(color: .fg.warm.opacity(0.9)))
+        .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
         .lineLimit(1)
         .onAppear {
             let extensions = selectedResults.compactMap(\.extension).uniqued
@@ -151,18 +173,34 @@ struct ScriptActionButtons: View {
             let extensions = selectedResults.compactMap(\.extension).uniqued
             commonScripts = scriptManager.commonScripts(for: extensions).sorted(by: \.lastPathComponent)
         }
+        .alert(
+            "Run \(confirmScript?.lastPathComponent.ns.deletingPathExtension ?? "script")?",
+            isPresented: Binding(get: { confirmScript != nil }, set: { if !$0 { confirmScript = nil } })
+        ) {
+            Button("Run") {
+                if let script = confirmScript {
+                    scriptManager.run(script: script, args: selectedResults.map(\.string))
+                    confirmScript = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                confirmScript = nil
+            }
+        } message: {
+            Text("This will run on \(selectedResults.count) file\(selectedResults.count == 1 ? "" : "s")")
+        }
     }
 
     @ViewBuilder
     var scriptList: some View {
-        ForEach(commonScripts, id: \.path) { script in
+        ForEach(commonScripts.filter { scriptManager.isEligible($0, forPaths: selectedResults.arr) }, id: \.path) { script in
             if let key = scriptManager.scriptShortcuts[script] {
                 scriptButton(script, key: key)
             }
         }
     }
 
-    func outputView(output: String?, error: String?, path: FilePath?) -> some View {
+    func outputView(output: String?, error: String?, outputFile: FilePath?, errorFile: FilePath?) -> some View {
         VStack(spacing: 5) {
             HStack {
                 Button(action: { showOutput = false }) {
@@ -176,51 +214,47 @@ struct ScriptActionButtons: View {
             }
 
             if let output, output.isNotEmpty {
-                ScrollView {
-                    VStack(alignment: .leading) {
-                        Text("OUTPUT")
-                            .font(.bold(10))
-                            .foregroundColor(.secondary)
-                        Text(output)
-                            .lineLimit(nil)
-                            .multilineTextAlignment(.leading)
-                            .monospaced()
-                            .fill(.topLeading)
-                    }.frame(maxWidth: .infinity)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("OUTPUT").font(.bold(10)).foregroundColor(.secondary)
+                        Spacer()
+                        if output.utf8.count >= 8_192, let outputFile {
+                            Button("Open in editor") { outputFile.edit() }
+                                .font(.system(size: 10))
+                        }
+                    }.padding(.horizontal, 4)
+                    ScriptOutputText(text: output)
                 }
                 .roundbg(radius: 12, color: .bg.primary.opacity(0.1))
                 .padding(.bottom).padding(.horizontal, 25)
             }
 
             if let error, error.isNotEmpty {
-                ScrollView {
-                    VStack(alignment: .leading) {
-                        Text("ERRORS")
-                            .font(.bold(10))
-                            .foregroundColor(.secondary)
-                        Text(error)
-                            .lineLimit(nil)
-                            .multilineTextAlignment(.leading)
-                            .monospaced()
-                            .fill(.topLeading)
-                    }.frame(maxWidth: .infinity)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("ERRORS").font(.bold(10)).foregroundColor(.secondary)
+                        Spacer()
+                        if error.utf8.count >= 8_192, let errorFile {
+                            Button("Open in editor") { errorFile.edit() }
+                                .font(.system(size: 10))
+                        }
+                    }.padding(.horizontal, 4)
+                    ScriptOutputText(text: error)
                 }
                 .roundbg(radius: 12, color: .bg.primary.opacity(0.1))
                 .padding(.bottom).padding(.horizontal, 25)
             }
 
-            if let path {
-                Button("Open in editor") {
-                    path.edit()
-                }
-                .padding(4)
+            if (output == nil || output?.isEmpty == true) && (error == nil || error?.isEmpty == true) {
+                Text("No output").foregroundColor(.secondary).padding()
             }
-        }.frame(width: 600, height: 300, alignment: .topLeading)
+        }.frame(width: 800, height: 500, alignment: .topLeading)
     }
 
     @State private var commonScripts: [URL] = []
 
     @State private var showOutput = false
+    @State private var confirmScript: URL? = nil
 
     @State private var scriptManager = SM
     @State private var fuzzy = FUZZY
@@ -229,7 +263,7 @@ struct ScriptActionButtons: View {
     @ViewBuilder
     private var runningProcessButton: some View {
         HStack(spacing: 0) {
-            if let script = scriptManager.lastScript, let outputFile = scriptManager.lastOutputFile, let errorFile = scriptManager.lastErrorFile {
+            if let script = scriptManager.lastScript {
                 Button(action: {
                     if let process = scriptManager.process {
                         process.terminate()
@@ -239,7 +273,7 @@ struct ScriptActionButtons: View {
                 }) {
                     Image(systemName: "xmark").font(.heavy(10))
                 }
-                .buttonStyle(BorderlessTextButton(color: .fg.warm.opacity(0.8)))
+                .buttonStyle(.borderlessText(color: .fg.warm.opacity(0.8)))
                 .help(scriptManager.process != nil ? "Terminate script" : "Clear process output")
 
                 Button(action: showProcessOutput) {
@@ -260,15 +294,14 @@ struct ScriptActionButtons: View {
                         }
                     }
                 }
-                .buttonStyle(TextButton(color: .fg.warm.opacity(0.8)))
+                .buttonStyle(.text(color: .fg.warm.opacity(0.8)))
                 .sheet(isPresented: $showOutput) {
-                    let output = (try? String(contentsOf: outputFile.url))?.trimmed
-                    let error = (try? String(contentsOf: errorFile.url))?.trimmed
-
-                    if let output, let error {
-                        outputView(output: output, error: error, path: scriptManager.combinedOutputFile)
+                    if let outFile = scriptManager.lastOutputFile, let errFile = scriptManager.lastErrorFile {
+                        let output = try? String(contentsOf: outFile.url).trimmed
+                        let error = try? String(contentsOf: errFile.url).trimmed
+                        outputView(output: output, error: error, outputFile: outFile, errorFile: errFile)
                     } else {
-                        Text("No output").padding()
+                        outputView(output: nil, error: "Script failed to start. No output was captured.", outputFile: nil, errorFile: nil)
                     }
                 }
                 .help("View script output and errors")
@@ -303,7 +336,7 @@ struct ScriptActionButtons: View {
                         Text("Optimise with Clop")
                     }
                 }
-                .buttonStyle(TextButton(color: .fg.warm.opacity(0.8)))
+                .buttonStyle(.text(color: .fg.warm.opacity(0.8)))
                 .if(oKeyAvailable) {
                     $0.keyboardShortcut("o", modifiers: [.command, .control])
                 }
@@ -329,7 +362,11 @@ struct ScriptActionButtons: View {
 
     private func scriptButton(_ script: URL, key: Character) -> some View {
         Button(action: {
-            scriptManager.run(script: script, args: selectedResults.map(\.string))
+            if scriptManager.scriptsWithConfirm.contains(script) {
+                confirmScript = script
+            } else {
+                scriptManager.run(script: script, args: selectedResults.map(\.string))
+            }
         }) {
             HStack(spacing: 0) {
                 Text("\(key.uppercased())").mono(10, weight: .bold).foregroundColor(.fg.warm).roundbg(color: .bg.primary.opacity(0.2))
@@ -339,23 +376,65 @@ struct ScriptActionButtons: View {
     }
 
     private func showProcessOutput() {
-        guard let outputFile = scriptManager.lastOutputFile, let errorFile = scriptManager.lastErrorFile else {
-            return
-        }
-
-        let outSize = outputFile.fileSize() ?? 0
-        let errSize = errorFile.fileSize() ?? 0
-
-        guard outSize + errSize > 0 else {
-            return
-        }
-
-        if outSize + errSize < 100 * 1024 {
-            showOutput = true
-        } else {
-            scriptManager.combinedOutputFile?.edit()
-        }
+        showOutput = true
     }
+
+}
+
+private struct ScriptRowButton: View {
+    let script: URL
+    let scriptManager: ScriptManager
+    let onRun: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        Button(action: onRun) {
+            HStack {
+                Image(nsImage: icon(for: script))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(script.lastPathComponent.ns.deletingPathExtension)
+                    if let desc = scriptManager.scriptDescriptions[script] {
+                        Text(desc).font(.system(size: 10)).foregroundColor(.secondary)
+                    }
+                }
+
+                Spacer()
+
+                if let shortcut = scriptManager.scriptShortcuts[script] {
+                    Text(String(shortcut).uppercased()).monospaced().bold().foregroundColor(.secondary)
+                }
+
+                Button(action: { openInEditor(script) }) {
+                    Image(systemName: "pencil")
+                        .padding(4)
+                        .background(editHovered ? Color.primary.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(editHovered ? .primary : .secondary)
+                .onHover { editHovered = $0 }
+                .ifLet(scriptManager.scriptShortcuts[script]) {
+                    $0.keyboardShortcut(KeyEquivalent($1), modifiers: [.command, .shift])
+                        .help("Edit script in \(Defaults[.editorApp].filePath?.stem ?? "TextEdit") (⌘⇧\(String($1))")
+                }
+
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "trash")
+                        .padding(4)
+                        .background(deleteHovered ? Color.red.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(deleteHovered ? .red : .red.opacity(0.5))
+                .onHover { deleteHovered = $0 }
+            }
+            .hfill(.leading)
+        }
+        .buttonStyle(FlatButton(color: .bg.primary.opacity(0.4), textColor: .primary))
+        .onHover { rowHovered = $0 }
+    }
+
+    @State private var rowHovered = false
+    @State private var editHovered = false
+    @State private var deleteHovered = false
 
 }
 
@@ -498,7 +577,7 @@ enum ScriptRunner: String, CaseIterable {
 
     var name: String {
         switch self {
-        case .sh: "Bash"
+        case .sh: "Shell"
         case .zsh: "Zsh"
         case .fish: "Fish"
         case .python3: "Python 3"
@@ -512,7 +591,7 @@ enum ScriptRunner: String, CaseIterable {
 
     var path: String {
         switch self {
-        case .sh: "/bin/sh"
+        case .sh: "/bin/zsh"
         case .zsh: "/bin/zsh"
         case .fish: "/usr/local/bin/fish"
         case .python3: "/usr/bin/python3"
@@ -521,6 +600,155 @@ enum ScriptRunner: String, CaseIterable {
         case .swift: "/usr/bin/swift"
         case .osascript: "/usr/bin/osascript"
         case .node: "/usr/local/bin/node"
+        }
+    }
+
+    var commentPrefix: String {
+        switch self {
+        case .swift, .node: "//"
+        case .osascript: "--"
+        default: "#"
+        }
+    }
+
+    var argsHelp: String {
+        let c = commentPrefix
+        switch self {
+        case .sh, .zsh:
+            return """
+            \(c) File paths are passed as arguments to the script
+            \(c) The first file path is $1, the second is $2, and so on
+            \(c) The number of arguments is stored in $#
+            \(c) The arguments are stored in $@ as an array
+            """
+        case .fish:
+            return """
+            \(c) File paths are passed as arguments via $argv
+            \(c) $argv[1] is the first file, $argv[2] is the second, and so on
+            \(c) The number of arguments is (count $argv)
+            """
+        case .python3:
+            return """
+            \(c) File paths are passed as arguments via sys.argv
+            \(c) sys.argv[1] is the first file, sys.argv[2] is the second, and so on
+            """
+        case .ruby:
+            return """
+            \(c) File paths are passed as arguments via ARGV
+            \(c) ARGV[0] is the first file, ARGV[1] is the second, and so on
+            """
+        case .perl:
+            return """
+            \(c) File paths are passed as arguments via @ARGV
+            \(c) $ARGV[0] is the first file, $ARGV[1] is the second, and so on
+            """
+        case .swift:
+            return """
+            \(c) File paths are passed as arguments via CommandLine.arguments
+            \(c) CommandLine.arguments[1] is the first file (index 0 is the script path)
+            """
+        case .osascript:
+            return """
+            \(c) File paths are passed via "on run argv"
+            \(c) Item 1 of argv is the first file, item 2 is the second, and so on
+            """
+        case .node:
+            return """
+            \(c) File paths are passed as arguments via process.argv
+            \(c) process.argv[2] is the first file (index 0 is node, index 1 is the script path)
+            """
+        }
+    }
+
+    var template: String {
+        let c = commentPrefix
+        return """
+
+        \(argsHelp)
+
+        \(c) All settings below are optional. Remove the brackets around [:] to enable a setting.
+
+        \(c) A short description shown in the script picker
+        \(c) description[:]  My script description
+
+        \(c) Only show this script for specific file types
+        \(c) extensions[:]  jpg png pdf
+
+        \(c) Require a specific number of selected files (e.g. for a diff script that needs exactly 2 files)
+        \(c) minFiles[:]  2
+        \(c) maxFiles[:]  2
+
+        \(c) Only show this script when all selected items are files (not folders)
+        \(c) filesOnly[:]  true
+        \(c) Only show this script when all selected items are folders
+        \(c) dirsOnly[:]  true
+
+        \(c) Ask for confirmation before running (useful for scripts that delete or move files)
+        \(c) confirm[:]  true
+
+        \(c) Run the script once for each file instead of passing all files at once
+        \(c) sequential[:]  true
+
+        \(c) Show the output of the script after it finishes executing
+        \(c) showOutput[:]  true
+
+        """
+    }
+}
+
+/// Uses `Text` for small output, `NSTextView` wrapper for large output to stay responsive.
+struct ScriptOutputText: View {
+    let text: String
+
+    var body: some View {
+        if text.utf8.count < 8_192 {
+            ScrollView {
+                Text(text)
+                    .lineLimit(nil)
+                    .multilineTextAlignment(.leading)
+                    .monospaced()
+                    .textSelection(.enabled)
+                    .fill(.topLeading)
+            }
+        } else {
+            LargeTextView(text: text)
+        }
+    }
+}
+
+struct LargeTextView: NSViewRepresentable {
+    let text: String
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        let textView = NSTextView()
+
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        textView.textColor = .labelColor
+        textView.backgroundColor = .clear
+        textView.drawsBackground = false
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+
+        scrollView.documentView = textView
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.autohidesScrollers = true
+
+        textView.string = text
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        if let textView = scrollView.documentView as? NSTextView, textView.string != text {
+            textView.string = text
         }
     }
 }

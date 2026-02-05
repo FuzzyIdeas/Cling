@@ -1,6 +1,7 @@
 import Defaults
 import Foundation
 import Lowtech
+import LowtechPro
 import SwiftUI
 import System
 
@@ -9,6 +10,7 @@ struct FilterPicker: View {
     @Default(.quickFilters) private var quickFilters
     @State private var fuzzy: FuzzyClient = FUZZY
     @ObservedObject private var km = KM
+    @ObservedObject private var proManager = PM
 
     private var enabledVolumes: [FilePath]? {
         fuzzy.enabledVolumes.isEmpty ? nil : fuzzy.enabledVolumes
@@ -29,20 +31,23 @@ struct FilterPicker: View {
         }
     }
 
+    @ViewBuilder
     private var folderFilterPicker: some View {
-        Picker(selection: $fuzzy.folderFilter) {
-            Text("Folder filters").round(11).foregroundColor(.secondary).selectionDisabled()
-            ForEach(folderFilters, id: \.self) { filter in
-                filterItem(filter)
-            }
+        if !folderFilters.isEmpty || fuzzy.folderFilter != nil {
+            Picker(selection: $fuzzy.folderFilter) {
+                Text("Folder filters").round(11).foregroundColor(.secondary).selectionDisabled()
+                ForEach(folderFilters, id: \.self) { filter in
+                    filterItem(filter)
+                }
 
-            if let filter = fuzzy.folderFilter, !folderFilters.contains(filter) {
-                Divider()
-                filterItem(filter)
-            }
-        } label: { Text("Folder filter") }
-            .labelsHidden()
-            .pickerStyle(.inline)
+                if let filter = fuzzy.folderFilter, !folderFilters.contains(filter) {
+                    Divider()
+                    filterItem(filter)
+                }
+            } label: { Text("Folder filter") }
+                .labelsHidden()
+                .pickerStyle(.inline)
+        }
     }
 
     private func filterItem(_ filter: FilePath, key: Character?) -> some View {
@@ -63,12 +68,12 @@ struct FilterPicker: View {
     private func filterItem(_ filter: QuickFilter) -> some View {
         (
             Text("\(filter.id)\n") +
-                Text(filter.query)
+                Text(filter.subtitle)
                 .foregroundStyle(.secondary)
                 .font(.caption)
         )
         .tag(filter as QuickFilter?)
-        .help("Searches with query: \(filter.query)")
+        .help(filter.subtitle)
         .ifLet(filter.key) { view, key in
             view.keyboardShortcut(KeyEquivalent(key), modifiers: [.option])
         }
@@ -94,9 +99,12 @@ struct FilterPicker: View {
         Button(action) {
             isEditingFilter = action == "Edit"
             originalFilterID = filter.id
-            lastQuery = fuzzy.query
-            fuzzy.query = filter.query
             filterID = filter.id
+            filterSuffix = filter.extensions ?? ""
+            filterQuery = filter.preQuery ?? ""
+            filterPostQuery = filter.postQuery ?? ""
+            filterDirsOnly = filter.dirsOnly
+            filterFolders = filter.folders ?? []
             filterKey = filter.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape
             isAddingQuickFilter = true
         }
@@ -138,20 +146,23 @@ struct FilterPicker: View {
             }
         }
     }
+    @ViewBuilder
     private var quickFilterPicker: some View {
-        Picker(selection: $fuzzy.quickFilter) {
-            Text("Quick filters").round(11).foregroundColor(.secondary).selectionDisabled()
-            ForEach(quickFilters, id: \.self) { filter in
-                filterItem(filter)
-            }
+        if !quickFilters.isEmpty || fuzzy.quickFilter != nil {
+            Picker(selection: $fuzzy.quickFilter) {
+                Text("Quick filters").round(11).foregroundColor(.secondary).selectionDisabled()
+                ForEach(quickFilters, id: \.self) { filter in
+                    filterItem(filter)
+                }
 
-            if let filter = fuzzy.quickFilter, !quickFilters.contains(filter) {
-                Divider()
-                filterItem(filter)
-            }
-        } label: { Text("Quick filter") }
-            .labelsHidden()
-            .pickerStyle(.inline)
+                if let filter = fuzzy.quickFilter, !quickFilters.contains(filter) {
+                    Divider()
+                    filterItem(filter)
+                }
+            } label: { Text("Quick filter") }
+                .labelsHidden()
+                .pickerStyle(.inline)
+        }
     }
 
     @ViewBuilder private var quickFilterEditMenu: some View {
@@ -171,20 +182,36 @@ struct FilterPicker: View {
     @State private var isEditingFilter = false
     @State private var originalFilterID = ""
     @State private var filterID = ""
-    @State private var filterKey: SauceKey = .escape
+    @State private var filterSuffix = ""
+    @State private var filterQuery = ""
+    @State private var filterPostQuery = ""
+    @State private var filterDirsOnly = false
     @State private var filterFolders: [FilePath] = []
+    @State private var filterKey: SauceKey = .escape
 
     var body: some View {
         menu
             .sheet(isPresented: $isAddingQuickFilter, onDismiss: {
-                saveQuickFilter(id: filterID, query: fuzzy.query.trimmed, key: filterKey, originalID: originalFilterID)
+                saveQuickFilter(
+                    id: filterID,
+                    extensions: filterSuffix.trimmed.isEmpty ? nil : filterSuffix.trimmed,
+                    preQuery: filterQuery.trimmed.isEmpty ? nil : filterQuery.trimmed,
+                    postQuery: filterPostQuery.trimmed.isEmpty ? nil : filterPostQuery.trimmed,
+                    dirsOnly: filterDirsOnly,
+                    folders: filterFolders.isEmpty ? nil : filterFolders,
+                    key: filterKey,
+                    originalID: originalFilterID
+                )
                 filterID = ""
+                filterSuffix = ""
+                filterQuery = ""
+                filterPostQuery = ""
+                filterDirsOnly = false
+                filterFolders = []
                 originalFilterID = ""
-                fuzzy.query = lastQuery
-                lastQuery = ""
                 isEditingFilter = false
             }) {
-                QuickFilterAddSheet(id: $filterID, query: $fuzzy.query, key: $filterKey)
+                QuickFilterAddSheet(id: $filterID, extensions: $filterSuffix, preQuery: $filterQuery, postQuery: $filterPostQuery, dirsOnly: $filterDirsOnly, folders: $filterFolders, key: $filterKey)
             }
             .sheet(isPresented: $isAddingFolderFilter, onDismiss: {
                 saveFolderFilter(id: filterID, folders: filterFolders, key: filterKey, originalID: originalFilterID)
@@ -197,106 +224,77 @@ struct FilterPicker: View {
             }
     }
 
+    @State private var showFilterEditor = false
+
+    private var filterLabel: some View {
+        Image(systemName: "line.3.horizontal.decrease.circle" + (fuzzy.quickFilter != nil || fuzzy.folderFilter != nil ? ".fill" : ""))
+            .frame(width: FilterPicker.iconWidth)
+    }
+
+    static let iconWidth: CGFloat = 20
+
+    @State private var showNeedsProPopover = false
+
     var menu: some View {
-        Menu {
-            if km.lalt || km.ralt {
-                QuickFilterEditorView(label: "New Quick Filter", isPresented: $isAddingQuickFilter, filterID: $filterID, filterKey: $filterKey, isEditing: $isEditingFilter)
-                FolderFilterEditorView(label: "New Folder Filter", isPresented: $isAddingFolderFilter, filterID: $filterID, filterKey: $filterKey, isEditing: $isEditingFilter)
-                Divider()
-                folderFilterEditMenu
-                Divider()
-                quickFilterEditMenu
-            } else {
-                folderFilterPicker
-                quickFilterPicker
-                volumePicker
-
-                Button("All files") {
-                    fuzzy.folderFilter = nil
-                    fuzzy.quickFilter = nil
-                    fuzzy.volumeFilter = nil
+        Group {
+            if proManager.pro?.active != true {
+                Button(action: { showNeedsProPopover = true }) {
+                    filterLabel
                 }
-                .help("Searches all indexed files without any filters")
-                .keyboardShortcut(.escape, modifiers: [.option])
-
-                Divider()
-                Text("To edit filters, hold ⌥ Option while opening this menu")
-                    .foregroundStyle(.secondary)
-                    .round(11)
-                    .disabled(true)
-            }
-        } label: {
-            HStack(spacing: 2) {
-                Image(systemName: "folder.fill")
-                if let filter = fuzzy.quickFilter {
-                    Text(filter.id)
-                        .fontWeight(.semibold)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                if fuzzy.folderFilter != nil || fuzzy.volumeFilter != nil {
-                    Text(" in ")
-                        .foregroundStyle(.secondary)
-                    if let filter = fuzzy.volumeFilter {
-                        Text("\(Image(systemName: "externaldrive")) \(filter.name.string)")
-                            .fontWeight(.semibold)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        if fuzzy.folderFilter != nil {
-                            Text("❯").foregroundStyle(.secondary)
+                .buttonStyle(.borderlessText)
+                .popover(isPresented: $showNeedsProPopover) {
+                    if let pro = PM.pro {
+                        PaddedPopoverView(background: Color.red.brightness(0.1).any) {
+                            NeedsProView(size: 16, color: .black.opacity(0.8), pro: pro)
                         }
                     }
-                    if let filter = fuzzy.folderFilter {
-                        Text(filter.id)
-                            .fontWeight(.semibold)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
                 }
+            } else if km.lalt || km.ralt || showFilterEditor {
+                Button(action: { showFilterEditor = true }) {
+                    Image(systemName: "slider.horizontal.3")
+                        .frame(width: FilterPicker.iconWidth)
+                }
+                .buttonStyle(.borderlessText)
+                .sheet(isPresented: $showFilterEditor) {
+                    FilterEditorSheet()
+                }
+            } else {
+                Menu {
+                    folderFilterPicker
+                    quickFilterPicker
+                    volumePicker
+
+                    Button("All files") {
+                        fuzzy.folderFilter = nil
+                        fuzzy.quickFilter = nil
+                        fuzzy.volumeFilter = nil
+                    }
+                    .help("Searches all indexed files without any filters")
+                    .keyboardShortcut(.escape, modifiers: [.option])
+                } label: {
+                    filterLabel
+                }
+                .menuStyle(.button)
+                .buttonStyle(.borderlessText)
             }
         }
-        .menuStyle(.button)
-        .buttonStyle(BorderlessTextButton())
         .fixedSize()
-        .onChange(of: fuzzy.folderFilter) {
-            fuzzy.sendQuery(fuzzy.query)
-        }
-        .onChange(of: fuzzy.quickFilter) {
-            fuzzy.sendQuery(fuzzy.query)
-        }
     }
 }
 
 @MainActor
-func saveQuickFilter(id: String, query: String, key: SauceKey, originalID: String = "") {
-    guard !query.isEmpty, !id.isEmpty else {
-        return
-    }
+func saveQuickFilter(id: String, extensions: String?, preQuery: String?, postQuery: String? = nil, dirsOnly: Bool, folders: [FilePath]? = nil, key: SauceKey, originalID: String = "") {
+    guard !id.isEmpty, (extensions != nil || preQuery != nil || postQuery != nil || dirsOnly || folders?.isEmpty == false) else { return }
 
-    guard key != .escape else {
-        let filter = QuickFilter(id: id, query: query, key: nil)
-        let originalFilter = Defaults[.quickFilters].first { $0.id == originalID }
-
-        Defaults[.quickFilters] = Defaults[.quickFilters].without(originalFilter ?? filter) + [filter]
-        FUZZY.quickFilter = filter
-
-        return
-    }
-
-    // Check for existing filter with the same key and set its key to nil
-    let key = key.lowercasedChar.first
-    let filter = QuickFilter(id: id, query: query, key: key)
+    let keyChar: Character? = key == .escape ? nil : key.lowercasedChar.first
+    let filter = QuickFilter(id: id, extensions: extensions, preQuery: preQuery, postQuery: postQuery, dirsOnly: dirsOnly, folders: folders?.isEmpty == true ? nil : folders, key: keyChar)
     let originalFilter = Defaults[.quickFilters].first { $0.id == originalID }
-    // if let key, let existingFilter = Defaults[.folderFilters].first(where: { $0.key == key }) {
-    //     Defaults[.folderFilters] = Defaults[.folderFilters].without(existingFilter) + [existingFilter.withKey(nil)]
-    // }
-    if let key, let existingFilter = Defaults[.quickFilters].first(where: { $0.key == key }), existingFilter != originalFilter {
-        Defaults[.quickFilters] = Defaults[.quickFilters].without([existingFilter, originalFilter ?? filter]) + [existingFilter.withKey(nil), filter]
-        FUZZY.quickFilter = filter
-        return
-    }
 
-    Defaults[.quickFilters] = Defaults[.quickFilters].without(originalFilter ?? filter) + [filter]
+    if let keyChar, let existingFilter = Defaults[.quickFilters].first(where: { $0.key == keyChar }), existingFilter != originalFilter {
+        Defaults[.quickFilters] = Defaults[.quickFilters].without([existingFilter, originalFilter ?? filter]) + [existingFilter.withKey(nil), filter]
+    } else {
+        Defaults[.quickFilters] = Defaults[.quickFilters].without(originalFilter ?? filter) + [filter]
+    }
     FUZZY.quickFilter = filter
 }
 
@@ -331,4 +329,370 @@ func saveFolderFilter(id: String, folders: [FilePath], key: SauceKey, originalID
 
     Defaults[.folderFilters] = Defaults[.folderFilters].without(originalFilter ?? filter) + [filter]
     FUZZY.folderFilter = filter
+}
+
+// MARK: - Flow Layout
+
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let result = layout(proposal: proposal, subviews: subviews)
+        return result.size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = layout(proposal: proposal, subviews: subviews)
+        for (idx, pos) in result.positions.enumerated() {
+            subviews[idx].place(at: CGPoint(x: bounds.minX + pos.x, y: bounds.minY + pos.y), proposal: .unspecified)
+        }
+    }
+
+    private func layout(proposal: ProposedViewSize, subviews: Subviews) -> (size: CGSize, positions: [CGPoint]) {
+        let maxWidth = proposal.width ?? .infinity
+        var positions = [CGPoint]()
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > maxWidth, x > 0 {
+                x = 0; y += rowHeight + spacing; rowHeight = 0
+            }
+            positions.append(CGPoint(x: x, y: y))
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+        }
+        return (CGSize(width: maxWidth, height: y + rowHeight), positions)
+    }
+}
+
+// MARK: - Filter Editor Sheet
+
+struct FilterEditorSheet: View {
+    @Default(.quickFilters) private var quickFilters
+    @Default(.folderFilters) private var folderFilters
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Filter Editor").font(.headline)
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding()
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Quick Filters
+                    Section {
+                        ForEach(quickFilters) { filter in
+                            QuickFilterRow(filter: filter)
+                        }
+                        Button(action: addQuickFilter) {
+                            Label("New Quick Filter", systemImage: "plus.circle")
+                        }.buttonStyle(.plain).foregroundColor(.accentColor)
+                    } header: {
+                        HStack {
+                            Text("Quick Filters").font(.subheadline).bold().foregroundStyle(.secondary)
+                            Spacer()
+                            Button(action: addQuickFilter) {
+                                Label("New Quick Filter", systemImage: "plus.circle")
+                            }.buttonStyle(.plain).foregroundColor(.accentColor).font(.system(size: 11))
+                        }
+                    }
+
+                    Divider()
+
+                    // Folder Filters
+                    Section {
+                        ForEach(folderFilters) { filter in
+                            FolderFilterRow(filter: filter)
+                        }
+                        Button(action: addFolderFilter) {
+                            Label("New Folder Filter", systemImage: "plus.circle")
+                        }.buttonStyle(.plain).foregroundColor(.accentColor)
+                    } header: {
+                        HStack {
+                            Text("Folder Filters").font(.subheadline).bold().foregroundStyle(.secondary)
+                            Spacer()
+                            Button(action: addFolderFilter) {
+                                Label("New Folder Filter", systemImage: "plus.circle")
+                            }.buttonStyle(.plain).foregroundColor(.accentColor).font(.system(size: 11))
+                        }
+                    }
+                }
+                .padding()
+            }
+        }
+        .frame(width: 700, height: 550)
+    }
+
+    private func addQuickFilter() {
+        let filter = QuickFilter(id: "New Filter", extensions: nil, preQuery: nil, dirsOnly: false, key: nil)
+        Defaults[.quickFilters].append(filter)
+    }
+
+    private func addFolderFilter() {
+        let filter = FolderFilter(id: "New Folder", folders: [], key: nil)
+        Defaults[.folderFilters].append(filter)
+    }
+}
+
+struct QuickFilterRow: View {
+    init(filter: QuickFilter) {
+        self.filter = filter
+        _name = State(initialValue: filter.id)
+        _extensions = State(initialValue: filter.extensions ?? "")
+        _preQuery = State(initialValue: filter.preQuery ?? "")
+        _postQuery = State(initialValue: filter.postQuery ?? "")
+        _dirsOnly = State(initialValue: filter.dirsOnly)
+        _folders = State(initialValue: filter.folders ?? [])
+        _hotkey = State(initialValue: filter.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape)
+    }
+
+    @EnvironmentObject var env: EnvState
+
+    let filter: QuickFilter
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(filter.id).font(.system(size: 12, weight: .bold))
+                Text(filter.header).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                Spacer()
+                Button(action: delete) {
+                    Image(systemName: "trash").foregroundStyle(.red)
+                }.buttonStyle(.plain)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    TextField("Name", text: $name)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 120)
+                        .onChange(of: name) { save() }
+                    TextField("Extensions (.png .jpg)", text: $extensions)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: extensions) { save() }
+                }
+                HStack {
+                    TextField("Pre-query", text: $preQuery)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: preQuery) { save() }
+                    TextField("Post-query", text: $postQuery)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: postQuery) { save() }
+                }
+                HStack(spacing: 12) {
+                    HStack(spacing: 4) {
+                        Toggle("Dirs only", isOn: $dirsOnly)
+                            .onChange(of: dirsOnly) { save() }
+                            .fixedSize()
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.04))
+                    .cornerRadius(4)
+
+                    HStack(spacing: 4) {
+                        Text("Hotkey").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text("\u{2325} +").font(.system(size: 10)).bold().foregroundStyle(.secondary)
+                        DynamicKey(key: $hotkey, recording: $recording, allowedKeys: .ALL_KEYS)
+                            .onChange(of: hotkey) { save() }
+                            .frame(width: 28)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.04))
+                    .cornerRadius(4)
+
+                    Spacer()
+                }
+                HStack(spacing: 6) {
+                    Image(systemName: "folder").font(.system(size: 11)).foregroundStyle(.secondary)
+                    if folders.isEmpty {
+                        Text("All locations").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    } else {
+                        FlowLayout(spacing: 4) {
+                            ForEach(folders) { folder in
+                                HStack(spacing: 3) {
+                                    Text(FuzzyClient.friendlyName(for: folder))
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                    Button(action: { folders.removeAll { $0 == folder }; save() }) {
+                                        Image(systemName: "xmark.circle.fill").font(.system(size: 9))
+                                    }.buttonStyle(.plain).foregroundStyle(.tertiary)
+                                }
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.primary.opacity(0.06))
+                                .cornerRadius(4)
+                            }
+                        }
+                    }
+                    Button(action: addFolder) {
+                        Image(systemName: "plus.circle").font(.system(size: 11))
+                    }.buttonStyle(.plain).foregroundStyle(.secondary)
+                }
+            }
+            .padding(10)
+            .background(Color.primary.opacity(0.03))
+            .cornerRadius(8)
+        }
+    }
+
+    @State private var name: String
+    @State private var extensions: String
+    @State private var preQuery: String
+    @State private var postQuery: String
+    @State private var dirsOnly: Bool
+    @State private var folders: [FilePath]
+    @State private var hotkey: SauceKey
+    @State private var recording = false
+
+    @Default(.quickFilters) private var quickFilters
+
+    private func save() {
+        guard let idx = quickFilters.firstIndex(of: filter) else { return }
+        let updated = QuickFilter(
+            id: name,
+            extensions: extensions.trimmed.isEmpty ? nil : extensions.trimmed,
+            preQuery: preQuery.trimmed.isEmpty ? nil : preQuery.trimmed,
+            postQuery: postQuery.trimmed.isEmpty ? nil : postQuery.trimmed,
+            dirsOnly: dirsOnly,
+            folders: folders.isEmpty ? nil : folders,
+            key: hotkey == .escape ? nil : hotkey.lowercasedChar.first
+        )
+        quickFilters[idx] = updated
+    }
+
+    private func delete() {
+        quickFilters.removeAll { $0 == filter }
+        if FUZZY.quickFilter == filter { FUZZY.quickFilter = nil }
+    }
+
+    private func addFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.begin { response in
+            if response == .OK {
+                for url in panel.urls {
+                    if let path = url.existingFilePath, !folders.contains(path) { folders.append(path) }
+                }
+                save()
+            }
+        }
+    }
+}
+
+struct FolderFilterRow: View {
+    init(filter: FolderFilter) {
+        self.filter = filter
+        _name = State(initialValue: filter.id)
+        _folders = State(initialValue: filter.folders)
+        _hotkey = State(initialValue: filter.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape)
+    }
+
+    @EnvironmentObject var env: EnvState
+
+    let filter: FolderFilter
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Searches in").font(.system(size: 12, weight: .bold))
+                Text(folders.map { FuzzyClient.friendlyName(for: $0) }.joined(separator: ", "))
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                Spacer()
+                Button(action: delete) {
+                    Image(systemName: "trash").foregroundStyle(.red)
+                }.buttonStyle(.plain)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    TextField("Name", text: $name)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 120)
+                        .onChange(of: name) { save() }
+
+                    HStack(spacing: 4) {
+                        Text("Hotkey").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text("\u{2325} +").font(.system(size: 10)).bold().foregroundStyle(.secondary)
+                        DynamicKey(key: $hotkey, recording: $recording, allowedKeys: .ALL_KEYS)
+                            .onChange(of: hotkey) { save() }
+                            .frame(width: 28)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.04))
+                    .cornerRadius(4)
+
+                    Spacer()
+                }
+                HStack(spacing: 6) {
+                    Image(systemName: "folder").font(.system(size: 11)).foregroundStyle(.secondary)
+                    if folders.isEmpty {
+                        Text("No folders").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    } else {
+                        FlowLayout(spacing: 4) {
+                            ForEach(folders) { folder in
+                                HStack(spacing: 3) {
+                                    Text(FuzzyClient.friendlyName(for: folder))
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                    Button(action: { folders.removeAll { $0 == folder }; save() }) {
+                                        Image(systemName: "xmark.circle.fill").font(.system(size: 9))
+                                    }.buttonStyle(.plain).foregroundStyle(.tertiary)
+                                }
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.primary.opacity(0.06))
+                                .cornerRadius(4)
+                            }
+                        }
+                    }
+                    Button(action: addFolder) {
+                        Image(systemName: "plus.circle").font(.system(size: 11))
+                    }.buttonStyle(.plain).foregroundStyle(.secondary)
+                }
+            }
+            .padding(10)
+            .background(Color.primary.opacity(0.03))
+            .cornerRadius(8)
+        }
+    }
+
+    @State private var name: String
+    @State private var folders: [FilePath]
+    @State private var hotkey: SauceKey
+    @State private var recording = false
+
+    @Default(.folderFilters) private var folderFilters
+
+    private func save() {
+        guard let idx = folderFilters.firstIndex(of: filter) else { return }
+        let updated = FolderFilter(id: name, folders: folders, key: hotkey == .escape ? nil : hotkey.lowercasedChar.first)
+        folderFilters[idx] = updated
+    }
+
+    private func delete() {
+        folderFilters.removeAll { $0 == filter }
+        if FUZZY.folderFilter == filter { FUZZY.folderFilter = nil }
+    }
+
+    private func addFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.begin { response in
+            if response == .OK {
+                for url in panel.urls {
+                    if let path = url.existingFilePath, !folders.contains(path) { folders.append(path) }
+                }
+                save()
+            }
+        }
+    }
 }

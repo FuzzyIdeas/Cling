@@ -1,45 +1,76 @@
-**/.local/fsindex*
-**/com.docker.docker/Data
-**/Firefox/Profiles/**/sessionstore-backups
-**/Firefox/Profiles/**/storage/default
-**/Firefox/Profiles/**/storage/permanent
-**/Google/Chrome*/Cache
-**/Google/Chrome*/leveldb
-**/IconJar*/Backups
-**/Sublime Text */Index
-*.com.google.Chrome
-*.pyc
-.cache
+.bundler/
+.cargo/git/
+.cargo/registry/
 .cocoapods
-.git
+.cpan/
+.dat.nosync*
+.DS_Store
+.gem/
+.gradle/
+.index-build/
+.m2/repository/
+.npm/
+.nuget/
 .opam
-/cores
-/dev
-/private
-/System/Applications/**/Contents/Resources
-/System/Volumes
-/System/Volumes
-**/var/postgres/base
-**/var/postgres/pg_stat_tmp
-**/var/postgres/pg_wal
-/usr/share
-/Volumes/*
-/xarts
-__pycache__
+.pnpm-store/
+.pub-cache/
+.rustup/toolchains/
+.stversions/
+.terraform/
+.tox/
+.venv/
+.yarn/
+*.com.google.Chrome
+*.egg-info/
+*.pyc
+*.xcworkspace/xcuserdata
+**/.local/fsindex*
+**/*.noindex
+**/*.photoslibrary/database
+**/*.photoslibrary/external
+**/*.photoslibrary/internal
+**/*.photoslibrary/private
+**/*.photoslibrary/resources
+**/*.photoslibrary/scopes
+**/*.sb-*
+**/com.docker.docker/Data
+**/Cookies-journal
+**/IconJar*/Backups
+**/Local Storage/leveldb/
+**/Network Persistent State
+**/sentry/scope*.json
+**/Spotify/Users/*/pending-messages*
+**/Sublime Text */Index
+**/TextIndex/
+**/TransportSecurity
+**/wharf/
 Cache
 Caches
 doc
-node_modules
-Xcode.app
-.dat.nosync*
-webappsstore.sqlite-wal
-**/Spotify/Users/*/pending-messages*
-.Trash
+io.tailscale.ipn.macos
+Library/**/*-shm
+Library/**/*.chrono-timeline
+Library/**/Data/tmp/
+Library/**/Firefox/Profiles/**/sessionstore-backups
+Library/**/Firefox/Profiles/**/storage/default
+Library/**/Firefox/Profiles/**/storage/permanent
+Library/**/Google/Chrome*/Cache
+Library/**/Google/Chrome*/leveldb
+Library/Application Support/**/.*
+Library/Application Support/Code*/Backups
+Library/Application Support/Code*/CachedData
+Library/Application Support/Code*/User/globalStorage
+Library/Application Support/Code*/User/workspaceStorage
+Library/Application Support/com.hegenberg.bettertouchtool*/com.mentalfaculty.ensembles.eventdata
+Library/Application Support/com.raycast.macos/posthog.queueFolder/
+Library/Application Support/Firefox/Profiles/**/datareporting/
+Library/Application Support/Firefox/Profiles/**/saved-telemetry-pings/
+Library/Application Support/Spotify/PersistentCache/Users/alin.p32-user/*.tmp
+Library/Assistant/SiriVocabulary/**/index-*
 Library/Biome/
 Library/DuetExpertCenter/
-**/wharf/
-**/Index.noindex/
-**/TextIndex/
-io.tailscale.ipn.macos
-.stversions/
-.DS_Store
+Library/HomeKit/metricsCounters/*.counters
+Library/Metadata/CoreSpotlight/*/
+Packages/
+Pods/
+webappsstore.sqlite-wal

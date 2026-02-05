@@ -5,9 +5,10 @@
 import AppKit
 import Combine
 import Defaults
-import EonilFSEvents
 import Lowtech
 import LowtechIndie
+import LowtechPro
+import Paddle
 import Sparkle
 import SwiftUI
 import System
@@ -31,9 +32,56 @@ func cleanup() {
 let HOUR_FACTOR: TimeInterval = 60 * 60
 let MINUTE_FACTOR: TimeInterval = 60
 
+@MainActor @Observable
+final class AppearanceManager {
+    init() {
+        let appearance = Defaults[.windowAppearance]
+        if #available(macOS 26, *) {
+            useGlass = appearance.isGlassy
+        } else {
+            useGlass = false
+        }
+        useVibrant = !appearance.isOpaque
+    }
+
+    static let shared = AppearanceManager()
+
+    var useGlass: Bool
+    var useVibrant: Bool
+
+    func update() {
+        let appearance = Defaults[.windowAppearance]
+        if #available(macOS 26, *) {
+            useGlass = appearance.isGlassy
+        } else {
+            useGlass = false
+        }
+        useVibrant = !appearance.isOpaque
+    }
+}
+
+let AM = AppearanceManager.shared
+
+@inline(__always) var proactive: Bool {
+    (PRO?.productActivated ?? false) || (PRO?.onTrial ?? false)
+}
+
+var PRODUCTS: [Any] {
+    if let product {
+        [product]
+    } else {
+        []
+    }
+}
+
 @MainActor
-class AppDelegate: LowtechIndieAppDelegate, Sendable {
-    static var shared: AppDelegate? { NSApp.delegate as? AppDelegate }
+class AppDelegate: LowtechProAppDelegate {
+    @MainActor
+    override public func willShowPaddle(_: PADUIType, product _: PADProduct) -> PADDisplayConfiguration? {
+        PADDisplayConfiguration(.window, hideNavigationButtons: false, parentWindow: nil)
+    }
+
+    static var shared: AppDelegate!
 
     var mainWindow: NSWindow? {
         NSApp.windows.first { $0.title == "Cling" }
@@ -43,6 +91,8 @@ class AppDelegate: LowtechIndieAppDelegate, Sendable {
     }
 
     override func applicationDidFinishLaunching(_ notification: Notification) {
+        AppDelegate.shared = self
+        swizzleDraggableToRealPath()
         NSApp.disableRelaunchOnLogin()
         if !SWIFTUI_PREVIEW,
            let app = NSWorkspace.shared.runningApplications.first(where: {
@@ -52,11 +102,24 @@ class AppDelegate: LowtechIndieAppDelegate, Sendable {
         {
             app.forceTerminate()
         }
+        Migration.run()
         FUZZY.start()
         setupCleanup()
 
         // Setup periodic relaunch timer
         scheduleRelaunchTimer(interval: 12 * HOUR_FACTOR) // 12 hours in seconds
+
+        if !SWIFTUI_PREVIEW {
+            paddleVendorID = "122873"
+            paddleAPIKey = "e1e517a68c1ed1bea2ac968a593ac147"
+            paddleProductID = "923424"
+            trialDays = 14
+            trialText = "This is a trial for the Pro features. After the trial, the app will automatically revert to the free version."
+            price = 12
+            productName = "Cling Pro"
+            vendorName = "THE LOW TECH GUYS SRL"
+            hasFreeFeatures = true
+        }
 
         super.applicationDidFinishLaunching(notification)
 
@@ -90,8 +153,17 @@ class AppDelegate: LowtechIndieAppDelegate, Sendable {
                 KM.specialKeyModifiers = change.newValue
                 KM.reinitHotkeys()
             }.store(in: &observers)
+        pub(.windowAppearance)
+            .sink { _ in
+                AM.update()
+            }.store(in: &observers)
 
         UM.updater = updateController.updater
+        PM.pro = pro
+        if !SWIFTUI_PREVIEW {
+            pro.checkProLicense()
+            let _ = invalidReq(PRODUCTS, nil)
+        }
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(windowDidBecomeMain(_:)),
@@ -112,14 +184,17 @@ class AppDelegate: LowtechIndieAppDelegate, Sendable {
                 WM.size = newSize
             }
 
+        if !Defaults[.showDockIcon] {
+            NSApp.setActivationPolicy(.accessory)
+        }
+
         let skipWindow = CommandLine.arguments.contains("--hidden")
         if Defaults[.showWindowAtLaunch], !skipWindow {
             WM.open("main")
             mainWindow?.becomeMain()
             mainWindow?.becomeKey()
             focus()
-        } else {
-            NSApp.setActivationPolicy(.accessory)
+        } else if !skipWindow {
             mainWindow?.close()
         }
     }
@@ -139,7 +214,6 @@ class AppDelegate: LowtechIndieAppDelegate, Sendable {
 //        log.debug("Resigned active")
         settingsWindow?.close()
         guard !WM.pinned else {
-            mainWindow?.level = .floating
             mainWindow?.alphaValue = 0.75
             return
         }
@@ -174,16 +248,10 @@ class AppDelegate: LowtechIndieAppDelegate, Sendable {
     }
 
     func focusWindow() {
-        mainWindow?.makeKeyAndOrderFront(nil)
-        mainWindow?.orderFrontRegardless()
-        mainWindow?.becomeMain()
-        mainWindow?.becomeKey()
-        mainAsyncAfter(0.1) {
-            self.mainWindow?.makeKeyAndOrderFront(nil)
-            self.mainWindow?.orderFrontRegardless()
-            self.mainWindow?.becomeMain()
-            self.mainWindow?.becomeKey()
-        }
+        guard let window = mainWindow else { return }
+        window.collectionBehavior.insert(.moveToActiveSpace)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -249,22 +317,31 @@ class AppDelegate: LowtechIndieAppDelegate, Sendable {
     @objc func windowDidBecomeMain(_ notification: Notification) {
         if let window = notification.object as? NSWindow, window.title == "Cling" {
             WM.mainWindowActive = true
+            FUZZY.refreshDefaultResultsIfNeeded()
 
             window.alphaValue = 1
-            window.level = .normal
-            window.titlebarAppearsTransparent = true
-            window.styleMask = [
-                .fullSizeContentView, .closable, .resizable, .miniaturizable, .titled,
-                .nonactivatingPanel,
-            ]
-            window.isMovableByWindowBackground = true
+            if !WM.pinned {
+                window.level = .normal
+            }
+
+            if !windowConfigured {
+                windowConfigured = true
+                window.titlebarAppearsTransparent = true
+                window.styleMask = [
+                    .fullSizeContentView, .closable, .resizable, .miniaturizable, .titled,
+                    .nonactivatingPanel,
+                ]
+                window.isMovableByWindowBackground = true
+                window.backgroundColor = .clear
+            }
             WM.size = window.frame.size
         }
     }
-
     func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
         cleanup()
     }
+
+    private var windowConfigured = false
 
     private var relaunchTimer: Timer?
     private var relaunchPostponedUntil: Date?
@@ -315,7 +392,7 @@ class AppDelegate: LowtechIndieAppDelegate, Sendable {
 
 @MainActor @Observable
 class WindowManager {
-    static let DEFAULT_SIZE = CGSize(width: 1010, height: 850)
+    static let DEFAULT_SIZE = CGSize(width: 1150, height: 850)
 
     var windowToOpen: String?
     var size = DEFAULT_SIZE
@@ -363,15 +440,45 @@ func batteryLevel() -> Double {
     return 1
 }
 
+struct WindowBackground: View {
+    var body: some View {
+        switch appearance {
+        case .glassy:
+            if #available(macOS 26, *) {
+                let lightOpacity: Double = colorScheme == .light ? 0.7 : 0.5
+                Color(.windowBackgroundColor).opacity(lightOpacity)
+                    .background(Color.clear.glassEffect(.regular, in: .rect))
+            } else {
+                let lightOpacity: Double = colorScheme == .light ? 0.4 : 0.5
+                Color(.windowBackgroundColor).opacity(lightOpacity)
+                    .background(.ultraThickMaterial)
+            }
+        case .vibrant:
+            let lightOpacity: Double = colorScheme == .light ? 0.4 : 0.5
+            Color(.windowBackgroundColor).opacity(lightOpacity)
+                .background(.ultraThickMaterial)
+        case .opaque:
+            Color(.windowBackgroundColor)
+        }
+    }
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    @Default(.windowAppearance) private var appearance
+
+}
+
 @main
 struct ClingApp: App {
     @Environment(\.openWindow) var openWindow
-    @Environment(\.dismiss) var dismiss
 
     var body: some Scene {
         Window("Cling", id: "main") {
             ContentView()
                 .frame(minWidth: WindowManager.DEFAULT_SIZE.width, minHeight: 300)
+                .background {
+                    WindowBackground()
+                }
                 .ignoresSafeArea()
                 .environmentObject(envState)
         }

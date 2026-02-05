@@ -8,31 +8,54 @@ struct QuickFilterAddSheet: View {
     @EnvironmentObject var env: EnvState
 
     @Binding var id: String
-    @Binding var query: String
+    @Binding var extensions: String
+    @Binding var preQuery: String
+    @Binding var postQuery: String
+    @Binding var dirsOnly: Bool
+    @Binding var folders: [FilePath]
     @Binding var key: SauceKey
 
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
-        VStack {
-            Text("New Quick Filter").font(.headline)
+        VStack(spacing: 12) {
+            Text("Quick Filter").font(.headline)
             HStack {
                 TextField("Name", text: $id)
                     .textFieldStyle(.roundedBorder)
-                    .onSubmit {
-                        guard !query.trimmed.isEmpty, !id.isEmpty else { return }
-                        dismiss()
-                    }.padding(.trailing, 8)
+                    .onSubmit { saveIfValid() }
+                    .padding(.trailing, 8)
                 Text("Hotkey: ")
-                Text("⌥ +").bold()
+                Text("\u{2325} +").bold()
                 DynamicKey(key: $key, recording: $env.recording, allowedKeys: .ALL_KEYS)
             }
-            TextField("Query", text: $query)
+
+            HStack {
+                TextField("Extensions (e.g. .pdf .png .jpeg)", text: $extensions)
+                    .textFieldStyle(.roundedBorder)
+                Toggle("Dirs only", isOn: $dirsOnly)
+            }
+
+            TextField("Pre-query (prepended before your search)", text: $preQuery)
                 .textFieldStyle(.roundedBorder)
-                .onSubmit {
-                    guard !query.trimmed.isEmpty, !id.isEmpty else { return }
-                    dismiss()
+            TextField("Post-query (appended after your search)", text: $postQuery)
+                .textFieldStyle(.roundedBorder)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Folders (optional)").font(.system(size: 11)).foregroundStyle(.secondary)
+                ForEach(folders) { folder in
+                    HStack {
+                        Text(folder.shellString).mono(11).lineLimit(1)
+                        Spacer()
+                        Button(action: { folders.removeAll { $0 == folder } }) {
+                            Image(systemName: "minus.circle.fill")
+                        }.buttonStyle(FlatButton(color: .clear, textColor: .red.opacity(0.7)))
+                    }
                 }
+                Button(action: addFolder) {
+                    Label("Add folder", systemImage: "plus")
+                }.font(.system(size: 11))
+            }
 
             HStack {
                 Button("Cancel") {
@@ -40,16 +63,35 @@ struct QuickFilterAddSheet: View {
                     dismiss()
                 }
                 Button("Save") { dismiss() }
-                    .disabled(query.trimmed.isEmpty || id.isEmpty)
+                    .disabled(id.isEmpty || (extensions.isEmpty && preQuery.isEmpty && postQuery.isEmpty && !dirsOnly && folders.isEmpty))
             }
         }
         .onExitCommand {
             id = ""
             dismiss()
         }
-
         .padding()
+    }
 
+    private func saveIfValid() {
+        guard !id.isEmpty, !extensions.isEmpty || !preQuery.isEmpty || !postQuery.isEmpty || dirsOnly || !folders.isEmpty else { return }
+        dismiss()
+    }
+
+    private func addFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.begin { response in
+            if response == .OK {
+                for url in panel.urls {
+                    if let path = url.existingFilePath, !folders.contains(path) {
+                        folders.append(path)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -139,7 +181,7 @@ struct FolderFilterAddSheet: View {
                     }
                     .padding(.trailing, 8)
                 Text("Hotkey: ")
-                Text("⌥ +").bold()
+                Text("\u{2325} +").bold()
                 DynamicKey(key: $key, recording: $env.recording, allowedKeys: .ALL_KEYS)
             }
 

@@ -5,6 +5,7 @@ import System
 
 struct ActionButtons: View {
     @Binding var selectedResults: Set<FilePath>
+    @Binding var selectedResultIDs: Set<String>
     var focused: FocusState<FocusedField?>.Binding
 
     @State private var appManager: AppManager = APP_MANAGER
@@ -13,6 +14,7 @@ struct ActionButtons: View {
     @Default(.suppressTrashConfirm) var suppressTrashConfirm: Bool
     @Default(.terminalApp) var terminalApp
     @Default(.editorApp) var editorApp
+    @Default(.shelfApp) var shelfApp
     @ObservedObject var km = KM
 
     var body: some View {
@@ -24,6 +26,7 @@ struct ActionButtons: View {
             pasteToFrontmostAppButton(inTerminal: inTerminal)
             openInTerminalButton
             openInEditorButton
+            shelveButton
             Spacer()
             openWithPickerButton
             Spacer()
@@ -34,11 +37,12 @@ struct ActionButtons: View {
             renameButton
         }
         .font(.system(size: 10))
-        .buttonStyle(TextButton(color: .fg.warm.opacity(0.9)))
+        .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
         .lineLimit(1)
     }
 
     private func pasteToFrontmostApp(inTerminal: Bool) {
+        RH.trackRun(selectedResults)
         if inTerminal {
             appManager.pasteToFrontmostApp(paths: selectedResults.arr, separator: " ", quoted: true)
         } else {
@@ -50,6 +54,7 @@ struct ActionButtons: View {
 
     private var showInFinderButton: some View {
         Button("⌘⏎ Show in Finder") {
+            RH.trackRun(selectedResults)
             NSWorkspace.shared.activateFileViewerSelecting(selectedResults.map(\.url))
         }
         .keyboardShortcut(.return, modifiers: [.command])
@@ -60,6 +65,7 @@ struct ActionButtons: View {
     private var openInTerminalButton: some View {
         if let terminal = terminalApp.existingFilePath?.url {
             Button("⌘T Open in \(terminalApp.filePath?.stem ?? "Terminal")") {
+                RH.trackRun(selectedResults)
                 let dirs = selectedResults.map { $0.isDir ? $0.url : $0.dir.url }.uniqued
                 NSWorkspace.shared.open(
                     dirs, withApplicationAt: terminal, configuration: .init(),
@@ -74,6 +80,7 @@ struct ActionButtons: View {
     private var openInEditorButton: some View {
         if let editor = editorApp.existingFilePath?.url {
             Button("⌘E Edit") {
+                RH.trackRun(selectedResults)
                 NSWorkspace.shared.open(
                     selectedResults.map(\.url), withApplicationAt: editor, configuration: .init(),
                     completionHandler: { _, _ in }
@@ -81,6 +88,22 @@ struct ActionButtons: View {
             }
             .keyboardShortcut("e", modifiers: [.command])
             .help("Open the selected files in the configured editor (\(editorApp.filePath?.stem ?? "TextEdit"))")
+        }
+    }
+    @ViewBuilder
+    private var shelveButton: some View {
+        if let shelf = shelfApp.existingFilePath?.url {
+            Button("⌘F Shelve in \(shelfApp.filePath?.stem ?? "shelf app")") {
+                RH.trackRun(selectedResults)
+                let config = NSWorkspace.OpenConfiguration()
+                config.activates = false
+                NSWorkspace.shared.open(
+                    selectedResults.map(\.url), withApplicationAt: shelf, configuration: config,
+                    completionHandler: { _, _ in }
+                )
+            }
+            .keyboardShortcut("f", modifiers: [.command])
+            .help("Shelve the selected files in \(shelfApp.filePath?.stem ?? "shelf app")")
         }
     }
 
@@ -114,6 +137,7 @@ struct ActionButtons: View {
             focused.wrappedValue = .openWith
             isPresentingOpenWithPicker = true
         }
+        .buttonStyle(.plain)
         .keyboardShortcut("o", modifiers: [.command])
         .opacity(0)
         .frame(width: 0)
@@ -192,8 +216,11 @@ struct ActionButtons: View {
         Button("⌘R Rename") {
             isPresentingRenameView = true
         }
-        .sheet(isPresented: $isPresentingRenameView, onDismiss: renameFiles) {
+        .sheet(isPresented: $isPresentingRenameView) {
             RenameView(originalPaths: selectedResults.arr, renamedPaths: $renamedPaths)
+        }
+        .onChange(of: renamedPaths) {
+            renameFiles()
         }
         .keyboardShortcut("r", modifiers: [.command])
         .help("Rename the selected files")
@@ -217,6 +244,7 @@ struct ActionButtons: View {
     }
 
     private func copyFiles() {
+        RH.trackRun(selectedResults)
         withAnimation(.fastSpring) { copiedFiles = true }
         mainAsyncAfter(ms: 150) { withAnimation(.easeOut(duration: 0.1)) { copiedFiles = false }}
 
@@ -260,6 +288,7 @@ struct ActionButtons: View {
     }
 
     private func openSelectedResults() {
+        RH.trackRun(selectedResults)
         for url in selectedResults.map(\.url) {
             NSWorkspace.shared.open(url)
         }
@@ -274,8 +303,11 @@ struct ActionButtons: View {
             let renamed = try performRenameOperation(
                 originalPaths: selectedResults.arr, renamedPaths: renamedPaths
             )
+            fuzzy.renamePaths(renamed)
+            fuzzy.scoredResults = fuzzy.scoredResults.map { renamed[$0] ?? $0 }
             fuzzy.results = fuzzy.results.map { renamed[$0] ?? $0 }
             selectedResults = selectedResults.map { renamed[$0] ?? $0 }.set
+            selectedResultIDs = Set(selectedResults.map(\.string))
         } catch {
             log.error("Error renaming files: \(error)")
         }

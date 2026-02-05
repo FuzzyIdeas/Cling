@@ -4,15 +4,22 @@ import Lowtech
 import System
 
 let DEFAULT_SCRIPTS = [
-    Bundle.main.url(forResource: "Copy to temporary folder", withExtension: "zsh")!.filePath!,
-    Bundle.main.url(forResource: "List archive contents", withExtension: "zsh")!.filePath!,
-    Bundle.main.url(forResource: "Archive", withExtension: "zsh")!.filePath!,
+    Bundle.main.url(forResource: "Copy to tmp", withExtension: "zsh")!.filePath!,
+    Bundle.main.url(forResource: "List contents", withExtension: "zsh")!.filePath!,
+    Bundle.main.url(forResource: "ZIP", withExtension: "zsh")!.filePath!,
+    Bundle.main.url(forResource: "Print", withExtension: "zsh")!.filePath!,
+    Bundle.main.url(forResource: "Diff", withExtension: "zsh")!.filePath!,
+    Bundle.main.url(forResource: "Compare", withExtension: "zsh")!.filePath!,
+    Bundle.main.url(forResource: "Disk usage", withExtension: "zsh")!.filePath!,
 ]
 let scriptsFolder: FilePath =
     FileManager.default.urls(for: .applicationScriptsDirectory, in: .userDomainMask).first?
         .appendingPathComponent("Cling", isDirectory: true).filePath ?? "~/.local/cling-scripts".filePath!
 let defaultScriptsMarker = scriptsFolder / ".default-scripts-installed"
 let SEVEN_ZIP = Bundle.main.url(forResource: "7zz", withExtension: nil)!.filePath!
+let DUST = Bundle.main.url(forResource: "dust", withExtension: nil)!.filePath!
+let TREE = Bundle.main.url(forResource: "tree", withExtension: nil)!.filePath!
+let TREEDIFF = Bundle.main.url(forResource: "treediff", withExtension: nil)!.filePath!
 
 @Observable
 class ScriptManager {
@@ -24,14 +31,18 @@ class ScriptManager {
         if !scriptsFolder.exists {
             scriptsFolder.mkdir(withIntermediateDirectories: true)
         }
-        if !defaultScriptsMarker.exists {
-            for script in DEFAULT_SCRIPTS {
-                _ = try? script.copy(to: scriptsFolder)
-            }
-            FileManager.default.createFile(atPath: defaultScriptsMarker.string, contents: nil, attributes: nil)
-        }
+        installDefaultScriptsIfNeeded()
         fetchScripts()
         startScriptsWatcher()
+    }
+
+    func installDefaultScriptsIfNeeded() {
+        guard !defaultScriptsMarker.exists else { return }
+        for script in DEFAULT_SCRIPTS {
+            _ = try? script.copy(to: scriptsFolder)
+        }
+        FileManager.default.createFile(atPath: defaultScriptsMarker.string, contents: nil, attributes: nil)
+        fetchScripts()
     }
 
     // reads the script
@@ -41,24 +52,38 @@ class ScriptManager {
 
     static let EXTENSIONS_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+extensions:\s*([a-z0-9\-\., \t]*)"#).anchorsMatchLineEndings().ignoresCase()
     static let SHOW_OUTPUT_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+showOutput:\s*(true|yes|1|on|enable)"#).anchorsMatchLineEndings().ignoresCase()
+    static let MIN_FILES_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+minFiles:\s*(\d+)"#).anchorsMatchLineEndings().ignoresCase()
+    static let MAX_FILES_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+maxFiles:\s*(\d+)"#).anchorsMatchLineEndings().ignoresCase()
+    static let FILES_ONLY_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+filesOnly:\s*(true|yes|1|on|enable)"#).anchorsMatchLineEndings().ignoresCase()
+    static let DIRS_ONLY_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+dirsOnly:\s*(true|yes|1|on|enable)"#).anchorsMatchLineEndings().ignoresCase()
+    static let CONFIRM_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+confirm:\s*(true|yes|1|on|enable)"#).anchorsMatchLineEndings().ignoresCase()
+    static let SEQUENTIAL_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+sequential:\s*(true|yes|1|on|enable)"#).anchorsMatchLineEndings().ignoresCase()
+    static let DESCRIPTION_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+description:\s*(.+)"#).anchorsMatchLineEndings().ignoresCase()
 
+    var reservedShortcuts: Set<Character> = []
     var scriptShortcuts: [URL: Character] = [:]
     var scriptURLs: [URL] = []
     var scriptsByExtension: [String: [URL]] = [:]
     var scriptsWithOutput: Set<URL> = []
+    var scriptMinFiles: [URL: Int] = [:]
+    var scriptMaxFiles: [URL: Int] = [:]
+    var scriptsFilesOnly: Set<URL> = []
+    var scriptsDirsOnly: Set<URL> = []
+    var scriptsWithConfirm: Set<URL> = []
+    var scriptsSequential: Set<URL> = []
+    var scriptDescriptions: [URL: String] = [:]
     var lastScript: URL?
     var lastOutputFile: FilePath?
     var lastErrorFile: FilePath?
     @ObservationIgnored var shellEnv: [String: String]? = nil
 
-    @ObservationIgnored lazy var combinedOutputFile: FilePath? = createCombinedOutputFile()
+    var combinedOutputFile: FilePath? { createCombinedOutputFile() }
 
     var process: Process? {
         didSet {
             guard let process else {
                 return
             }
-            combinedOutputFile = nil
             lastOutputFile = process.stdoutFilePath?.existingFilePath
             lastErrorFile = process.stderrFilePath?.existingFilePath
             process.terminationHandler = { [self] process in
@@ -78,7 +103,6 @@ class ScriptManager {
         lastScript = nil
         lastOutputFile = nil
         lastErrorFile = nil
-        combinedOutputFile = nil
     }
 
     func createCombinedOutputFile() -> FilePath? {
@@ -110,6 +134,15 @@ class ScriptManager {
         }
     }
 
+    func isEligible(_ script: URL, forPaths paths: [FilePath]) -> Bool {
+        let count = paths.count
+        if let min = scriptMinFiles[script], count < min { return false }
+        if let max = scriptMaxFiles[script], count > max { return false }
+        if scriptsFilesOnly.contains(script), paths.contains(where: \.isDir) { return false }
+        if scriptsDirsOnly.contains(script), paths.contains(where: { !$0.isDir }) { return false }
+        return true
+    }
+
     func run(script: URL, args: [String]) {
         guard script.fileExists else {
             log.error("Script not found: \(script)")
@@ -118,9 +151,15 @@ class ScriptManager {
         lastScript = script
         var env = shellEnv ?? [:]
         env["CLING_SEVEN_ZIP"] = SEVEN_ZIP.string
-        env["CLING_FZF"] = FZF_BINARY.string
-        env["CLING_FD"] = FD_BINARY.string
-        process = shellProc(script.path, args: args, env: env)
+        env["CLING_DUST"] = DUST.string
+        env["CLING_TREE"] = TREE.string
+        env["CLING_TREEDIFF"] = TREEDIFF.string
+
+        if scriptsSequential.contains(script) {
+            runSequential(script: script, args: args, env: env)
+        } else {
+            process = shellProc(script.path, args: args, env: env)
+        }
     }
 
     func commonScripts(for exts: [String]) -> [URL] {
@@ -142,6 +181,13 @@ class ScriptManager {
 
             scriptsByExtension = [:]
             scriptsWithOutput = []
+            scriptMinFiles = [:]
+            scriptMaxFiles = [:]
+            scriptsFilesOnly = []
+            scriptsDirsOnly = []
+            scriptsWithConfirm = []
+            scriptsSequential = []
+            scriptDescriptions = [:]
             for script in scriptURLs {
                 guard let scriptContents = try? String(contentsOf: script) else {
                     continue
@@ -150,9 +196,30 @@ class ScriptManager {
                 if scriptContents.contains(Self.SHOW_OUTPUT_REGEX) {
                     scriptsWithOutput.insert(script)
                 }
+                if let match = try? Self.MIN_FILES_REGEX.firstMatch(in: scriptContents), let n = Int(match.1) {
+                    scriptMinFiles[script] = n
+                }
+                if let match = try? Self.MAX_FILES_REGEX.firstMatch(in: scriptContents), let n = Int(match.1) {
+                    scriptMaxFiles[script] = n
+                }
+                if scriptContents.contains(Self.FILES_ONLY_REGEX) {
+                    scriptsFilesOnly.insert(script)
+                }
+                if scriptContents.contains(Self.DIRS_ONLY_REGEX) {
+                    scriptsDirsOnly.insert(script)
+                }
+                if scriptContents.contains(Self.CONFIRM_REGEX) {
+                    scriptsWithConfirm.insert(script)
+                }
+                if scriptContents.contains(Self.SEQUENTIAL_REGEX) {
+                    scriptsSequential.insert(script)
+                }
+                if let match = try? Self.DESCRIPTION_REGEX.firstMatch(in: scriptContents) {
+                    scriptDescriptions[script] = match.1.trimmingCharacters(in: .whitespaces)
+                }
             }
 
-            scriptShortcuts = computeShortcuts(for: scriptURLs)
+            scriptShortcuts = computeShortcuts(for: scriptURLs, reserved: reservedShortcuts)
         } catch {
             scriptURLs = []
             scriptShortcuts = [:]
@@ -185,6 +252,26 @@ class ScriptManager {
         didSet {
             oldValue?.cancel()
         }
+    }
+
+    private func runSequential(script: URL, args: [String], env: [String: String]) {
+        var remaining = args
+        func runNext() {
+            guard !remaining.isEmpty else {
+                return
+            }
+            let arg = remaining.removeFirst()
+            process = shellProc(script.path, args: [arg], env: env)
+            if remaining.isNotEmpty {
+                // Override the terminationHandler set by didSet to chain the next file
+                process?.terminationHandler = { _ in
+                    mainActor {
+                        runNext()
+                    }
+                }
+            }
+        }
+        runNext()
     }
 
     private func loadShellEnv() {
