@@ -1,3 +1,24 @@
+# 2.0.1
+## Features
+
+- Copy to folder (⌘⌥C)
+- Move to folder (⌘M)
+- Copy filenames (⌘⌥⇧C)
+- Hold `Option` to see alternate actions in the toolbar
+
+## Fixes
+
+- Ignoring a folder in the ignore file now properly removes all its contents from search results
+- Ignoring a specific file now works correctly after reindexing
+
+## Improvements
+
+- Library scope is now available in the free version
+- Reindex button for each search scope in Settings
+- CLI `reindex` command now accepts volume paths (e.g. `cling reindex --scope /Volumes/MyDrive`)
+- Option to use `~/` or full home dir path when copying paths
+- Folder search accepts trailing slashes
+
 # 2.0.0
 ## Cling 2.0: New Search Engine
 

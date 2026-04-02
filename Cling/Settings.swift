@@ -343,6 +343,7 @@ extension Defaults.Keys {
     static let maxResultsCount = Key<Int>("maxResultsCount", default: 1000)
     static let externalVolumes = Key<[FilePath]>("externalVolumes", default: [])
     static let disabledVolumes = Key<[FilePath]>("disabledVolumes", default: [])
+    static let copyPathsWithTilde = Key<Bool>("copyPathsWithTilde", default: true)
 
     static let enableGlobalHotkey = Key<Bool>("enableGlobalHotkey", default: true)
     static let showAppKey = Key<SauceKey>("showAppKey", default: SauceKey.slash)

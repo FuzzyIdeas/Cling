@@ -235,11 +235,13 @@ struct Reindex: ParsableCommand {
     @Flag(name: .shortAndLong, help: "Wait for indexing to finish")
     var wait = false
 
-    @Option(name: .shortAndLong, parsing: .upToNextOption, help: "Scopes to reindex (home, library, applications, system, root). Omit for all.")
+    @Option(name: .shortAndLong, parsing: .upToNextOption, help: "Scopes to reindex (home, library, applications, system, root) or volume paths (/Volumes/...). Omit for all.")
     var scope: [String] = []
 
     mutating func run() throws {
-        let request = ClingRequest(command: .reindex, rebuild: rebuild, scopes: scope.isEmpty ? nil : scope)
+        let volumes = scope.filter { $0.hasPrefix("/Volumes/") || $0.hasPrefix("/Volumes") }
+        let scopes = scope.filter { !$0.hasPrefix("/Volumes") }
+        let request = ClingRequest(command: .reindex, rebuild: rebuild, scopes: scopes.isEmpty && volumes.isEmpty ? nil : scopes, paths: volumes.isEmpty ? nil : volumes)
         guard let data = try sendMachPort(data: JSONEncoder().encode(request), recvTimeout: 300) else {
             fputs("error: no response from Cling app\n", stderr)
             throw ExitCode.failure

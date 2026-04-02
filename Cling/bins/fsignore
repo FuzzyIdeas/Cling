@@ -65,7 +65,7 @@ Library/Application Support/com.hegenberg.bettertouchtool*/com.mentalfaculty.ens
 Library/Application Support/com.raycast.macos/posthog.queueFolder/
 Library/Application Support/Firefox/Profiles/**/datareporting/
 Library/Application Support/Firefox/Profiles/**/saved-telemetry-pings/
-Library/Application Support/Spotify/PersistentCache/Users/alin.p32-user/*.tmp
+Library/Application Support/Spotify/PersistentCache/Users/*-user/*.tmp
 Library/Assistant/SiriVocabulary/**/index-*
 Library/Biome/
 Library/DuetExpertCenter/

@@ -15,30 +15,48 @@ struct ActionButtons: View {
     @Default(.terminalApp) var terminalApp
     @Default(.editorApp) var editorApp
     @Default(.shelfApp) var shelfApp
+    @Default(.copyPathsWithTilde) var copyPathsWithTilde
     @ObservedObject var km = KM
 
     var body: some View {
         let inTerminal = appManager.frontmostAppIsTerminal
+        let showingAlternates = km.ralt || km.lalt
 
         HStack {
-            openButton(inTerminal: inTerminal)
-            showInFinderButton
-            pasteToFrontmostAppButton(inTerminal: inTerminal)
-            openInTerminalButton
-            openInEditorButton
-            shelveButton
-            Spacer()
-            openWithPickerButton
-            Spacer()
+            if !showingAlternates {
+                openButton(inTerminal: inTerminal)
+                showInFinderButton
+                pasteToFrontmostAppButton(inTerminal: inTerminal)
+                openInTerminalButton
+                openInEditorButton
+                shelveButton
+                Spacer()
+                openWithPickerButton
+                Spacer()
+            }
             copyFilesButton.disabled(focused.wrappedValue != .list)
             copyPathsButton
+            if !showingAlternates {
+                moveToButton
+            }
             trashButton.disabled(focused.wrappedValue != .list)
-            quicklookButton
-            renameButton
+            if !showingAlternates {
+                quicklookButton
+                renameButton
+            }
         }
         .font(.system(size: 10))
         .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
         .lineLimit(1)
+        .sheet(isPresented: $isPresentingCopyToSheet) {
+            FileOperationSheet(operation: .copy, files: selectedResults.arr)
+        }
+        .sheet(isPresented: $isPresentingMoveToSheet) {
+            FileOperationSheet(operation: .move, files: selectedResults.arr) { movedPaths in
+                selectedResults.subtract(movedPaths)
+                fuzzy.results = fuzzy.results.filter { !movedPaths.contains($0) }
+            }
+        }
     }
 
     private func pasteToFrontmostApp(inTerminal: Bool) {
@@ -107,26 +125,47 @@ struct ActionButtons: View {
         }
     }
 
+    @ViewBuilder
     private var copyFilesButton: some View {
-        Button(action: copyFiles) {
-            Text("⌘C Copy")
+        if km.ralt || km.lalt {
+            Button("⌘⌥C Copy to...") {
+                isPresentingCopyToSheet = true
+            }
+            .keyboardShortcut("c", modifiers: [.command, .option])
+            .help("Copy the selected files to a folder")
+        } else {
+            Button(action: copyFiles) {
+                Text("⌘C Copy")
+            }
+            .keyboardShortcut("c", modifiers: [.command])
+            .help("Copy the selected files")
+            .background(Color.inverted.opacity(copiedFiles ? 1.0 : 0.0))
+            .shadow(color: Color.black.opacity(copiedFiles ? 0.1 : 0.0), radius: 3)
+            .scaleEffect(copiedFiles ? 1.1 : 1)
         }
-        .keyboardShortcut("c", modifiers: [.command])
-        .help("Copy the selected files")
-        .background(Color.inverted.opacity(copiedFiles ? 1.0 : 0.0))
-        .shadow(color: Color.black.opacity(copiedFiles ? 0.1 : 0.0), radius: 3)
-        .scaleEffect(copiedFiles ? 1.1 : 1)
     }
 
+    @ViewBuilder
     private var copyPathsButton: some View {
-        Button(action: copyPaths) {
-            Text("⌘⇧C Copy paths")
+        if km.ralt || km.lalt {
+            Button(action: copyFilenames) {
+                Text("⌘⌥⇧C Copy filenames")
+            }
+            .keyboardShortcut("c", modifiers: [.command, .shift, .option])
+            .help("Copy the filenames of the selected files")
+            .background(Color.inverted.opacity(copiedPaths ? 1.0 : 0.0))
+            .shadow(color: Color.black.opacity(copiedPaths ? 0.1 : 0.0), radius: 3)
+            .scaleEffect(copiedPaths ? 1.1 : 1)
+        } else {
+            Button(action: copyPaths) {
+                Text("⌘⇧C Copy paths")
+            }
+            .keyboardShortcut("c", modifiers: [.command, .shift])
+            .help("Copy the paths of the selected files")
+            .background(Color.inverted.opacity(copiedPaths ? 1.0 : 0.0))
+            .shadow(color: Color.black.opacity(copiedPaths ? 0.1 : 0.0), radius: 3)
+            .scaleEffect(copiedPaths ? 1.1 : 1)
         }
-        .keyboardShortcut("c", modifiers: [.command, .shift])
-        .help("Copy the paths of the selected files")
-        .background(Color.inverted.opacity(copiedPaths ? 1.0 : 0.0))
-        .shadow(color: Color.black.opacity(copiedPaths ? 0.1 : 0.0), radius: 3)
-        .scaleEffect(copiedPaths ? 1.1 : 1)
     }
 
     @State private var copiedPaths = false
@@ -256,11 +295,26 @@ struct ActionButtons: View {
         withAnimation(.fastSpring) { copiedPaths = true }
         mainAsyncAfter(ms: 150) { withAnimation(.easeOut(duration: 0.1)) { copiedPaths = false }}
 
+        let pathStr: (FilePath) -> String = copyPathsWithTilde ? { $0.shellString } : { $0.string }
+
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(
             appManager.frontmostAppIsTerminal
-                ? selectedResults.map { $0.shellString.replacingOccurrences(of: " ", with: "\\ ") }.joined(separator: " ")
-                : selectedResults.map(\.string).joined(separator: "\n"), forType: .string
+                ? selectedResults.map { pathStr($0).replacingOccurrences(of: " ", with: "\\ ") }.joined(separator: " ")
+                : selectedResults.map { pathStr($0) }.joined(separator: "\n"), forType: .string
+        )
+    }
+
+    private func copyFilenames() {
+        withAnimation(.fastSpring) { copiedPaths = true }
+        mainAsyncAfter(ms: 150) { withAnimation(.easeOut(duration: 0.1)) { copiedPaths = false }}
+
+        let filenames = selectedResults.map(\.name.string)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(
+            appManager.frontmostAppIsTerminal
+                ? filenames.map { $0.replacingOccurrences(of: " ", with: "\\ ") }.joined(separator: " ")
+                : filenames.joined(separator: "\n"), forType: .string
         )
     }
 
@@ -314,8 +368,108 @@ struct ActionButtons: View {
         self.renamedPaths = nil
     }
 
+    private var moveToButton: some View {
+        Button("⌘M Move to...") {
+            isPresentingMoveToSheet = true
+        }
+        .keyboardShortcut("m", modifiers: [.command])
+        .help("Move the selected files to a folder")
+    }
+
     @State private var isPresentingRenameView = false
     @State private var renamedPaths: [FilePath]? = nil
     @State private var isPresentingOpenWithPicker = false
     @State private var isPresentingConfirm = false
+    @State private var isPresentingCopyToSheet = false
+    @State private var isPresentingMoveToSheet = false
+}
+
+struct FileOperationSheet: View {
+    enum Operation: String {
+        case copy = "Copy"
+        case move = "Move"
+    }
+
+    let operation: Operation
+    let files: [FilePath]
+    var onComplete: (Set<FilePath>) -> Void = { _ in }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("\(operation.rawValue) \(files.count) file\(files.count == 1 ? "" : "s") to")
+                .font(.headline)
+
+            HStack {
+                TextField("Destination folder", text: $destinationPath)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { perform() }
+
+                Button("Browse...") { browse() }
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(operation.rawValue) { perform() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(destinationPath.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding()
+        .frame(width: 400)
+    }
+
+    @State private var destinationPath = "~/"
+    @Environment(\.dismiss) private var dismiss
+
+    private func expandedURL() -> URL {
+        var path = destinationPath.trimmingCharacters(in: .whitespaces)
+        if path.hasPrefix("~") {
+            path = FileManager.default.homeDirectoryForCurrentUser.path + String(path.dropFirst())
+        }
+        return URL(fileURLWithPath: path)
+    }
+
+    private func browse() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = expandedURL()
+        if panel.runModal() == .OK, let url = panel.url {
+            destinationPath = url.path.shellString
+        }
+    }
+
+    private func perform() {
+        let destURL = expandedURL()
+        let destPath = destURL.path
+
+        var isDir: ObjCBool = false
+        if !FileManager.default.fileExists(atPath: destPath, isDirectory: &isDir) || !isDir.boolValue {
+            do {
+                try FileManager.default.createDirectory(atPath: destPath, withIntermediateDirectories: true)
+            } catch {
+                log.error("Failed to create directory \(destPath): \(error.localizedDescription)")
+                return
+            }
+        }
+
+        guard let dest = destURL.existingFilePath else { return }
+        var processed = Set<FilePath>()
+        for file in files {
+            do {
+                switch operation {
+                case .copy: try file.copy(to: dest)
+                case .move: try file.move(to: dest)
+                }
+                processed.insert(file)
+            } catch {
+                log.error("Failed to \(operation.rawValue.lowercased()) \(file.shellString) to \(dest.shellString): \(error.localizedDescription)")
+            }
+        }
+        onComplete(processed)
+        dismiss()
+    }
 }

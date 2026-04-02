@@ -1111,6 +1111,10 @@ final class SearchEngine: @unchecked Sendable {
                 }
 
                 let fullPath = String(decoding: UnsafeBufferPointer(start: pathPtr, count: pathLen), as: UTF8.self)
+                if let ignoreFile, fullPath.isIgnored(in: ignoreFile) {
+                    skippedIgnore &+= 1
+                    continue
+                }
                 batch.append((fullPath, false))
                 added &+= 1
 
@@ -1234,6 +1238,7 @@ final class SearchEngine: @unchecked Sendable {
                         let ext = "." + (url.pathExtension.lowercased())
                         if ext.count > 1, ignoredExtensions.contains(ext) { continue }
                     }
+                    if let ignoreFile, path.isIgnored(in: ignoreFile) { continue }
                 }
 
                 batch.append((path, isDir))
@@ -1370,6 +1375,7 @@ final class SearchEngine: @unchecked Sendable {
             guard isInToken(token) else { return nil }
             var path = String(token.dropFirst(3))
             if path.hasPrefix("~") { path = homePath + path.dropFirst() }
+            while path.count > 1, path.hasSuffix("/") { path = String(path.dropLast()) }
             return path
         }
         let extTokenBytes: [[UInt8]] = qTokens.compactMap { isExtToken($0) ? Array(extString($0).utf8) : nil }

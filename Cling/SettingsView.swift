@@ -34,6 +34,7 @@ struct SettingsView: View {
     @Default(.triggerKeys) private var triggerKeys
     @Default(.searchScopes) private var searchScopes
     @Default(.externalVolumes) private var externalVolumes
+    @Default(.copyPathsWithTilde) private var copyPathsWithTilde
 
     private func selectApp(type: String, onCompletion: @escaping (URL) -> Void) {
         let panel = NSOpenPanel()
@@ -143,6 +144,13 @@ struct SettingsView: View {
                         .round(11, weight: .regular).foregroundColor(.secondary)
                 ).fixedSize()
             }
+            Toggle(isOn: $copyPathsWithTilde) {
+                (
+                    Text("Use ~ in copied paths")
+                        + Text("\nReplace /Users/\(NSUserName())/ with ~/ when copying or exporting paths")
+                        .round(11, weight: .regular).foregroundColor(.secondary)
+                ).fixedSize()
+            }
             HStack {
                 Picker(selection: $defaultResultsMode) {
                     ForEach(DefaultResultsMode.allCases, id: \.self) { mode in
@@ -191,38 +199,29 @@ struct SettingsView: View {
             Section(header: Text("Search")) {
                 Section(header: Text("Search scopes")) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Toggle(isOn: SearchScope.home.binding) {
-                            (
-                                Text("Home")
-                                    + Text("\nUser home directory (`~`) excluding `~/Library`")
-                                    .font(.system(size: 11)).foregroundColor(.secondary)
-                            ).fixedSize()
+                        scopeRow(.home, label: "Home", detail: "User home directory (`~`) excluding `~/Library`")
+                        scopeRow(.applications, label: "Applications", detail: "`/Applications`, `/System/Applications`")
+                        scopeRow(.library, label: "Library", detail: "User library directory (`~/Library`)")
+                        HStack {
+                            Toggle(isOn: SearchScope.system.binding) {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    HStack(spacing: 6) { Text("System"); ProBadge() }
+                                    Text("`/System`").font(.system(size: 11)).foregroundColor(.secondary)
+                                }.fixedSize()
+                            }.disabled(!proactive)
+                            Spacer()
+                            reindexButton(for: .system)
                         }
-                        Toggle(isOn: SearchScope.applications.binding) {
-                            (
-                                Text("Applications")
-                                    + Text("\n`/Applications`, `/System/Applications`")
-                                    .font(.system(size: 11)).foregroundColor(.secondary)
-                            ).fixedSize()
+                        HStack {
+                            Toggle(isOn: SearchScope.root.binding) {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    HStack(spacing: 6) { Text("Root"); ProBadge() }
+                                    Text("`/usr`, `/bin`, `/sbin`, `/opt`, `/etc`, `/Library`, `/var`, `/private`").font(.system(size: 11)).foregroundColor(.secondary)
+                                }.fixedSize()
+                            }.disabled(!proactive)
+                            Spacer()
+                            reindexButton(for: .root)
                         }
-                        Toggle(isOn: SearchScope.library.binding) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                HStack(spacing: 6) { Text("Library"); ProBadge() }
-                                Text("User library directory (`~/Library`)").font(.system(size: 11)).foregroundColor(.secondary)
-                            }.fixedSize()
-                        }.disabled(!proactive)
-                        Toggle(isOn: SearchScope.system.binding) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                HStack(spacing: 6) { Text("System"); ProBadge() }
-                                Text("`/System`").font(.system(size: 11)).foregroundColor(.secondary)
-                            }.fixedSize()
-                        }.disabled(!proactive)
-                        Toggle(isOn: SearchScope.root.binding) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                HStack(spacing: 6) { Text("Root"); ProBadge() }
-                                Text("`/usr`, `/bin`, `/sbin`, `/opt`, `/etc`, `/Library`, `/var`, `/private`").font(.system(size: 11)).foregroundColor(.secondary)
-                            }.fixedSize()
-                        }.disabled(!proactive)
 
                         Divider()
                         VolumeListView().disabled(!proactive)
@@ -426,6 +425,31 @@ struct SettingsView: View {
     @Default(.editorApp) private var editorApp
     @Default(.terminalApp) private var terminalApp
     @Default(.shelfApp) private var shelfApp
+
+    private func scopeRow(_ scope: SearchScope, label: String, detail: String) -> some View {
+        HStack {
+            Toggle(isOn: scope.binding) {
+                (
+                    Text(label)
+                        + Text("\n\(detail)")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                ).fixedSize()
+            }
+            Spacer()
+            reindexButton(for: scope)
+        }
+    }
+
+    @ViewBuilder
+    private func reindexButton(for scope: SearchScope) -> some View {
+        if !fuzzy.backgroundIndexing, searchScopes.contains(scope) {
+            Button(action: { fuzzy.refresh(pauseSearch: false, scopes: [scope]) }) {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .help("Reindex \(scope.label)")
+        }
+    }
 }
 
 struct IgnoreHelpText: View {

@@ -134,7 +134,7 @@ class FuzzyClient {
         .home: 2, .applications: 1, .library: 0, .system: -1, .root: -1,
     ]
 
-    static let freeScopes: Set<SearchScope> = [.home, .applications]
+    static let freeScopes: Set<SearchScope> = [.home, .applications, .library]
 
     @ObservationIgnored var searchTask: Task<Void, Never>?
     /// Thread-safe coordinator for CLI and multi-engine search
@@ -154,35 +154,6 @@ class FuzzyClient {
     var results: [FilePath] = []
     var seenPaths: Set<String> = []
     var operation = ""
-    @ObservationIgnored private var _lastOperationUpdate: CFAbsoluteTime = 0
-    @ObservationIgnored private var _operationThrottle: Task<Void, Never>?
-
-    func setOperation(_ value: String) {
-        if value.isEmpty {
-            _operationThrottle?.cancel()
-            _operationThrottle = nil
-            operation = value
-            _lastOperationUpdate = CFAbsoluteTimeGetCurrent()
-            return
-        }
-        let now = CFAbsoluteTimeGetCurrent()
-        let elapsed = now - _lastOperationUpdate
-        if elapsed >= 0.5 {
-            _operationThrottle?.cancel()
-            _operationThrottle = nil
-            operation = value
-            _lastOperationUpdate = now
-        } else {
-            _operationThrottle?.cancel()
-            _operationThrottle = Task {
-                try? await Task.sleep(for: .milliseconds(Int(500 - elapsed * 1000)))
-                guard !Task.isCancelled else { return }
-                self.operation = value
-                self._lastOperationUpdate = CFAbsoluteTimeGetCurrent()
-                self._operationThrottle = nil
-            }
-        }
-    }
     var scoredResults: [FilePath] = []
     var recents: [FilePath] = [] // Merged default results (live index + MDQuery)
     var sortedRecents: [FilePath] = [] // Same, sorted by current sort field
@@ -420,6 +391,32 @@ class FuzzyClient {
         return filtered.prefix(maxResults * 2).filter { seen.insert($0.path).inserted }.prefix(maxResults).map { $0 }
     }
 
+    func setOperation(_ value: String) {
+        if value.isEmpty {
+            _operationThrottle?.cancel()
+            _operationThrottle = nil
+            operation = value
+            _lastOperationUpdate = CFAbsoluteTimeGetCurrent()
+            return
+        }
+        let now = CFAbsoluteTimeGetCurrent()
+        let elapsed = now - _lastOperationUpdate
+        if elapsed >= 0.5 {
+            _operationThrottle?.cancel()
+            _operationThrottle = nil
+            operation = value
+            _lastOperationUpdate = now
+        } else {
+            _operationThrottle?.cancel()
+            _operationThrottle = Task {
+                try? await Task.sleep(for: .milliseconds(Int(500 - elapsed * 1000)))
+                guard !Task.isCancelled else { return }
+                self.operation = value
+                self._lastOperationUpdate = CFAbsoluteTimeGetCurrent()
+                self._operationThrottle = nil
+            }
+        }
+    }
     /// Log an activity with optional duration tracking.
     /// Call with a key to start timing, call again with the same key to log with duration.
     /// Log an activity. Set `ongoing: true` for operations in progress (shows spinner).
@@ -845,24 +842,39 @@ class FuzzyClient {
 
     func cleanRecentsEngine() {
         let entries = recentsEngine.entries
+        let homePrefix = HOME.string + "/"
+        let ignoreFile: String? = fsignore.exists ? fsignoreString : nil
+
+        log.debug("cleanRecentsEngine: \(entries.count) entries, ignoreFile=\(ignoreFile ?? "nil")")
+
         var toRemove: [String] = []
         var i = 0
         while i < entries.count {
-            let path = entries[i].path
-            if !path.isEmpty, isPathBlocked(path) {
-                toRemove.append(path)
+            let entry = entries[i]
+            let path = entry.path
+            if !path.isEmpty {
+                if isPathBlocked(path) {
+                    toRemove.append(path)
+                } else if let ignoreFile, path.hasPrefix(homePrefix) {
+                    if path.isIgnored(in: ignoreFile) {
+                        toRemove.append(path)
+                    }
+                }
             }
             i += 1
         }
         for path in toRemove {
             recentsEngine.removePath(path)
         }
-        liveIndexChanges.removeAll { isPathBlocked($0.path) }
+        liveIndexChanges.removeAll { change in
+            isPathBlocked(change.path) || (ignoreFile != nil && change.path.hasPrefix(homePrefix) && change.path.isIgnored(in: ignoreFile!))
+        }
         if !toRemove.isEmpty {
             logActivity("Cleaned \(toRemove.count) ignored path\(toRemove.count == 1 ? "" : "s") from recents")
             updateIndexedCount()
             if noQuery { updateDefaultResults(debounce: true) }
         }
+        log.debug("cleanRecentsEngine: removed \(toRemove.count) paths")
     }
 
     // MARK: - File Watching (FSEvents)
@@ -889,9 +901,9 @@ class FuzzyClient {
 
                     let pathStr = path.string
                     if isPathBlocked(pathStr) { return }
-                    if path.starts(with: HOME), event.path.isIgnored(in: fsignoreString) { return }
                     if path.exists {
                         let isDir = path.isDir
+                        if path.starts(with: HOME), pathStr.isIgnored(in: fsignoreString) { return }
                         // Add to recents engine (never blocks main thread)
                         recentsEngine.addPath(pathStr, isDir: isDir)
                         mainActor {
@@ -1354,7 +1366,6 @@ class FuzzyClient {
 
     // MARK: - Helpers
 
-
     func appendToIndex(_ paths: [String]) {
         for path in paths {
             var isDirectory: ObjCBool = false
@@ -1362,6 +1373,9 @@ class FuzzyClient {
             recentsEngine.addPath(path, isDir: isDirectory.boolValue)
         }
     }
+
+    @ObservationIgnored private var _lastOperationUpdate: CFAbsoluteTime = 0
+    @ObservationIgnored private var _operationThrottle: Task<Void, Never>?
 
     @ObservationIgnored private var saveIndexTask: Task<Void, Never>?
 

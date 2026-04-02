@@ -4,7 +4,7 @@ import Lowtech
 import System
 
 enum Migration {
-    static let CURRENT_VERSION = 1
+    static let CURRENT_VERSION = 2
 
     static let OLD_DEFAULT_SCRIPTS = [
         "Copy to temporary folder.zsh",
@@ -17,6 +17,7 @@ enum Migration {
         guard version < CURRENT_VERSION else { return }
 
         if version < 1 { migrateV1() }
+        if version < 2 { migrateV2() }
 
         Defaults[.migrationVersion] = CURRENT_VERSION
     }
@@ -47,5 +48,21 @@ enum Migration {
             log.info("Migration v1: removed default scripts marker for reinstall")
         }
         SM.installDefaultScriptsIfNeeded()
+    }
+
+    /// v2: Patch hardcoded username in Spotify ignore pattern
+    private static func migrateV2() {
+        guard fsignore.exists else { return }
+        do {
+            var content = try String(contentsOfFile: fsignore.string, encoding: .utf8)
+            let old = "Library/Application Support/Spotify/PersistentCache/Users/alin.p32-user/*.tmp"
+            if content.contains(old) {
+                content = content.replacingOccurrences(of: old, with: "Library/Application Support/Spotify/PersistentCache/Users/*-user/*.tmp")
+                try content.write(toFile: fsignore.string, atomically: true, encoding: .utf8)
+                log.info("Migration v2: patched Spotify ignore pattern in fsignore")
+            }
+        } catch {
+            log.error("Migration v2: failed to patch fsignore: \(error)")
+        }
     }
 }

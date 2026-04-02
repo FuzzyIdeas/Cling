@@ -218,7 +218,7 @@ struct ScriptActionButtons: View {
                     HStack {
                         Text("OUTPUT").font(.bold(10)).foregroundColor(.secondary)
                         Spacer()
-                        if output.utf8.count >= 8_192, let outputFile {
+                        if output.utf8.count >= 8192, let outputFile {
                             Button("Open in editor") { outputFile.edit() }
                                 .font(.system(size: 10))
                         }
@@ -234,7 +234,7 @@ struct ScriptActionButtons: View {
                     HStack {
                         Text("ERRORS").font(.bold(10)).foregroundColor(.secondary)
                         Spacer()
-                        if error.utf8.count >= 8_192, let errorFile {
+                        if error.utf8.count >= 8192, let errorFile {
                             Button("Open in editor") { errorFile.edit() }
                                 .font(.system(size: 10))
                         }
@@ -245,7 +245,7 @@ struct ScriptActionButtons: View {
                 .padding(.bottom).padding(.horizontal, 25)
             }
 
-            if (output == nil || output?.isEmpty == true) && (error == nil || error?.isEmpty == true) {
+            if output == nil || output?.isEmpty == true, error == nil || error?.isEmpty == true {
                 Text("No output").foregroundColor(.secondary).padding()
             }
         }.frame(width: 800, height: 500, alignment: .topLeading)
@@ -701,7 +701,7 @@ struct ScriptOutputText: View {
     let text: String
 
     var body: some View {
-        if text.utf8.count < 8_192 {
+        if text.utf8.count < 8192 {
             ScrollView {
                 Text(text)
                     .lineLimit(nil)

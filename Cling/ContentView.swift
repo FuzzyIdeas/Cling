@@ -799,13 +799,12 @@ struct ContentView: View {
             let q = fuzzy.query.lowercased()
             filtered = changes.filter { $0.path.lowercased().contains(q) }
         }
-        let afterBlock: [FuzzyClient.IndexChange]
-        if liveChangesIndexedOnly {
-            afterBlock = filtered.filter { change in
+        let afterBlock: [FuzzyClient.IndexChange] = if liveChangesIndexedOnly {
+            filtered.filter { change in
                 !isPathBlocked(change.path) && !(change.path.hasPrefix(HOME.string) && change.path.isIgnored(in: fsignoreString))
             }
         } else {
-            afterBlock = filtered
+            filtered
         }
         return afterBlock.sorted(using: liveChangeSortOrder)
     }

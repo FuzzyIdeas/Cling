@@ -380,10 +380,23 @@ extension FuzzyClient {
 
         case .index, .reindex:
             let scopes = request.scopes?.compactMap { SearchScope(rawValue: $0) }
+            let volumePaths = request.paths?.compactMap(\.filePath) ?? []
             mainActor {
-                FUZZY.refresh(pauseSearch: request.rebuild ?? false, scopes: scopes)
+                if !volumePaths.isEmpty {
+                    for volume in volumePaths {
+                        if FUZZY.enabledVolumes.contains(volume) {
+                            FUZZY.indexVolume(volume)
+                        }
+                    }
+                }
+                if scopes != nil || volumePaths.isEmpty {
+                    FUZZY.refresh(pauseSearch: request.rebuild ?? false, scopes: scopes)
+                }
             }
-            let scopeLabel = scopes.map { $0.map(\.label).joined(separator: ", ") } ?? "all"
+            var labels = [String]()
+            if let scopes { labels.append(contentsOf: scopes.map(\.label)) }
+            if !volumePaths.isEmpty { labels.append(contentsOf: volumePaths.map(\.name.string)) }
+            let scopeLabel = labels.isEmpty ? "all" : labels.joined(separator: ", ")
             return ClingResponse(status: "indexing started (\(scopeLabel))", indexCount: coord.count)
 
         case .status:

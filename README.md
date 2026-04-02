@@ -36,9 +36,9 @@
 
 ### Pro features
 
-Cling is free to use with Home and Applications search scopes. A **Cling Pro** licence unlocks:
+Cling is free to use with Home, Library and Applications search scopes. A **Cling Pro** licence unlocks:
 
-- **Additional search scopes**: Library, System, Root
+- **Additional search scopes**: System, Root
 - **External volume indexing** with persistent indexes
 - **Quick Filters** for file types and custom queries
 - **Custom folder filters** for saved folder sets
@@ -47,7 +47,7 @@ Cling is free to use with Home and Applications search scopes. A **Cling Pro** l
 
 ### Pricing
 
-Cling starts with a **14-day free trial** automatically, no payment details needed. After the trial, the app continues to work in **Free mode** with Home and Applications scopes, up to 500 results.
+Cling starts with a **14-day free trial** automatically, no payment details needed. After the trial, the app continues to work in **Free mode** with Home, Library and Applications scopes, up to 500 results.
 
 A Pro license costs **€12**, one-time purchase, for life. It can be activated on up to **5 personal Mac devices**.
 

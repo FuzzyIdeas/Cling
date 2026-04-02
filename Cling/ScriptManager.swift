@@ -36,15 +36,6 @@ class ScriptManager {
         startScriptsWatcher()
     }
 
-    func installDefaultScriptsIfNeeded() {
-        guard !defaultScriptsMarker.exists else { return }
-        for script in DEFAULT_SCRIPTS {
-            _ = try? script.copy(to: scriptsFolder)
-        }
-        FileManager.default.createFile(atPath: defaultScriptsMarker.string, contents: nil, attributes: nil)
-        fetchScripts()
-    }
-
     // reads the script
     // finds the line that starts with symbols, whitespace and then extensions: and returns the extensions
     // the line can start with any symbol like #, //, --, etc
@@ -96,6 +87,15 @@ class ScriptManager {
                 }
             }
         }
+    }
+
+    func installDefaultScriptsIfNeeded() {
+        guard !defaultScriptsMarker.exists else { return }
+        for script in DEFAULT_SCRIPTS {
+            _ = try? script.copy(to: scriptsFolder)
+        }
+        FileManager.default.createFile(atPath: defaultScriptsMarker.string, contents: nil, attributes: nil)
+        fetchScripts()
     }
 
     func clearLastProcess() {

@@ -1,4 +1,5 @@
 import AppKit
+import Defaults
 import Lowtech
 import SwiftUI
 import System
@@ -57,6 +58,8 @@ struct RightClickMenu: View {
         case copy, move
     }
 
+    @Default(.copyPathsWithTilde) private var copyPathsWithTilde
+
     private var selectedSourceIndex: String? {
         let sources = selectedResults.compactMap { path -> String? in
             let s = path.memoz.sourceIndex
@@ -71,9 +74,14 @@ struct RightClickMenu: View {
         orderedResults.filter { selectedResults.contains($0) }
     }
 
+    private func pathString(_ path: FilePath) -> String {
+        copyPathsWithTilde ? path.shellString : path.string
+    }
+
     private func copyPaths(separator: String, quoted: Bool = false) {
         let filepaths = orderedSelection.map { path in
-            quoted ? "\"\(path.string)\"" : path.string
+            let str = pathString(path)
+            return quoted ? "\"\(str)\"" : str
         }.joined(separator: separator)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(filepaths, forType: .string)
@@ -128,7 +136,7 @@ struct RightClickMenu: View {
         let fileContents = orderedSelection.map { path in
             let size = path.memoz.size
             let date = path.memoz.isoFormattedModificationDate
-            return "\(path.string),\(size),\(date)"
+            return "\(pathString(path)),\(size),\(date)"
         }.joined(separator: "\n")
         let csvContent = "\(header)\n\(fileContents)"
         try csvContent.write(to: url, atomically: true, encoding: .utf8)
@@ -139,7 +147,7 @@ struct RightClickMenu: View {
         let fileContents = orderedSelection.map { path in
             let size = path.memoz.size
             let date = path.memoz.isoFormattedModificationDate
-            return "\(path.string)\t\(size)\t\(date)"
+            return "\(pathString(path))\t\(size)\t\(date)"
         }.joined(separator: "\n")
         let tsvContent = "\(header)\n\(fileContents)"
         try tsvContent.write(to: url, atomically: true, encoding: .utf8)
@@ -150,7 +158,7 @@ struct RightClickMenu: View {
             let size = path.memoz.size
             let date = path.memoz.isoFormattedModificationDate
             return [
-                "path": path.string,
+                "path": pathString(path),
                 "size": size,
                 "date": date,
             ]
@@ -160,7 +168,7 @@ struct RightClickMenu: View {
     }
 
     private func exportPlaintext(to url: URL) throws {
-        let fileContents = orderedSelection.map(\.string).joined(separator: "\n")
+        let fileContents = orderedSelection.map { pathString($0) }.joined(separator: "\n")
         try fileContents.write(to: url, atomically: true, encoding: .utf8)
     }
 
