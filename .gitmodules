@@ -1,0 +1,3 @@
+[submodule "cling-raycast-extension"]
+	path = cling-raycast-extension
+	url = git@github.com:FuzzyIdeas/cling-raycast-extension
