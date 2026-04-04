@@ -11,10 +11,10 @@
             <sparkle:shortVersionString>2.1.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.1.0.html</sparkle:releaseNotesLink>
-            <enclosure url="https://files.lowtechguys.com/releases/Cling-2.1.0.dmg" length="16390449" type="application/octet-stream" sparkle:edSignature="CwHo/olbO4M7eCC1A5dBz/N67CQz8AVQ5cr+pofVdDA9huqOG+gLeZZy5B6EKMOzEMLimp5zAseYrI2FhyzmBQ=="/>
+            <enclosure url="https://files.lowtechguys.com/releases/Cling-2.1.0.dmg" length="15257253" type="application/octet-stream" sparkle:edSignature="FM+m2Nvrwrnu02A+KS3sbn9AIKpKea9dARYrk2OaBHKGyrrkvsC5jXHGPUB474BCr+iI/1sZuh5eizQX5DoKDg=="/>
             <sparkle:deltas>
-                <enclosure url="https://files.lowtechguys.com/releases/Cling2.1.0-2.0.1.delta" sparkle:deltaFrom="2.0.1" length="2760526" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="PdNLAuqTwXLoJsx4PIcQeXtZ3dluQZy+SQY8dB665DsW79HT4rMfEQd3+wYJNi2tqX3YGIMnMIkkIo2Xr7BoCA=="/>
-                <enclosure url="https://files.lowtechguys.com/releases/Cling2.1.0-2.0.0.delta" sparkle:deltaFrom="2.0.0" length="2836266" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="tbZMJytcvmr9BLyJ4TVC5oUKvDdyq4o6AcwDsozt7tqdQ6AogFS2PgspHpgI5Dt+Qe/JKvLbLjhr/3C3tp+rDg=="/>
+                <enclosure url="https://files.lowtechguys.com/releases/Cling2.1.0-2.0.1.delta" sparkle:deltaFrom="2.0.1" length="2622578" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="DLYUPXd7kS/dd5Uk0VIENTI/8E/Dx1KMgCSlPJXFrX34/osG4IfyHnm0ZJCjQlggWqlpXEhvS0EC7SOl++0lCQ=="/>
+                <enclosure url="https://files.lowtechguys.com/releases/Cling2.1.0-2.0.0.delta" sparkle:deltaFrom="2.0.0" length="2713362" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="Y/35CEFPcsNGKiifxMZvxdjUptHf8XoGW4StFbCqM64LOGy4HzsgjHnYF/5xebhtkyQBdZTPG7dRddyXQWaWBA=="/>
             </sparkle:deltas>
         </item>
         <item>
