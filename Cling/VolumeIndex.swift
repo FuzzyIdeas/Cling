@@ -132,7 +132,7 @@ extension FuzzyClient {
         return mountedVolumes
             .filter(\.isVolume)
             .compactMap(\.filePath)
-            .filter { !isDMGVolume($0) }
+            .filter { !isDMGVolume($0) && !isTimeMachineVolume($0) }
             .uniqued.sorted()
     }
 
@@ -147,6 +147,22 @@ extension FuzzyClient {
 
         let contents = (try? FileManager.default.contentsOfDirectory(atPath: volume.string)) ?? []
         return contents.count <= 10 && contents.contains { $0.hasSuffix(".app") }
+    }
+
+    private static func isTimeMachineVolume(_ volume: FilePath) -> Bool {
+        // HFS+ Time Machine
+        if FileManager.default.fileExists(atPath: (volume / "Backups.backupdb").string) {
+            return true
+        }
+        // APFS Time Machine: check for Backup volume role
+        if let output = shell("/usr/sbin/diskutil", args: ["info", volume.string], timeout: 3).o {
+            for line in output.components(separatedBy: "\n") where line.contains("APFS Volume Role:") {
+                let role = line.components(separatedBy: ":").last?.trimmingCharacters(in: .whitespaces) ?? ""
+                // T=Backup (Time Machine), C=Sidecar (Time Machine)
+                if role.contains("T") || role.contains("C") { return true }
+            }
+        }
+        return false
     }
 
     func indexStaleExternalVolumes() {
@@ -167,6 +183,11 @@ extension FuzzyClient {
         volumesIndexing.insert(volume)
 
         let volumeFsignore = volume / ".fsignore"
+        if let content = try? String(contentsOf: volumeFsignore.url, encoding: .utf8),
+           content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            try? FileManager.default.removeItem(at: volumeFsignore.url)
+        }
         let ignoreChecker: String? = volumeFsignore.exists ? volumeFsignore.string : nil
         let checkpointFile = volumeCheckpointFile(volume)
         try? FileManager.default.removeItem(at: checkpointFile)
@@ -192,16 +213,24 @@ extension FuzzyClient {
             if wasCancelled {
                 try? FileManager.default.removeItem(at: checkpointFile)
                 vlog.info("Cancelled volume indexing for \(volume.string)")
-            } else if result.added > 0 {
-                volumeEngine.saveBinaryIndex(to: file.url)
-                result.metadataCache?.save(to: smbMetadataCacheFile(volume))
-                log.debug("Indexed volume \(volumeName): \(result.added) entries -> \(file.string)")
+            } else {
+                try? FileManager.default.removeItem(at: file.url)
+                if result.added > 0 {
+                    volumeEngine.saveBinaryIndex(to: file.url)
+                    result.metadataCache?.save(to: smbMetadataCacheFile(volume))
+                    log.debug("Indexed volume \(volumeName): \(result.added) entries -> \(file.string)")
+                }
+            }
+
+            let reloadedEngine = SearchEngine()
+            if !wasCancelled, result.added > 0 {
+                _ = reloadedEngine.loadBinaryIndex(from: file.url)
             }
 
             let shouldRunCompletion = batchTracker?.finishOne() ?? false
             await MainActor.run {
                 if !wasCancelled {
-                    self.volumeEngines[volume] = volumeEngine
+                    self.volumeEngines[volume] = reloadedEngine
                     if let metaCache = result.metadataCache {
                         self.smbMetadataCaches[volume] = metaCache
                     }
@@ -219,6 +248,7 @@ extension FuzzyClient {
                 if self.volumesIndexing.isEmpty {
                     self.backgroundIndexing = self.indexing
                 }
+                self.invalidateSearch()
                 if !self.emptyQuery || self.volumeFilter != nil {
                     self.performSearch()
                 }

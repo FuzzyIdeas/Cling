@@ -53,6 +53,13 @@ extension MDQuery {
             let filePath = FilePath(path)
             if FUZZY.removedFiles.contains(filePath.string) || FUZZY.excludedPaths.contains(filePath.string) { continue }
             if filePath.starts(with: HOME), filePath.string.isIgnored(in: fsignoreString) { continue }
+            var ignoredByVolume = false
+            for volume in FUZZY.enabledVolumes where path.hasPrefix(volume.string + "/") {
+                let vfsignore = volume / ".fsignore"
+                ignoredByVolume = vfsignore.exists && path.isIgnored(in: vfsignore.string)
+                break
+            }
+            if ignoredByVolume { continue }
             if !isRelevantDefaultPath(path) { continue }
             paths.append(filePath)
         }

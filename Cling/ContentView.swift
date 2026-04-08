@@ -438,6 +438,11 @@ struct ContentView: View {
                     .round(12, weight: .regular)
                     .foregroundStyle(.tertiary)
             }
+            Button("Cancel") {
+                fuzzy.cancelVolumeIndexing(volume: volume)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
         .fill()
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))

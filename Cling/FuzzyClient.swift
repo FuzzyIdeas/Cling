@@ -958,12 +958,16 @@ class FuzzyClient {
 
                 for await (scope, scopeEngine) in group {
                     let file = scopeIndexFile(scope)
+                    try? FileManager.default.removeItem(at: file.url)
                     scopeEngine.saveBinaryIndex(to: file.url)
                     let added = scopeEngine.count
                     log.debug("Indexed \(scope.label): \(added) entries -> \(file.string)")
 
+                    let reloadedEngine = SearchEngine()
+                    _ = reloadedEngine.loadBinaryIndex(from: file.url)
+
                     await MainActor.run {
-                        self.scopeEngines[scope] = scopeEngine
+                        self.scopeEngines[scope] = reloadedEngine
                         self.scopesIndexing.remove(scope)
                         self.updateIndexedCount()
                         self.logActivity("Indexed \(scope.label): \(added.formatted()) files (\(self.indexedCount.formatted()) total)", operationKey: "scope:\(scope.rawValue)")
@@ -986,6 +990,7 @@ class FuzzyClient {
                 onFinish?()
                 self.indexing = false
                 self.backgroundIndexing = !self.volumesIndexing.isEmpty
+                self.invalidateSearch()
                 if !self.emptyQuery || self.volumeFilter != nil {
                     self.performSearch()
                 }
@@ -997,6 +1002,11 @@ class FuzzyClient {
         let entries = recentsEngine.entries
         let homePrefix = HOME.string + "/"
         let ignoreFile: String? = fsignore.exists ? fsignoreString : nil
+        let volumeFsignores: [(prefix: String, fsignore: String)] = enabledVolumes.compactMap { volume in
+            let vfsignore = volume / ".fsignore"
+            guard vfsignore.exists else { return nil }
+            return (volume.string + "/", vfsignore.string)
+        }
 
         log.debug("cleanRecentsEngine: \(entries.count) entries, ignoreFile=\(ignoreFile ?? "nil")")
 
@@ -1008,10 +1018,10 @@ class FuzzyClient {
             if !path.isEmpty {
                 if isPathBlocked(path) {
                     toRemove.append(path)
-                } else if let ignoreFile, path.hasPrefix(homePrefix) {
-                    if path.isIgnored(in: ignoreFile) {
-                        toRemove.append(path)
-                    }
+                } else if let ignoreFile, path.hasPrefix(homePrefix), path.isIgnored(in: ignoreFile) {
+                    toRemove.append(path)
+                } else if volumeFsignores.contains(where: { path.hasPrefix($0.prefix) && path.isIgnored(in: $0.fsignore) }) {
+                    toRemove.append(path)
                 }
             }
             i += 1
@@ -1020,7 +1030,8 @@ class FuzzyClient {
             recentsEngine.removePath(path)
         }
         liveIndexChanges.removeAll { change in
-            isPathBlocked(change.path) || (ignoreFile != nil && change.path.hasPrefix(homePrefix) && change.path.isIgnored(in: ignoreFile!))
+            isPathBlocked(change.path) || (ignoreFile != nil && change.path.hasPrefix(homePrefix) && change.path.isIgnored(in: ignoreFile!)) ||
+                volumeFsignores.contains(where: { change.path.hasPrefix($0.prefix) && change.path.isIgnored(in: $0.fsignore) })
         }
         if !toRemove.isEmpty {
             logActivity("Cleaned \(toRemove.count) ignored path\(toRemove.count == 1 ? "" : "s") from recents")
@@ -1057,6 +1068,11 @@ class FuzzyClient {
                     if path.exists {
                         let isDir = path.isDir
                         if path.starts(with: HOME), pathStr.isIgnored(in: fsignoreString) { return }
+                        for volume in self.enabledVolumes where pathStr.hasPrefix(volume.string + "/") {
+                            let vfsignore = volume / ".fsignore"
+                            if vfsignore.exists, pathStr.isIgnored(in: vfsignore.string) { return }
+                            break
+                        }
                         // Add to recents engine (never blocks main thread)
                         recentsEngine.addPath(pathStr, isDir: isDir)
                         mainActor {
