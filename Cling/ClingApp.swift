@@ -363,8 +363,6 @@ class AppDelegate: LowtechProAppDelegate {
 
         if window.title.contains("Settings"), !settingsWindowConfigured {
             settingsWindowConfigured = true
-            window.titlebarAppearsTransparent = true
-            window.backgroundColor = .clear
             window.toolbar?.showsBaselineSeparator = false
         }
 
@@ -419,6 +417,15 @@ class AppDelegate: LowtechProAppDelegate {
 final class MainWindowDelegateProxy: NSObject, NSWindowDelegate {
     weak var original: NSWindowDelegate?
 
+    override func responds(to aSelector: Selector!) -> Bool {
+        if super.responds(to: aSelector) { return true }
+        return original?.responds(to: aSelector) ?? false
+    }
+
+    override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        original
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         MainActor.assumeIsolated {
             guard Defaults[.instantMode] else {
@@ -431,14 +438,6 @@ final class MainWindowDelegateProxy: NSObject, NSWindowDelegate {
         }
     }
 
-    override func responds(to aSelector: Selector!) -> Bool {
-        if super.responds(to: aSelector) { return true }
-        return original?.responds(to: aSelector) ?? false
-    }
-
-    override func forwardingTarget(for aSelector: Selector!) -> Any? {
-        original
-    }
 }
 
 @MainActor @Observable
@@ -566,11 +565,10 @@ struct ClingApp: App {
 
         Settings {
             SettingsView()
-                .frame(minWidth: 600, minHeight: 600)
                 .environmentObject(envState)
-                .glassOrMaterial(cornerRadius: 0)
         }
-        .defaultSize(width: 600, height: 600)
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 820, height: 640)
     }
 
     @State private var wm = WM

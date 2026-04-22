@@ -387,14 +387,6 @@ extension Defaults.Keys {
 @MainActor
 @Observable
 final class DefaultsCache {
-    static let shared = DefaultsCache()
-
-    var folderFilters: [FolderFilter]
-    var quickFilters: [QuickFilter]
-    var searchScopes: [SearchScope]
-
-    @ObservationIgnored private var observers: Set<AnyCancellable> = []
-
     private init() {
         folderFilters = Defaults[.folderFilters]
         quickFilters = Defaults[.quickFilters]
@@ -415,6 +407,15 @@ final class DefaultsCache {
             .sink { [self] change in searchScopes = change.newValue }
             .store(in: &observers)
     }
+
+    static let shared = DefaultsCache()
+
+    var folderFilters: [FolderFilter]
+    var quickFilters: [QuickFilter]
+    var searchScopes: [SearchScope]
+
+    @ObservationIgnored private var observers: Set<AnyCancellable> = []
+
 }
 
 let DEFAULTS_CACHE = DefaultsCache.shared

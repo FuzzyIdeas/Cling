@@ -6,10 +6,115 @@ import SwiftUI
 import System
 
 struct FilterPicker: View {
+    static let iconWidth: CGFloat = 20
+
+    var body: some View {
+        menu
+            .sheet(isPresented: $isAddingQuickFilter, onDismiss: {
+                saveQuickFilter(
+                    id: filterID,
+                    extensions: filterSuffix.trimmed.isEmpty ? nil : filterSuffix.trimmed,
+                    preQuery: filterQuery.trimmed.isEmpty ? nil : filterQuery.trimmed,
+                    postQuery: filterPostQuery.trimmed.isEmpty ? nil : filterPostQuery.trimmed,
+                    dirsOnly: filterDirsOnly,
+                    folders: filterFolders.isEmpty ? nil : filterFolders,
+                    key: filterKey,
+                    originalID: originalFilterID
+                )
+                filterID = ""
+                filterSuffix = ""
+                filterQuery = ""
+                filterPostQuery = ""
+                filterDirsOnly = false
+                filterFolders = []
+                originalFilterID = ""
+                isEditingFilter = false
+            }) {
+                QuickFilterAddSheet(id: $filterID, extensions: $filterSuffix, preQuery: $filterQuery, postQuery: $filterPostQuery, dirsOnly: $filterDirsOnly, folders: $filterFolders, key: $filterKey)
+            }
+            .sheet(isPresented: $isAddingFolderFilter, onDismiss: {
+                saveFolderFilter(id: filterID, folders: filterFolders, key: filterKey, originalID: originalFilterID)
+                filterID = ""
+                originalFilterID = ""
+                filterFolders = []
+                isEditingFilter = false
+            }) {
+                FolderFilterAddSheet(id: $filterID, folders: $filterFolders, key: $filterKey)
+            }
+    }
+
+    var menu: some View {
+        Group {
+            if proManager.pro?.active != true {
+                Button(action: { showNeedsProPopover = true }) {
+                    filterLabel
+                }
+                .buttonStyle(.borderlessText)
+                .popover(isPresented: $showNeedsProPopover) {
+                    if let pro = PM.pro {
+                        PaddedPopoverView(background: Color.red.brightness(0.1).any) {
+                            NeedsProView(size: 16, color: .black.opacity(0.8), pro: pro)
+                        }
+                    }
+                }
+            } else if km.lalt || km.ralt || showFilterEditor {
+                Button(action: { showFilterEditor = true }) {
+                    Image(systemName: "slider.horizontal.3")
+                        .frame(width: FilterPicker.iconWidth)
+                }
+                .buttonStyle(.borderlessText)
+                .sheet(isPresented: $showFilterEditor) {
+                    FilterEditorSheet()
+                }
+            } else {
+                Menu {
+                    folderFilterPicker
+                    quickFilterPicker
+                    volumePicker
+
+                    Button("All files") {
+                        fuzzy.folderFilter = nil
+                        fuzzy.quickFilter = nil
+                        fuzzy.volumeFilter = nil
+                    }
+                    .help("Searches all indexed files without any filters")
+                    .keyboardShortcut(.escape, modifiers: [.option])
+                } label: {
+                    filterLabel
+                }
+                .menuStyle(.button)
+                .buttonStyle(.borderlessText)
+            }
+        }
+        .fixedSize()
+    }
+
+    private enum IndexStatus {
+        case indexed, indexing, notIndexed, disconnected
+    }
+
     @State private var defaults = DEFAULTS_CACHE
     @State private var fuzzy: FuzzyClient = FUZZY
     @ObservedObject private var km = KM
     @ObservedObject private var proManager = PM
+
+    @State private var lastQuery = ""
+
+    @State private var isAddingQuickFilter = false
+    @State private var isAddingFolderFilter = false
+    @State private var isEditingFilter = false
+    @State private var originalFilterID = ""
+    @State private var filterID = ""
+    @State private var filterSuffix = ""
+    @State private var filterQuery = ""
+    @State private var filterPostQuery = ""
+    @State private var filterDirsOnly = false
+    @State private var filterFolders: [FilePath] = []
+    @State private var filterKey: SauceKey = .escape
+
+    @State private var showFilterEditor = false
+
+    @State private var showNeedsProPopover = false
 
     private var folderFilters: [FolderFilter] { defaults.folderFilters }
     private var quickFilters: [QuickFilter] { defaults.quickFilters }
@@ -52,57 +157,28 @@ struct FilterPicker: View {
         }
     }
 
-    private enum IndexStatus {
-        case indexed, indexing, notIndexed, disconnected
-    }
-
-    private func volumeStatus(_ volume: FilePath) -> IndexStatus {
-        if volume == .root { return .indexed }
-        if fuzzy.disconnectedVolumes.contains(volume) {
-            if fuzzy.volumeEngines[volume] != nil { return .disconnected }
-            return .disconnected
-        }
-        if fuzzy.volumesIndexing.contains(volume) { return .indexing }
-        if fuzzy.volumeEngines[volume] != nil { return .indexed }
-        return .notIndexed
-    }
-
-    private func scopeForFolder(_ folder: FilePath) -> SearchScope? {
-        let s = folder.string
-        let home = HOME.string
-        if s.hasPrefix(home + "/Library") { return .library }
-        if s.hasPrefix(home) { return .home }
-        if s.hasPrefix("/Applications") || s.hasPrefix("/System/Applications") { return .applications }
-        if s.hasPrefix("/System") { return .system }
-        if ["/usr", "/bin", "/sbin", "/opt", "/etc", "/Library", "/var", "/private"].contains(where: { s.hasPrefix($0) }) { return .root }
-        return nil
-    }
-
-    private func folderFilterStatus(_ filter: FolderFilter) -> IndexStatus {
-        let scopes = defaults.searchScopes
-        for folder in filter.folders {
-            if let volume = fuzzy.enabledVolumes.first(where: { folder.starts(with: $0) }) {
-                if fuzzy.volumesIndexing.contains(volume) { return .indexing }
-                if fuzzy.volumeEngines[volume] == nil { return .notIndexed }
-                continue
-            }
-            if let scope = scopeForFolder(folder) {
-                if !scopes.contains(scope) { return .notIndexed }
-                if fuzzy.scopeEngines[scope] == nil {
-                    return fuzzy.indexing ? .indexing : .notIndexed
+    @ViewBuilder
+    private var quickFilterPicker: some View {
+        if !quickFilters.isEmpty || fuzzy.quickFilter != nil {
+            Picker(selection: $fuzzy.quickFilter) {
+                Text("Quick filters").round(11).foregroundColor(.secondary).selectionDisabled()
+                ForEach(quickFilters, id: \.self) { filter in
+                    filterItem(filter)
                 }
-            }
+
+                if let filter = fuzzy.quickFilter, !quickFilters.contains(filter) {
+                    Divider()
+                    filterItem(filter)
+                }
+            } label: { Text("Quick filter") }
+                .labelsHidden()
+                .pickerStyle(.inline)
         }
-        return .indexed
     }
 
-    private func statusSuffix(_ status: IndexStatus) -> String {
-        switch status {
-        case .indexed: ""
-        case .indexing: " [Indexing...]"
-        case .notIndexed: " [Not indexed]"
-        case .disconnected: " [Disconnected]"
-        }
+    private var filterLabel: some View {
+        Image(systemName: "line.3.horizontal.decrease.circle" + (fuzzy.quickFilter != nil || fuzzy.folderFilter != nil ? ".fill" : ""))
+            .frame(width: FilterPicker.iconWidth)
     }
 
     private func filterItem(_ filter: FilePath, key: Character?) -> some View {
@@ -181,8 +257,6 @@ struct FilterPicker: View {
         }
     }
 
-    @State private var lastQuery = ""
-
     @ViewBuilder private func filterButtons(_ filter: FolderFilter, action: String = "Edit") -> some View {
         Button(action) {
             isEditingFilter = action == "Edit"
@@ -200,128 +274,55 @@ struct FilterPicker: View {
         }
     }
 
-    @ViewBuilder
-    private var quickFilterPicker: some View {
-        if !quickFilters.isEmpty || fuzzy.quickFilter != nil {
-            Picker(selection: $fuzzy.quickFilter) {
-                Text("Quick filters").round(11).foregroundColor(.secondary).selectionDisabled()
-                ForEach(quickFilters, id: \.self) { filter in
-                    filterItem(filter)
-                }
+    private func volumeStatus(_ volume: FilePath) -> IndexStatus {
+        if volume == .root { return .indexed }
+        if fuzzy.disconnectedVolumes.contains(volume) {
+            if fuzzy.volumeEngines[volume] != nil { return .disconnected }
+            return .disconnected
+        }
+        if fuzzy.volumesIndexing.contains(volume) { return .indexing }
+        if fuzzy.volumeEngines[volume] != nil { return .indexed }
+        return .notIndexed
+    }
 
-                if let filter = fuzzy.quickFilter, !quickFilters.contains(filter) {
-                    Divider()
-                    filterItem(filter)
+    private func scopeForFolder(_ folder: FilePath) -> SearchScope? {
+        let s = folder.string
+        let home = HOME.string
+        if s.hasPrefix(home + "/Library") { return .library }
+        if s.hasPrefix(home) { return .home }
+        if s.hasPrefix("/Applications") || s.hasPrefix("/System/Applications") { return .applications }
+        if s.hasPrefix("/System") { return .system }
+        if ["/usr", "/bin", "/sbin", "/opt", "/etc", "/Library", "/var", "/private"].contains(where: { s.hasPrefix($0) }) { return .root }
+        return nil
+    }
+
+    private func folderFilterStatus(_ filter: FolderFilter) -> IndexStatus {
+        let scopes = defaults.searchScopes
+        for folder in filter.folders {
+            if let volume = fuzzy.enabledVolumes.first(where: { folder.starts(with: $0) }) {
+                if fuzzy.volumesIndexing.contains(volume) { return .indexing }
+                if fuzzy.volumeEngines[volume] == nil { return .notIndexed }
+                continue
+            }
+            if let scope = scopeForFolder(folder) {
+                if !scopes.contains(scope) { return .notIndexed }
+                if fuzzy.scopeEngines[scope] == nil {
+                    return fuzzy.indexing ? .indexing : .notIndexed
                 }
-            } label: { Text("Quick filter") }
-                .labelsHidden()
-                .pickerStyle(.inline)
+            }
+        }
+        return .indexed
+    }
+
+    private func statusSuffix(_ status: IndexStatus) -> String {
+        switch status {
+        case .indexed: ""
+        case .indexing: " [Indexing...]"
+        case .notIndexed: " [Not indexed]"
+        case .disconnected: " [Disconnected]"
         }
     }
 
-    @State private var isAddingQuickFilter = false
-    @State private var isAddingFolderFilter = false
-    @State private var isEditingFilter = false
-    @State private var originalFilterID = ""
-    @State private var filterID = ""
-    @State private var filterSuffix = ""
-    @State private var filterQuery = ""
-    @State private var filterPostQuery = ""
-    @State private var filterDirsOnly = false
-    @State private var filterFolders: [FilePath] = []
-    @State private var filterKey: SauceKey = .escape
-
-    var body: some View {
-        menu
-            .sheet(isPresented: $isAddingQuickFilter, onDismiss: {
-                saveQuickFilter(
-                    id: filterID,
-                    extensions: filterSuffix.trimmed.isEmpty ? nil : filterSuffix.trimmed,
-                    preQuery: filterQuery.trimmed.isEmpty ? nil : filterQuery.trimmed,
-                    postQuery: filterPostQuery.trimmed.isEmpty ? nil : filterPostQuery.trimmed,
-                    dirsOnly: filterDirsOnly,
-                    folders: filterFolders.isEmpty ? nil : filterFolders,
-                    key: filterKey,
-                    originalID: originalFilterID
-                )
-                filterID = ""
-                filterSuffix = ""
-                filterQuery = ""
-                filterPostQuery = ""
-                filterDirsOnly = false
-                filterFolders = []
-                originalFilterID = ""
-                isEditingFilter = false
-            }) {
-                QuickFilterAddSheet(id: $filterID, extensions: $filterSuffix, preQuery: $filterQuery, postQuery: $filterPostQuery, dirsOnly: $filterDirsOnly, folders: $filterFolders, key: $filterKey)
-            }
-            .sheet(isPresented: $isAddingFolderFilter, onDismiss: {
-                saveFolderFilter(id: filterID, folders: filterFolders, key: filterKey, originalID: originalFilterID)
-                filterID = ""
-                originalFilterID = ""
-                filterFolders = []
-                isEditingFilter = false
-            }) {
-                FolderFilterAddSheet(id: $filterID, folders: $filterFolders, key: $filterKey)
-            }
-    }
-
-    @State private var showFilterEditor = false
-
-    private var filterLabel: some View {
-        Image(systemName: "line.3.horizontal.decrease.circle" + (fuzzy.quickFilter != nil || fuzzy.folderFilter != nil ? ".fill" : ""))
-            .frame(width: FilterPicker.iconWidth)
-    }
-
-    static let iconWidth: CGFloat = 20
-
-    @State private var showNeedsProPopover = false
-
-    var menu: some View {
-        Group {
-            if proManager.pro?.active != true {
-                Button(action: { showNeedsProPopover = true }) {
-                    filterLabel
-                }
-                .buttonStyle(.borderlessText)
-                .popover(isPresented: $showNeedsProPopover) {
-                    if let pro = PM.pro {
-                        PaddedPopoverView(background: Color.red.brightness(0.1).any) {
-                            NeedsProView(size: 16, color: .black.opacity(0.8), pro: pro)
-                        }
-                    }
-                }
-            } else if km.lalt || km.ralt || showFilterEditor {
-                Button(action: { showFilterEditor = true }) {
-                    Image(systemName: "slider.horizontal.3")
-                        .frame(width: FilterPicker.iconWidth)
-                }
-                .buttonStyle(.borderlessText)
-                .sheet(isPresented: $showFilterEditor) {
-                    FilterEditorSheet()
-                }
-            } else {
-                Menu {
-                    folderFilterPicker
-                    quickFilterPicker
-                    volumePicker
-
-                    Button("All files") {
-                        fuzzy.folderFilter = nil
-                        fuzzy.quickFilter = nil
-                        fuzzy.volumeFilter = nil
-                    }
-                    .help("Searches all indexed files without any filters")
-                    .keyboardShortcut(.escape, modifiers: [.option])
-                } label: {
-                    filterLabel
-                }
-                .menuStyle(.button)
-                .buttonStyle(.borderlessText)
-            }
-        }
-        .fixedSize()
-    }
 }
 
 @MainActor
@@ -755,8 +756,6 @@ struct FolderFilterRow: View {
 
 struct DisconnectedVolumeRow: View {
     let volume: FilePath
-    @State private var fuzzy = FUZZY
-    @State private var confirmRemoval = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -802,4 +801,8 @@ struct DisconnectedVolumeRow: View {
             Text("The cached index for this volume will be deleted. Reconnect the drive to index it again.")
         }
     }
+
+    @State private var fuzzy = FUZZY
+    @State private var confirmRemoval = false
+
 }
