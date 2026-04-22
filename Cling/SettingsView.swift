@@ -854,7 +854,47 @@ struct VolumeListView: View {
                     volumeItem(volume)
                 }
             }
+
+            let disconnected = fuzzy.disconnectedVolumes.sorted(by: { $0.string < $1.string })
+            if !disconnected.isEmpty {
+                Divider().padding(.vertical, 4)
+                Text("Disconnected Volumes")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(disconnected, id: \.string) { volume in
+                    disconnectedVolumeItem(volume)
+                }
+            }
         }
+    }
+
+    private func disconnectedVolumeItem(_ volume: FilePath) -> some View {
+        HStack {
+            Image(systemName: "externaldrive.badge.xmark").foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(volume.name.string)
+                    Text("Disconnected")
+                        .font(.system(size: 10, weight: .medium))
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Color.orange.opacity(0.2), in: Capsule())
+                        .foregroundStyle(.orange)
+                }
+                Text(volume.shellString)
+                    .monospaced()
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            Button("Remove") {
+                fuzzy.removeVolume(volume)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Delete cached index for \(volume.name.string)")
+        }
+        .padding(.vertical, 2)
     }
 
     @Default(.reindexTimeIntervalPerVolume) private var reindexTimeIntervalPerVolume

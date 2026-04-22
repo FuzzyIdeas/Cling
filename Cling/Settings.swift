@@ -1,3 +1,4 @@
+import Combine
 import Defaults
 import Foundation
 import Lowtech
@@ -338,7 +339,7 @@ extension Defaults.Keys {
     static let showWindowAtLaunch = Key<Bool>("showWindowAtLaunch", default: true)
     static let showDockIcon = Key<Bool>("showDockIcon", default: false)
     static let keepWindowOpenWhenDefocused = Key<Bool>("keepWindowOpenWhenDefocused", default: false)
-    static let instantMode = Key<Bool>("instantMode", default: false)
+    static let instantMode = Key<Bool>("instantMode", default: true)
     static let defaultResultsMode = Key<DefaultResultsMode>("defaultResultsMode", default: .recentFiles)
     static let folderFilters = Key<[FolderFilter]>("folderFilters", default: DEFAULT_FOLDER_FILTERS)
     static let maxResultsCount = Key<Int>("maxResultsCount", default: 1000)
@@ -382,3 +383,38 @@ extension Defaults.Keys {
     /__pycache__/
     """)
 }
+
+@MainActor
+@Observable
+final class DefaultsCache {
+    static let shared = DefaultsCache()
+
+    var folderFilters: [FolderFilter]
+    var quickFilters: [QuickFilter]
+    var searchScopes: [SearchScope]
+
+    @ObservationIgnored private var observers: Set<AnyCancellable> = []
+
+    private init() {
+        folderFilters = Defaults[.folderFilters]
+        quickFilters = Defaults[.quickFilters]
+        searchScopes = Defaults[.searchScopes]
+
+        pub(.folderFilters)
+            .receive(on: RunLoop.main)
+            .sink { [self] change in folderFilters = change.newValue }
+            .store(in: &observers)
+
+        pub(.quickFilters)
+            .receive(on: RunLoop.main)
+            .sink { [self] change in quickFilters = change.newValue }
+            .store(in: &observers)
+
+        pub(.searchScopes)
+            .receive(on: RunLoop.main)
+            .sink { [self] change in searchScopes = change.newValue }
+            .store(in: &observers)
+    }
+}
+
+let DEFAULTS_CACHE = DefaultsCache.shared

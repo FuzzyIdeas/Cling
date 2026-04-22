@@ -6,11 +6,13 @@ import SwiftUI
 import System
 
 struct FilterPicker: View {
-    @Default(.folderFilters) private var folderFilters
-    @Default(.quickFilters) private var quickFilters
+    @State private var defaults = DEFAULTS_CACHE
     @State private var fuzzy: FuzzyClient = FUZZY
     @ObservedObject private var km = KM
     @ObservedObject private var proManager = PM
+
+    private var folderFilters: [FolderFilter] { defaults.folderFilters }
+    private var quickFilters: [QuickFilter] { defaults.quickFilters }
 
     private var enabledVolumes: [FilePath]? {
         fuzzy.enabledVolumes.isEmpty ? nil : fuzzy.enabledVolumes
@@ -77,7 +79,7 @@ struct FilterPicker: View {
     }
 
     private func folderFilterStatus(_ filter: FolderFilter) -> IndexStatus {
-        let scopes = Defaults[.searchScopes]
+        let scopes = defaults.searchScopes
         for folder in filter.folders {
             if let volume = fuzzy.enabledVolumes.first(where: { folder.starts(with: $0) }) {
                 if fuzzy.volumesIndexing.contains(volume) { return .indexing }
@@ -411,6 +413,7 @@ struct FlowLayout: Layout {
 struct FilterEditorSheet: View {
     @Default(.quickFilters) private var quickFilters
     @Default(.folderFilters) private var folderFilters
+    @State private var fuzzy = FUZZY
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
@@ -428,7 +431,7 @@ struct FilterEditorSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     // Quick Filters
                     Section {
-                        ForEach(quickFilters) { filter in
+                        ForEach(Array(quickFilters.enumerated()), id: \.offset) { _, filter in
                             QuickFilterRow(filter: filter)
                         }
                         Button(action: addQuickFilter) {
@@ -448,7 +451,7 @@ struct FilterEditorSheet: View {
 
                     // Folder Filters
                     Section {
-                        ForEach(folderFilters) { filter in
+                        ForEach(Array(folderFilters.enumerated()), id: \.offset) { _, filter in
                             FolderFilterRow(filter: filter)
                         }
                         Button(action: addFolderFilter) {
@@ -461,6 +464,19 @@ struct FilterEditorSheet: View {
                             Button(action: addFolderFilter) {
                                 Label("New Folder Filter", systemImage: "plus.circle")
                             }.buttonStyle(.plain).foregroundColor(.accentColor).font(.system(size: 11))
+                        }
+                    }
+
+                    let disconnected = fuzzy.disconnectedVolumes.sorted(by: { $0.string < $1.string })
+                    if !disconnected.isEmpty {
+                        Divider()
+
+                        Section {
+                            ForEach(disconnected, id: \.string) { volume in
+                                DisconnectedVolumeRow(volume: volume)
+                            }
+                        } header: {
+                            Text("Disconnected Volumes").font(.subheadline).bold().foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -733,6 +749,57 @@ struct FolderFilterRow: View {
                 }
                 save()
             }
+        }
+    }
+}
+
+struct DisconnectedVolumeRow: View {
+    let volume: FilePath
+    @State private var fuzzy = FUZZY
+    @State private var confirmRemoval = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "externaldrive.badge.xmark")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(volume.name.string).font(.system(size: 12, weight: .bold))
+                    Text("Disconnected")
+                        .font(.system(size: 10, weight: .medium))
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Color.orange.opacity(0.2), in: Capsule())
+                        .foregroundStyle(.orange)
+                    if let count = fuzzy.volumeEngines[volume]?.count {
+                        Text("\(count.formatted()) cached entries")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text(volume.shellString)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            Button("Remove", role: .destructive) {
+                confirmRemoval = true
+            }
+            .buttonStyle(.bordered)
+            .help("Delete cached index for \(volume.name.string)")
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.03))
+        .cornerRadius(8)
+        .confirmationDialog(
+            "Remove \(volume.name.string)?",
+            isPresented: $confirmRemoval,
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) { fuzzy.removeVolume(volume) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The cached index for this volume will be deleted. Reconnect the drive to index it again.")
         }
     }
 }

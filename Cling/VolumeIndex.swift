@@ -298,4 +298,31 @@ extension FuzzyClient {
     func indexVolume(_ volume: FilePath) {
         startVolumeIndexTask(volume)
     }
+
+    func removeVolume(_ volume: FilePath) {
+        cancelVolumeIndexing(volume: volume)
+        volumeIndexTasks[volume] = nil
+        volumeEngines[volume] = nil
+        volumesIndexing.remove(volume)
+        disconnectedVolumes.remove(volume)
+
+        Defaults[.indexedVolumePaths].removeAll { $0 == volume }
+        Defaults[.reindexTimeIntervalPerVolume][volume] = nil
+        if !Defaults[.disabledVolumes].contains(volume) {
+            Defaults[.disabledVolumes].append(volume)
+        }
+        if !disabledVolumes.contains(volume) {
+            disabledVolumes.append(volume)
+        }
+
+        try? FileManager.default.removeItem(at: volumeIndexFile(volume).url)
+        try? FileManager.default.removeItem(at: volumeCheckpointFile(volume))
+
+        enabledVolumes.removeAll { $0 == volume }
+        externalIndexes = getExternalIndexes()
+
+        if volumeFilter == volume { volumeFilter = nil }
+
+        logActivity("Removed volume: \(volume.name.string)")
+    }
 }

@@ -188,8 +188,6 @@ class FuzzyClient {
     @ObservationIgnored var quickFilterPools: [String: [Int]] = [:] // Per-engine pools
     var filteredSubsetCount: Int?
 
-    var suspended = false
-
     @ObservationIgnored var scopeIndexTask: Task<Void, Never>?
     @ObservationIgnored var volumeIndexTasks: [FilePath: Task<Void, Never>] = [:]
     var volumesIndexing: Set<FilePath> = []

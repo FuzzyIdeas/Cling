@@ -8,13 +8,10 @@ import Defaults
 import Lowtech
 import LowtechIndie
 import LowtechPro
-import os.signpost
 import Paddle
 import Sparkle
 import SwiftUI
 import System
-
-let summonSignposter = OSSignposter(subsystem: "com.lowtechguys.Cling", category: "Summon")
 
 extension [String] {
     func removing(_ element: String) -> [String] {
@@ -124,49 +121,18 @@ class AppDelegate: LowtechProAppDelegate {
         KM.specialKey = Defaults[.enableGlobalHotkey] ? Defaults[.showAppKey] : nil
         KM.specialKeyModifiers = Defaults[.triggerKeys]
         KM.onSpecialHotkey = { [self] in
-            let t0 = DispatchTime.now().uptimeNanoseconds
-            let wallNS = Int64(Date().timeIntervalSince1970 * 1_000_000_000)
-            log.debug("RECV_NS=\(wallNS) (KM handler entry)")
-            log.debug("Hotkey fired: isKey=\(mainWindow?.isKeyWindow ?? false) isVisible=\(mainWindow?.isVisible ?? false) alpha=\(mainWindow?.alphaValue ?? -1) NSApp.isActive=\(NSApp.isActive)")
             if let mainWindow, mainWindow.isKeyWindow {
-                let state = summonSignposter.beginInterval("HotkeyHide")
-                log.debug("Hotkey: hiding (instant=\(Defaults[.instantMode]))")
                 WM.pinned = false
                 mainWindow.resignKey()
                 mainWindow.resignMain()
                 hideOrCloseMainWindow(mainWindow)
                 APP_MANAGER.lastFrontmostApp?.activate()
-                summonSignposter.endInterval("HotkeyHide", state)
-                log.debug("Hotkey hide took \((DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000)ms")
+            } else if Defaults[.instantMode], mainWindow != nil {
+                focusWindow()
             } else {
-                let state = summonSignposter.beginInterval("HotkeyShow")
-                let instantFastPath = Defaults[.instantMode] && mainWindow != nil
-                log.debug("Hotkey: showing (instant=\(Defaults[.instantMode]), fastPath=\(instantFastPath), visible=\(mainWindow?.isVisible ?? false))")
-
-                let t1 = DispatchTime.now().uptimeNanoseconds
-                if instantFastPath {
-                    focusWindow()
-                } else {
-                    WM.open("main")
-                    focusWindow()
-                    focus()
-                }
-                let t2 = DispatchTime.now().uptimeNanoseconds
-
-                summonSignposter.endInterval("HotkeyShow", state)
-                log.debug("Hotkey show: path=\((t2-t1)/1_000_000)ms total=\((t2-t0)/1_000_000)ms")
-
-                CATransaction.begin()
-                let tCA = DispatchTime.now().uptimeNanoseconds
-                CATransaction.setCompletionBlock {
-                    let wallNow = Int64(Date().timeIntervalSince1970 * 1_000_000_000)
-                    log.debug("SHOW_NS=\(wallNow) (CA commit at \((DispatchTime.now().uptimeNanoseconds - tCA)/1_000_000)ms)")
-                }
-                CATransaction.commit()
-
-                DispatchQueue.main.async {
-                    log.debug("Hotkey show: next runloop tick at \((DispatchTime.now().uptimeNanoseconds - t0)/1_000_000)ms")
-                }
+                WM.open("main")
+                focusWindow()
+                focus()
             }
         }
         pub(.enableGlobalHotkey)
@@ -277,7 +243,6 @@ class AppDelegate: LowtechProAppDelegate {
             window.alphaValue = 0
             window.ignoresMouseEvents = true
             WM.mainWindowActive = false
-            log.debug("hideOrCloseMainWindow: instant hide, alpha=0")
         } else {
             window.close()
         }
@@ -306,20 +271,14 @@ class AppDelegate: LowtechProAppDelegate {
 
     func focusWindow() {
         guard let window = mainWindow else { return }
-        let tC = DispatchTime.now().uptimeNanoseconds
         window.collectionBehavior.insert(.moveToActiveSpace)
-        let tAfterC = DispatchTime.now().uptimeNanoseconds
         if Defaults[.instantMode] {
             window.animationBehavior = .none
             window.ignoresMouseEvents = false
             window.alphaValue = 1
-            let tAfterAlpha = DispatchTime.now().uptimeNanoseconds
             window.orderFrontRegardless()
             window.makeKeyAndOrderFront(nil)
-            let tAfterMake = DispatchTime.now().uptimeNanoseconds
             NSApp.activate(ignoringOtherApps: true)
-            let tAfterActivate = DispatchTime.now().uptimeNanoseconds
-            log.debug("focusWindow: alpha=\((tAfterAlpha-tAfterC)/1_000_000)ms order+makeKey=\((tAfterMake-tAfterAlpha)/1_000_000)ms activate=\((tAfterActivate-tAfterMake)/1_000_000)ms")
         } else {
             window.makeKeyAndOrderFront(nil)
             window.orderFrontRegardless()
@@ -327,6 +286,10 @@ class AppDelegate: LowtechProAppDelegate {
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        if #available(macOS 26, *) {
+            UserDefaults.standard.register(defaults: ["NSAutoFillHeuristicControllerEnabled": false])
+        }
+
         guard let oldpid = FileManager.default.contents(atPath: PIDFILE.string)?.s?.i32 else {
             return
         }
@@ -406,12 +369,8 @@ class AppDelegate: LowtechProAppDelegate {
         }
 
         if window.title == "Cling" {
-            let tBM = DispatchTime.now().uptimeNanoseconds
-            let bmState = summonSignposter.beginInterval("windowDidBecomeMain")
             WM.mainWindowActive = true
-            let tRF = DispatchTime.now().uptimeNanoseconds
             FUZZY.refreshDefaultResultsIfNeeded()
-            log.debug("windowDidBecomeMain: FUZZY.refresh took \((DispatchTime.now().uptimeNanoseconds - tRF)/1_000_000)ms")
 
             window.alphaValue = 1
             if !WM.pinned {
@@ -443,8 +402,6 @@ class AppDelegate: LowtechProAppDelegate {
             } else {
                 keepSettingsFrontUntil = nil
             }
-            summonSignposter.endInterval("windowDidBecomeMain", bmState)
-            log.debug("windowDidBecomeMain total: \((DispatchTime.now().uptimeNanoseconds - tBM)/1_000_000)ms")
         }
     }
     func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
@@ -492,14 +449,7 @@ class WindowManager {
     var size = DEFAULT_SIZE
     var pinned = false
 
-    var mainWindowActive = false {
-        didSet {
-            guard !pinned, !Defaults[.keepWindowOpenWhenDefocused] else {
-                return
-            }
-            FUZZY.suspended = !mainWindowActive
-        }
-    }
+    var mainWindowActive = false
 
     func open(_ window: String) {
         if window == "main", NSApp.windows.first(where: { $0.title == "Cling" }) != nil {
