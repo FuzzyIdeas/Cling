@@ -338,6 +338,7 @@ extension Defaults.Keys {
     static let showWindowAtLaunch = Key<Bool>("showWindowAtLaunch", default: true)
     static let showDockIcon = Key<Bool>("showDockIcon", default: false)
     static let keepWindowOpenWhenDefocused = Key<Bool>("keepWindowOpenWhenDefocused", default: false)
+    static let instantMode = Key<Bool>("instantMode", default: false)
     static let defaultResultsMode = Key<DefaultResultsMode>("defaultResultsMode", default: .recentFiles)
     static let folderFilters = Key<[FolderFilter]>("folderFilters", default: DEFAULT_FOLDER_FILTERS)
     static let maxResultsCount = Key<Int>("maxResultsCount", default: 1000)

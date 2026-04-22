@@ -132,6 +132,11 @@ struct ContentView: View {
                         focused = nil
                     }
                 }
+                .onChange(of: wm.mainWindowActive) { _, active in
+                    if active {
+                        focused = .search
+                    }
+                }
                 .disabled(!wm.mainWindowActive)
         }
     }
@@ -180,13 +185,11 @@ struct ContentView: View {
                         }
                 }
 
-                if wm.mainWindowActive {
-                    if showingResults {
-                        actionButtonRows
-                            .padding(.top, 6)
-                    }
-                    StatusBarView().hfill(.leading).padding(.top, 10)
+                if showingResults {
+                    actionButtonRows
+                        .padding(.top, 6)
                 }
+                StatusBarView().hfill(.leading).padding(.top, 10)
             }
 
             historySuggestionsOverlay

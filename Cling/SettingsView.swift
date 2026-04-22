@@ -24,6 +24,7 @@ struct SettingsView: View {
     @Default(.showWindowAtLaunch) private var showWindowAtLaunch
     @Default(.showDockIcon) private var showDockIcon
     @Default(.keepWindowOpenWhenDefocused) private var keepWindowOpenWhenDefocused
+    @Default(.instantMode) private var instantMode
     @Default(.defaultResultsMode) private var defaultResultsMode
     @Default(.windowAppearance) private var windowAppearance
     @Default(.blockedPrefixes) private var blockedPrefixes
@@ -232,6 +233,13 @@ struct SettingsView: View {
                 (
                     Text("Show window at launch")
                         + Text("\nShow the main window when Cling is first launched")
+                        .round(11, weight: .regular).foregroundColor(.secondary)
+                ).fixedSize()
+            }
+            Toggle(isOn: $instantMode) {
+                (
+                    Text("Instant mode")
+                        + Text("\nHide the window instead of closing it, so the next hotkey summon is instant")
                         .round(11, weight: .regular).foregroundColor(.secondary)
                 ).fixedSize()
             }
