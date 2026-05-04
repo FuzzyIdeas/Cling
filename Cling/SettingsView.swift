@@ -351,6 +351,8 @@ private struct SearchSettingsPane: View {
     @Default(.maxResultsCount) private var maxResultsCount
     @Default(.defaultResultsMode) private var defaultResultsMode
     @Default(.searchScopes) private var searchScopes
+    @Default(.showSearchHints) private var showSearchHints
+    @Default(.searchHintsManuallyEnabled) private var searchHintsManuallyEnabled
     @State private var fuzzy = FUZZY
     @State private var showCLIAlert = false
     @State private var showCLIPathAlert = false
@@ -429,6 +431,15 @@ private struct SearchSettingsPane: View {
                         .labelsHidden()
                         .fixedSize()
                     }
+                }
+
+                DescriptiveToggle(
+                    title: "Show search hints",
+                    detail: "Cycle example queries in the search field placeholder.",
+                    isOn: $showSearchHints
+                )
+                .onChange(of: showSearchHints) {
+                    searchHintsManuallyEnabled = true
                 }
             }
 

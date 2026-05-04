@@ -834,6 +834,15 @@ struct ContentView: View {
                 placeholderHint = "Search"
                 return
             }
+            if searchHintsFirstShownAt == 0 {
+                searchHintsFirstShownAt = Date().timeIntervalSince1970
+            } else if !searchHintsManuallyEnabled,
+                      Date().timeIntervalSince1970 - searchHintsFirstShownAt > 3 * 24 * 60 * 60
+            {
+                showSearchHints = false
+                placeholderHint = "Search"
+                return
+            }
             while !Task.isCancelled, shouldCyclePlaceholder {
                 placeholderHint = ContentView.placeholderExamples[placeholderIndex]
                 placeholderIndex = (placeholderIndex + 1) % ContentView.placeholderExamples.count
@@ -844,9 +853,12 @@ struct ContentView: View {
 
     @State private var placeholderHint = "Search"
     @State private var placeholderIndex = 0
+    @Default(.showSearchHints) private var showSearchHints
+    @Default(.searchHintsManuallyEnabled) private var searchHintsManuallyEnabled
+    @Default(.searchHintsFirstShownAt) private var searchHintsFirstShownAt
 
     private var shouldCyclePlaceholder: Bool {
-        fuzzy.query.isEmpty && wm.mainWindowActive
+        showSearchHints && fuzzy.query.isEmpty && wm.mainWindowActive
     }
 
     private static let placeholderExamples = [
