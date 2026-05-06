@@ -74,7 +74,7 @@ struct OnboardingView: View {
                             .toggleStyle(.switch)
                     }
                     HStack {
-                        DirectionalModifierView(triggerKeys: $triggerKeys)
+                        DirectionalModifierView(triggerKeys: $triggerKeys, showFnCaps: false)
                         Text("+").heavy(12)
                         DynamicKey(key: $showAppKey, recording: $env.recording, allowedKeys: .ALL_KEYS)
                     }

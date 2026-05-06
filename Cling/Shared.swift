@@ -13,6 +13,27 @@ func revealInFinder(_ urls: [URL]) {
     NSWorkspace.shared.activateFileViewerSelecting(urls)
 }
 
+/// SwiftUI Table on macOS doesn't auto-scroll on selection changes, so we
+/// reach into the underlying NSTableView and explicitly scroll its first row
+/// into view. Used after actions that prepend a new file to the results.
+func scrollResultsTableToTop() {
+    guard let window = NSApp.windows.first(where: { $0.title == "Cling" }),
+          let table = findTableView(in: window.contentView)
+    else { return }
+    if table.numberOfRows > 0 {
+        table.scrollRowToVisible(0)
+    }
+}
+
+private func findTableView(in view: NSView?) -> NSTableView? {
+    guard let view else { return nil }
+    if let table = view as? NSTableView { return table }
+    for sub in view.subviews {
+        if let found = findTableView(in: sub) { return found }
+    }
+    return nil
+}
+
 extension UTType {
     static let avif = UTType("public.avif")
     static let webm = UTType("org.webmproject.webm")

@@ -79,6 +79,10 @@ struct ActionButtons: View {
         }
         .onAppear { installShortcutMonitor() }
         .onDisappear { removeShortcutMonitor() }
+        .onReceive(NotificationCenter.default.publisher(for: .clingRequestRename)) { _ in
+            guard !selectedResults.isEmpty else { return }
+            isPresentingRenameView = true
+        }
     }
 
     @State private var shortcutMonitor: Any?
@@ -562,7 +566,10 @@ struct ActionButtons: View {
 
     @ViewBuilder
     private var openWithFrontmostAppButton: some View {
-        if let app = appManager.lastFrontmostApp, let appURL = app.bundleURL {
+        if let app = appManager.lastFrontmostApp,
+           let appURL = app.bundleURL,
+           !isConfiguredHelperApp(appURL)
+        {
             Button("⌘⌥⏎ Open with \(app.name ?? "frontmost app")") {
                 RH.trackRun(selectedResults)
                 NSWorkspace.shared.open(
@@ -573,6 +580,14 @@ struct ActionButtons: View {
             .help("Open the selected files with \(app.name ?? "the frontmost app")")
             .disabled(selectedResults.isEmpty)
         }
+    }
+
+    private func isConfiguredHelperApp(_ url: URL) -> Bool {
+        let target = url.resolvingSymlinksInPath().path
+        let helpers = [terminalApp, editorApp, shelfApp].compactMap {
+            $0.existingFilePath?.url.resolvingSymlinksInPath().path
+        }
+        return helpers.contains(target)
     }
 
     private func pasteToFrontmostAppButton(inTerminal: Bool) -> some View {

@@ -1439,12 +1439,24 @@ final class SearchEngine: @unchecked Sendable {
         func isInToken(_ t: Substring) -> Bool { t.hasPrefix("in:") && t.count > 3 }
         func isDepthToken(_ t: Substring) -> Bool { t.hasPrefix("depth:") && t.count > 6 }
         let homePath = FileManager.default.homeDirectoryForCurrentUser.path
-        let inPrefixes: [String] = qTokens.compactMap { token -> String? in
-            guard isInToken(token) else { return nil }
+        let inPrefixes: [String] = qTokens.flatMap { token -> [String] in
+            guard isInToken(token) else { return [] }
             var path = String(token.dropFirst(3))
             if path.hasPrefix("~") { path = homePath + path.dropFirst() }
             while path.count > 1, path.hasSuffix("/") { path = String(path.dropLast()) }
-            return path
+            // Mirror macOS firmlinks: /tmp, /var, /etc are exposed both as themselves
+            // and under /private. Index stores the resolved /private/* form, so add it.
+            if path == "/tmp" || path == "/var" || path == "/etc"
+                || path.hasPrefix("/tmp/") || path.hasPrefix("/var/") || path.hasPrefix("/etc/")
+            {
+                return [path, "/private" + path]
+            }
+            if path == "/private/tmp" || path == "/private/var" || path == "/private/etc"
+                || path.hasPrefix("/private/tmp/") || path.hasPrefix("/private/var/") || path.hasPrefix("/private/etc/")
+            {
+                return [path, String(path.dropFirst("/private".count))]
+            }
+            return [path]
         }
         let queryDepths: [Int] = qTokens.compactMap { token -> Int? in
             guard isDepthToken(token) else { return nil }

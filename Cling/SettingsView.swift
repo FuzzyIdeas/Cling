@@ -324,11 +324,10 @@ private struct GeneralSettingsPane: View {
                 )
 
                 SettingRow(
-                    title: "Hotkey",
-                    detail: "Press the key combination to open Cling."
+                    title: "Hotkey"
                 ) {
                     HStack(spacing: 6) {
-                        DirectionalModifierView(triggerKeys: $triggerKeys)
+                        DirectionalModifierView(triggerKeys: $triggerKeys, showFnCaps: false)
                             .disabled(!enableGlobalHotkey)
                         Text("+").heavy(12)
                         DynamicKey(key: $showAppKey, recording: $env.recording, allowedKeys: .ALL_KEYS)

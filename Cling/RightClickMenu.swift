@@ -4,6 +4,11 @@ import Lowtech
 import SwiftUI
 import System
 
+extension Notification.Name {
+    static let clingRequestRename = Notification.Name("cling.requestRename")
+    static let clingDidCreateFiles = Notification.Name("cling.didCreateFiles")
+}
+
 // MARK: - RightClickMenu
 
 struct RightClickMenu: View {
@@ -12,34 +17,74 @@ struct RightClickMenu: View {
     var orderedResults: [FilePath]
 
     var body: some View {
-        Menu("Export results list") {
-            Button("as CSV") { exportAs(type: .csv) }
-            Button("as TSV") { exportAs(type: .tsv) }
-            Button("as JSON") { exportAs(type: .json) }
-            Button("as plaintext") { exportAs(type: .plaintext) }
+        Button("Open") { openSelection() }
+        Button("Show in Finder") { showInFinder() }
+        Button("Quick Look") { quicklookSelection() }
+
+        Divider()
+
+        if let terminal = terminalApp.existingFilePath?.url {
+            Button("Open in \(terminalApp.filePath?.stem ?? "Terminal")") {
+                openInTerminal(at: terminal)
+            }
         }
-        Menu("Copy paths...") {
+        if let editor = editorApp.existingFilePath?.url {
+            Button("Edit in \(editorApp.filePath?.stem ?? "Editor")") {
+                openWith(app: editor, activates: true)
+            }
+        }
+        if let app = APP_MANAGER.lastFrontmostApp,
+           let appURL = app.bundleURL,
+           !isConfiguredHelperApp(appURL)
+        {
+            Button("Open with \(app.name ?? "frontmost app")") {
+                openWith(app: appURL, activates: true)
+            }
+        }
+
+        Divider()
+
+        Button("Rename\(orderedSelection.count > 1 ? " (batch)..." : "...")") {
+            NotificationCenter.default.post(name: .clingRequestRename, object: nil)
+        }
+        Button("Duplicate") { duplicateSelection() }
+        Button("Compress") { compressSelection() }
+
+        Divider()
+
+        Button("Copy") { copyFiles() }
+        Menu("Copy Paths") {
             Button("separated by space") { copyPaths(separator: " ") }
             Button("separated by space and quoted") { copyPaths(separator: " ", quoted: true) }
             Button("separated by comma") { copyPaths(separator: ",") }
             Button("with each file on a separate line") { copyPaths(separator: "\n") }
         }
-        Menu("Copy filenames...") {
+        Menu("Copy Filenames") {
             Button("separated by space") { copyFilenames(separator: " ") }
             Button("separated by space and quoted") { copyFilenames(separator: " ", quoted: true) }
             Button("separated by comma") { copyFilenames(separator: ",") }
             Button("with each file on a separate line") { copyFilenames(separator: "\n") }
                 .keyboardShortcut("c", modifiers: [.command, .option, .control])
         }
-
-        Button("Copy files to...") {
-            performFileOperation(.copy)
+        Menu("Export Results List") {
+            Button("as CSV") { exportAs(type: .csv) }
+            Button("as TSV") { exportAs(type: .tsv) }
+            Button("as JSON") { exportAs(type: .json) }
+            Button("as plaintext") { exportAs(type: .plaintext) }
         }
 
-        Button("Move files to...") {
-            performFileOperation(.move)
-        }
-        Button("Exclude from index") {
+        Divider()
+
+        Button("Copy Files To...") { performFileOperation(.copy) }
+        Button("Move Files To...") { performFileOperation(.move) }
+
+        Divider()
+
+        Button("Move to Trash", role: .destructive) { moveToTrash() }
+
+        Divider()
+
+        Button("Exclude from Index") {
             FUZZY.excludeFromIndex(paths: selectedResults)
         }
 
@@ -61,6 +106,9 @@ struct RightClickMenu: View {
     }
 
     @Default(.copyPathsWithTilde) private var copyPathsWithTilde
+    @Default(.terminalApp) private var terminalApp
+    @Default(.editorApp) private var editorApp
+    @Default(.shelfApp) private var shelfApp
 
     private var selectedSourceIndex: String? {
         let sources = selectedResults.compactMap { path -> String? in
@@ -76,8 +124,61 @@ struct RightClickMenu: View {
         orderedResults.filter { selectedResults.contains($0) }
     }
 
+    private func isConfiguredHelperApp(_ url: URL) -> Bool {
+        let target = url.resolvingSymlinksInPath().path
+        let helpers = [terminalApp, editorApp, shelfApp].compactMap {
+            $0.existingFilePath?.url.resolvingSymlinksInPath().path
+        }
+        return helpers.contains(target)
+    }
+
     private func pathString(_ path: FilePath) -> String {
         copyPathsWithTilde ? path.shellString : path.string
+    }
+
+    private func openSelection() {
+        let paths = orderedSelection
+        RH.trackRun(Set(paths))
+        for path in paths {
+            NSWorkspace.shared.open(path.url)
+        }
+    }
+
+    private func showInFinder() {
+        let urls = orderedSelection.filter(\.exists).map(\.url)
+        guard !urls.isEmpty else { return }
+        revealInFinder(urls)
+    }
+
+    private func quicklookSelection() {
+        let urls = orderedSelection.map(\.url)
+        QuickLooker.quicklook(urls: urls, selectedItemIndex: 0)
+    }
+
+    private func openInTerminal(at terminal: URL) {
+        let paths = orderedSelection
+        RH.trackRun(Set(paths))
+        let dirs = paths.map { $0.isDir ? $0.url : $0.dir.url }.uniqued
+        NSWorkspace.shared.open(
+            dirs, withApplicationAt: terminal, configuration: .init(),
+            completionHandler: { _, _ in }
+        )
+    }
+
+    private func openWith(app: URL, activates: Bool) {
+        let paths = orderedSelection
+        RH.trackRun(Set(paths))
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = activates
+        NSWorkspace.shared.open(
+            paths.map(\.url), withApplicationAt: app, configuration: config,
+            completionHandler: { _, _ in }
+        )
+    }
+
+    private func copyFiles() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects(orderedSelection.map(\.url) as [NSPasteboardWriting])
     }
 
     private func copyPaths(separator: String, quoted: Bool = false) {
@@ -95,6 +196,118 @@ struct RightClickMenu: View {
         }.joined(separator: separator)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(filenames, forType: .string)
+    }
+
+    private func duplicateSelection() {
+        var created: [FilePath] = []
+        for source in orderedSelection where source.exists {
+            let dir = source.dir
+            let stem = source.stem ?? source.name.string
+            let ext = source.extension.map { ".\($0)" } ?? ""
+            var copyIndex = 2
+            var target = dir.appending("\(stem) \(copyIndex)\(ext)")
+            while target.exists {
+                copyIndex += 1
+                target = dir.appending("\(stem) \(copyIndex)\(ext)")
+            }
+            do {
+                try FileManager.default.copyItem(at: source.url, to: target.url)
+                created.append(target)
+            } catch {
+                log.error("Failed to duplicate \(source.shellString): \(error.localizedDescription)")
+            }
+        }
+        if !created.isEmpty {
+            NotificationCenter.default.post(name: .clingDidCreateFiles, object: created)
+        }
+    }
+
+    private func compressSelection() {
+        let paths = orderedSelection.filter(\.exists)
+        guard !paths.isEmpty else { return }
+
+        let parents = Set(paths.map(\.dir))
+        let workingDir = parents.count == 1 ? parents.first! : paths[0].dir
+
+        let baseName: String = if paths.count == 1 {
+            paths[0].stem ?? paths[0].name.string
+        } else {
+            "Archive"
+        }
+        var archive = workingDir.appending("\(baseName).zip")
+        var idx = 2
+        while archive.exists {
+            archive = workingDir.appending("\(baseName) \(idx).zip")
+            idx += 1
+        }
+
+        let names = paths.map { path in
+            (path.dir == workingDir) ? path.name.string : path.string
+        }
+        let archivePath = archive
+        let opKey = "compress-\(archivePath.string)"
+        let progressMessage = paths.count == 1
+            ? "Compressing \(paths[0].name.string)"
+            : "Compressing \(paths.count) files into \(archivePath.name.string)"
+
+        FUZZY.logActivity(progressMessage, ongoing: true, operationKey: opKey)
+
+        let sevenZipURL = SEVEN_ZIP.url
+        Task.detached(priority: .userInitiated) {
+            let task = Process()
+            task.executableURL = sevenZipURL
+            task.currentDirectoryURL = workingDir.url
+            task.arguments = ["a", "-tzip", "-bd", "-bso0", "-bsp0", archivePath.string] + names
+            task.standardOutput = FileHandle.nullDevice
+            task.standardError = Pipe()
+
+            var status: Int32 = -1
+            var stderr = Data()
+            var runError: Error?
+            do {
+                try task.run()
+                if let pipe = task.standardError as? Pipe {
+                    stderr = pipe.fileHandleForReading.readDataToEndOfFile()
+                }
+                task.waitUntilExit()
+                status = task.terminationStatus
+            } catch {
+                runError = error
+            }
+
+            await MainActor.run {
+                if let runError {
+                    log.error("Failed to compress: \(runError.localizedDescription)")
+                    FUZZY.logActivity("Compression failed", operationKey: opKey)
+                    return
+                }
+                if status != 0 {
+                    let detail = String(data: stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    log.error("7zz exited with status \(status)\(detail.isEmpty ? "" : ": \(detail)")")
+                    FUZZY.logActivity("Compression failed (exit \(status))", operationKey: opKey)
+                    return
+                }
+                FUZZY.logActivity("Created \(archivePath.name.string)", operationKey: opKey)
+                if archivePath.exists {
+                    NotificationCenter.default.post(name: .clingDidCreateFiles, object: [archivePath])
+                }
+            }
+        }
+    }
+
+    private func moveToTrash() {
+        var removed = Set<FilePath>()
+        for path in orderedSelection {
+            log.info("Trashing \(path.shellString)")
+            do {
+                try FileManager.default.trashItem(at: path.url, resultingItemURL: nil)
+                removed.insert(path)
+            } catch {
+                log.error("Error trashing \(path.shellString): \(error)")
+            }
+        }
+        selectedResults.subtract(removed)
+        FUZZY.results = FUZZY.results.filter { !removed.contains($0) && $0.exists }
     }
 
     private func exportAs(type: ExportType) {

@@ -940,6 +940,17 @@ struct ContentView: View {
                     SearchHistory.shared.commit(fuzzy.query)
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .clingDidCreateFiles)) { notif in
+                guard let paths = notif.object as? [FilePath], !paths.isEmpty else { return }
+                let newSet = Set(paths)
+                fuzzy.results = paths + fuzzy.results.filter { !newSet.contains($0) }
+                fuzzy.recents = paths + fuzzy.recents.filter { !newSet.contains($0) }
+                fuzzy.sortedRecents = paths + fuzzy.sortedRecents.filter { !newSet.contains($0) }
+                DispatchQueue.main.async {
+                    selectedResultIDs = Set(paths.map(\.string))
+                    scrollResultsTableToTop()
+                }
+            }
             .onKeyPress(.tab) {
                 focused = .search
                 return .handled
