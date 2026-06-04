@@ -1,7 +1,10 @@
 import Defaults
 import Foundation
 import Lowtech
+import OSLog
 import System
+
+private let log = Logger(subsystem: clingSubsystem, category: "Migration")
 
 enum Migration {
     static let CURRENT_VERSION = 2
@@ -31,7 +34,7 @@ enum Migration {
                 try FS_IGNORE.copy(to: fsignore, force: true)
                 log.info("Migration v1: updated fsignore")
             } catch {
-                log.error("Migration v1: failed to update fsignore: \(error)")
+                log.error("Migration v1: failed to update fsignore: \(error.localizedDescription, privacy: .public)")
             }
         }
 
@@ -39,7 +42,7 @@ enum Migration {
             let path = scriptsFolder / name
             if path.exists {
                 try? FileManager.default.removeItem(atPath: path.string)
-                log.info("Migration v1: deleted old script \(name)")
+                log.info("Migration v1: deleted old script \(name, privacy: .public)")
             }
         }
 
@@ -62,7 +65,7 @@ enum Migration {
                 log.info("Migration v2: patched Spotify ignore pattern in fsignore")
             }
         } catch {
-            log.error("Migration v2: failed to patch fsignore: \(error)")
+            log.error("Migration v2: failed to patch fsignore: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

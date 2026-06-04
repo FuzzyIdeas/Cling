@@ -5,7 +5,7 @@ import simd
 #endif
 import os.log
 
-private let slog = Logger(subsystem: "com.lowtechguys.Cling", category: "SearchEngine")
+private let slog = Logger(subsystem: clingSubsystem, category: "SearchEngine")
 
 // MARK: - ScoringConfig
 

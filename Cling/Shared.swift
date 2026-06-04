@@ -1,6 +1,9 @@
 import AppKit
 import Lowtech
+import OSLog
 import UniformTypeIdentifiers
+
+private let log = Logger(subsystem: clingSubsystem, category: "Shared")
 
 /// Reveal files in Finder. activateFileViewerSelecting alone doesn't reliably
 /// bring up a Finder window when Finder has no windows visible — opening the
@@ -17,7 +20,7 @@ func revealInFinder(_ urls: [URL]) {
 /// reach into the underlying NSTableView and explicitly scroll its first row
 /// into view. Used after actions that prepend a new file to the results.
 func scrollResultsTableToTop() {
-    guard let window = NSApp.windows.first(where: { $0.title == "Cling" }),
+    guard let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }),
           let table = findTableView(in: window.contentView)
     else { return }
     if table.numberOfRows > 0 {
@@ -72,7 +75,7 @@ extension URL {
         do {
             try (self as NSURL).getResourceValue(&type, forKey: .contentTypeKey)
         } catch {
-            log.error(error.localizedDescription)
+            log.error("\(error.localizedDescription, privacy: .public)")
         }
         return type as? UTType
     }

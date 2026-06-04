@@ -8,10 +8,13 @@ import Defaults
 import Lowtech
 import LowtechIndie
 import LowtechPro
+import OSLog
 import Paddle
 import Sparkle
 import SwiftUI
 import System
+
+private let log = Logger(subsystem: clingSubsystem, category: "ClingApp")
 
 extension [String] {
     func removing(_ element: String) -> [String] {
@@ -86,10 +89,12 @@ class AppDelegate: LowtechProAppDelegate {
     var keepSettingsFrontUntil: Date?
 
     var mainWindow: NSWindow? {
-        NSApp.windows.first { $0.title == "Cling" }
+        NSApp.windows.first { $0.identifier?.rawValue == "main" }
     }
+    // The Settings window's title tracks the selected sidebar item, so match on
+    // the stable SwiftUI scene identifier instead.
     var settingsWindow: NSWindow? {
-        NSApp.windows.first { $0.title.contains("Settings") }
+        NSApp.windows.first { $0.identifier?.rawValue == "settings" }
     }
 
     override func applicationDidFinishLaunching(_ notification: Notification) {
@@ -131,7 +136,7 @@ class AppDelegate: LowtechProAppDelegate {
                 mainWindow.resignKey()
                 mainWindow.resignMain()
                 hideOrCloseMainWindow(mainWindow)
-                APP_MANAGER.lastFrontmostApp?.activate()
+                handBackFocusAfterMainDismiss()
             } else if Defaults[.instantMode], mainWindow != nil {
                 focusWindow()
             } else {
@@ -182,7 +187,7 @@ class AppDelegate: LowtechProAppDelegate {
 
         resizeCancellable = NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)
             .compactMap { $0.object as? NSWindow }
-            .filter { $0.title == "Cling" }
+            .filter { $0.identifier?.rawValue == "main" }
             .map(\.frame.size)
             .filter { $0 != WM.size }
             .throttle(for: .milliseconds(80), scheduler: RunLoop.main, latest: true)
@@ -214,12 +219,19 @@ class AppDelegate: LowtechProAppDelegate {
             return
         }
 //        log.debug("Became active")
-        focusWindow()
+        // Defer until the key window settles. If the app was activated by clicking
+        // the Settings window, don't also pop the main search window.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [self] in
+            if let settings = settingsWindow, settings.isKeyWindow || settings.isMainWindow {
+                return
+            }
+            focusWindow()
+        }
     }
 
     override func applicationDidResignActive(_ notification: Notification) {
-        log.debug("Resigned active: pinned=\(WM.pinned) keepOpen=\(Defaults[.keepWindowOpenWhenDefocused]) settingsVisible=\(settingsWindow?.isVisible ?? false)")
         let settingsVisible = settingsWindow?.isVisible ?? false
+        log.debug("Resigned active: pinned=\(WM.pinned) keepOpen=\(Defaults[.keepWindowOpenWhenDefocused]) settingsVisible=\(settingsVisible)")
         if !Defaults[.keepWindowOpenWhenDefocused], !settingsVisible {
             settingsWindow?.close()
         }
@@ -255,13 +267,24 @@ class AppDelegate: LowtechProAppDelegate {
         }
     }
 
+    /// Called after the main window is dismissed. If Settings is still open, keep
+    /// Cling active and focus it; otherwise hand focus back to the previous app.
+    /// Activating another app while Settings is open would wrongly defocus Cling.
+    func handBackFocusAfterMainDismiss() {
+        if let settings = settingsWindow, settings.isVisible {
+            settings.makeKeyAndOrderFront(nil)
+        } else {
+            APP_MANAGER.lastFrontmostApp?.activate()
+        }
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
-        log.debug("Open URLs: \(urls)")
+        log.debug("Open URLs: \(String(describing: urls), privacy: .public)")
         handleURLs(application, urls)
     }
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
-        log.debug("Open files: \(filenames)")
+        log.debug("Open files: \(String(describing: filenames), privacy: .public)")
         handleURLs(sender, filenames.compactMap(\.url))
     }
 
@@ -348,10 +371,13 @@ class AppDelegate: LowtechProAppDelegate {
     }
 
     @objc func windowWillClose(_ notification: Notification) {
-        if let window = notification.object as? NSWindow, window.title == "Cling" {
+        guard let window = notification.object as? NSWindow else { return }
+        if window.identifier?.rawValue == "main" {
             WM.mainWindowActive = false
-            APP_MANAGER.lastFrontmostApp?.activate()
-
+            handBackFocusAfterMainDismiss()
+        } else if window.identifier?.rawValue == "settings" {
+            // Restore the user's configured policy once Settings closes.
+            NSApp.setActivationPolicy(Defaults[.showDockIcon] ? .regular : .accessory)
         }
     }
     @objc func windowDidBecomeMain(_ notification: Notification) {
@@ -370,16 +396,24 @@ class AppDelegate: LowtechProAppDelegate {
             licenseCode.backgroundColor = .black.withAlphaComponent(0.05)
         }
 
-        if window.title.contains("Settings"), !settingsWindowConfigured {
-            settingsWindowConfigured = true
-            window.toolbar?.showsBaselineSeparator = false
+        if window.identifier?.rawValue == "settings" {
+            // Settings deserves a real menu bar and proper window management, so run
+            // as a regular app while it's open (reverted in windowWillClose).
+            NSApp.setActivationPolicy(.regular)
+            if !settingsWindowConfigured {
+                settingsWindowConfigured = true
+                window.toolbar?.showsBaselineSeparator = false
+            }
         }
 
-        if window.title == "Cling" {
+        if window.identifier?.rawValue == "main" {
             WM.mainWindowActive = true
             FUZZY.refreshDefaultResultsIfNeeded()
 
             window.alphaValue = 1
+            // Undo the click-through state set while hidden, otherwise a window shown
+            // again via dock reopen swallows nothing and clicks fall through to Settings.
+            window.ignoresMouseEvents = false
             if !WM.pinned {
                 window.level = .normal
             }
@@ -444,7 +478,7 @@ final class MainWindowDelegateProxy: NSObject, NSWindowDelegate {
             }
             WM.pinned = false
             AppDelegate.shared?.hideOrCloseMainWindow(sender)
-            APP_MANAGER.lastFrontmostApp?.activate()
+            AppDelegate.shared?.handBackFocusAfterMainDismiss()
             return false
         }
     }
@@ -464,7 +498,7 @@ class WindowManager {
     var mainWindowActive = false
 
     func open(_ window: String) {
-        if window == "main", NSApp.windows.first(where: { $0.title == "Cling" }) != nil {
+        if window == "main", NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) != nil {
             focus()
             AppDelegate.shared?.focusWindow()
             if windowToOpen != nil {
@@ -567,7 +601,7 @@ struct ClingApp: App {
             guard let window = wm.windowToOpen, !SWIFTUI_PREVIEW else {
                 return
             }
-            if window == "main", NSApp.windows.first(where: { $0.title == "Cling" }) != nil {
+            if window == "main", NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) != nil {
                 return
             }
 

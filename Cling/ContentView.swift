@@ -9,10 +9,13 @@ import AppKit
 import Defaults
 import Lowtech
 import LowtechPro
+import OSLog
 import QuickLook
 import SwiftUI
 import System
 import UniformTypeIdentifiers
+
+private let log = Logger(subsystem: clingSubsystem, category: "ContentView")
 
 // Returns true if an IME (CJK input method, etc.) is currently composing text
 // in the focused responder. Key handlers should defer to the IME in that case.
@@ -66,7 +69,7 @@ struct ContentView: View {
     var pinButton: some View {
         Button(action: {
             wm.pinned.toggle()
-            NSApp.windows.first { $0.title == "Cling" }?.level = wm.pinned ? .floating : .normal
+            NSApp.windows.first { $0.identifier?.rawValue == "main" }?.level = wm.pinned ? .floating : .normal
         }) {
             HStack(spacing: 1) {
                 Image(systemName: wm.pinned ? "pin.circle.fill" : "pin.circle")
@@ -799,7 +802,7 @@ struct ContentView: View {
             // ⌘. → toggle pin
             if mods == .command, chars == "." {
                 wm.pinned.toggle()
-                NSApp.windows.first { $0.title == "Cling" }?.level = wm.pinned ? .floating : .normal
+                NSApp.windows.first { $0.identifier?.rawValue == "main" }?.level = wm.pinned ? .floating : .normal
                 return nil
             }
             // ⌘⇧P → toggle file preview panel
@@ -827,10 +830,10 @@ struct ContentView: View {
                     return nil
                 }
                 if fuzzy.query.isEmpty {
-                    if let win = NSApp.windows.first(where: { $0.title == "Cling" }) {
+                    if let win = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
                         AppDelegate.shared.hideOrCloseMainWindow(win)
                     }
-                    appManager.lastFrontmostApp?.activate()
+                    AppDelegate.shared.handBackFocusAfterMainDismiss()
                     return nil
                 }
                 fuzzy.query = ""
@@ -1041,7 +1044,7 @@ struct ContentView: View {
                 QLP.close()
             } else if fuzzy.query.isEmpty {
                 dismiss()
-                appManager.lastFrontmostApp?.activate()
+                AppDelegate.shared.handBackFocusAfterMainDismiss()
             } else {
                 fuzzy.query = ""
                 focused = .search
@@ -1400,7 +1403,7 @@ class FilePathBackgroundTasks {
                 attrs = try FileManager.default.attributesOfItem(atPath: path.string)
                 icon = NSWorkspace.shared.icon(forFile: path.string)
             } catch {
-                log.error("Error fetching file metadata for \(path): \(error)")
+                log.error("Error fetching file metadata for \(path.string, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 mainActor { self.attrFetchers[path] = nil }
                 return
             }

@@ -4,7 +4,10 @@ import Combine
 import Foundation
 import Ignore
 import Lowtech
+import OSLog
 import System
+
+private let log = Logger(subsystem: clingSubsystem, category: "FuzzyClient")
 
 let FS_IGNORE = Bundle.main.url(forResource: "fsignore", withExtension: nil)!.existingFilePath!
 
@@ -665,7 +668,7 @@ class FuzzyClient {
     func startIndex() {
         if !fsignore.exists {
             do { try FS_IGNORE.copy(to: fsignore) }
-            catch { log.error("Failed to copy \(FS_IGNORE.string) to \(fsignoreString): \(error)") }
+            catch { log.error("Failed to copy \(FS_IGNORE.string, privacy: .public) to \(fsignoreString, privacy: .public): \(error.localizedDescription, privacy: .public)") }
         }
 
         if !indexExists {
@@ -728,7 +731,7 @@ class FuzzyClient {
 
                 bust_gitignore_cache()
 
-                log.info("Ignore file changed: \(path), scheduling reindex in 60s")
+                log.info("Ignore file changed: \(path, privacy: .public), scheduling reindex in 60s")
                 fsignoreReindexTask?.cancel()
                 fsignoreReindexTask = DispatchWorkItem { [self] in
                     mainActor {
@@ -870,7 +873,10 @@ class FuzzyClient {
                 self.loadingIndex = false
                 if self.indexedCount > 0 {
                     self.logActivity("Loaded \(self.indexedCount.formatted()) entries")
-                    log.debug("Loaded \(self.indexedCount) entries (\(self.scopeEngines.count) scopes, \(self.volumeEngines.count) volumes)")
+                    let indexedCount = self.indexedCount
+                    let scopeCount = self.scopeEngines.count
+                    let volumeCount = self.volumeEngines.count
+                    log.debug("Loaded \(indexedCount) entries (\(scopeCount) scopes, \(volumeCount) volumes)")
                 } else {
                     self.setOperation("")
                 }
@@ -966,7 +972,7 @@ class FuzzyClient {
                     try? FileManager.default.removeItem(at: file.url)
                     scopeEngine.saveBinaryIndex(to: file.url)
                     let added = scopeEngine.count
-                    log.debug("Indexed \(scope.label): \(added) entries -> \(file.string)")
+                    log.debug("Indexed \(scope.label, privacy: .public): \(added) entries -> \(file.string, privacy: .public)")
 
                     let reloadedEngine = SearchEngine()
                     _ = reloadedEngine.loadBinaryIndex(from: file.url)
@@ -1013,7 +1019,7 @@ class FuzzyClient {
             return (volume.string + "/", vfsignore.string)
         }
 
-        log.debug("cleanRecentsEngine: \(entries.count) entries, ignoreFile=\(ignoreFile ?? "nil")")
+        log.debug("cleanRecentsEngine: \(entries.count) entries, ignoreFile=\(ignoreFile ?? "nil", privacy: .public)")
 
         var toRemove: [String] = []
         var i = 0
@@ -1104,7 +1110,7 @@ class FuzzyClient {
                 }
             }
         } catch {
-            log.error("Failed to watch files: \(error)")
+            log.error("Failed to watch files: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -1166,7 +1172,8 @@ class FuzzyClient {
             quickFilter.map { "quick=\($0.id)(\($0.subtitle))" },
             volumeFilter.map { "volume=\($0.name.string)" },
         ].compactMap { $0 }.joined(separator: " ")
-        log.debug("performSearch: q=\"\(query)\" engines=\(activeEngines.count) \(filterDesc)")
+        let engineCount = activeEngines.count
+        log.debug("performSearch: q=\"\(query, privacy: .public)\" engines=\(engineCount) \(filterDesc, privacy: .public)")
         let maxResults = proactive ? Defaults[.maxResultsCount] : min(Defaults[.maxResultsCount], 500)
         let folderPrefixes = folderFilter?.folders.map(\.string)
         let volumePrefix = volumeFilter?.string
@@ -1418,7 +1425,7 @@ class FuzzyClient {
                     }
                     fileHandle.closeFile()
                 } catch {
-                    log.error("Failed to write to fsignore: \(error.localizedDescription)")
+                    log.error("Failed to write to fsignore: \(error.localizedDescription, privacy: .public)")
                 }
 
                 bust_gitignore_cache()
@@ -1464,7 +1471,7 @@ class FuzzyClient {
                         }
                         fileHandle.closeFile()
                     } catch {
-                        log.error("Failed to write to \(volumeFsignore.string): \(error.localizedDescription)")
+                        log.error("Failed to write to \(volumeFsignore.string, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     }
                 }
             }
@@ -1709,7 +1716,9 @@ class FuzzyClient {
         searchCoordinator.setRecents(defaults.map {
             SearchCoordinator.RecentEntry(path: $0.string, isDir: $0.isDir)
         })
-        log.debug("updateDefaultResults: mdQuery=\(mdQueryRecents.count) live=\(liveIndexChanges.count) merged=\(defaults.count)")
+        let mdCount = mdQueryRecents.count
+        let liveCount = liveIndexChanges.count
+        log.debug("updateDefaultResults: mdQuery=\(mdCount) live=\(liveCount) merged=\(defaults.count)")
     }
 
     /// Returns the walk directories for a given scope.

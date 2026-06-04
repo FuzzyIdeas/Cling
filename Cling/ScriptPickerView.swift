@@ -1,9 +1,12 @@
 import ClopSDK
 import Defaults
 import Lowtech
+import OSLog
 import SwiftUI
 import System
 import UniformTypeIdentifiers
+
+private let log = Logger(subsystem: clingSubsystem, category: "ScriptPickerView")
 
 // MARK: - ScriptPickerView
 
@@ -121,7 +124,7 @@ struct ScriptPickerView: View {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: newScript.string)
             newScript.edit()
         } catch {
-            log.error("Failed to create script: \(error.localizedDescription)")
+            log.error("Failed to create script: \(error.localizedDescription, privacy: .public)")
         }
 
         scriptName = ""
@@ -657,7 +660,7 @@ struct ScriptEditorSheet: View {
             try "\(runner.shebang)\n\(runner.template)".write(to: newScript.url, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: newScript.string)
         } catch {
-            log.error("Failed to create script: \(error.localizedDescription)")
+            log.error("Failed to create script: \(error.localizedDescription, privacy: .public)")
         }
 
         scriptName = ""
@@ -693,13 +696,16 @@ private struct ScriptSourceEditor: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear(perform: load)
         .onDisappear(perform: saveNow)
-        .onChange(of: params) { scheduleSave() }
-        .onChange(of: source) { scheduleSave() }
+        // Params are discrete toggles/steppers, so persist them promptly; the code
+        // editor keeps the long debounce so typing never writes on every keystroke.
+        .onChange(of: params) { scheduleSave(after: Self.paramsSaveDebounce) }
+        .onChange(of: source) { scheduleSave(after: Self.saveDebounce) }
     }
 
     // Generous debounce so typing in the code editor never writes on every keystroke; the rebuild
     // is deferred to fire time so each change just cancels and reschedules.
     private static let saveDebounce: TimeInterval = 2
+    private static let paramsSaveDebounce: TimeInterval = 0.35
 
     @State private var params = ScriptParams()
     @State private var source = ""
@@ -788,7 +794,7 @@ private struct ScriptSourceEditor: View {
             try text.write(to: url, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         } catch {
-            log.error("Failed to save script \(url.lastPathComponent): \(error.localizedDescription)")
+            log.error("Failed to save script \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -804,7 +810,7 @@ private struct ScriptSourceEditor: View {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: newURL.path)
             try? FileManager.default.removeItem(at: script)
         } catch {
-            log.error("Failed to rename script \(script.lastPathComponent): \(error.localizedDescription)")
+            log.error("Failed to rename script \(script.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return
         }
         onRename(newURL)
@@ -822,9 +828,9 @@ private struct ScriptSourceEditor: View {
         savedSnapshot = ScriptHeaderParser.rebuild(shebang: shebang, params: params, body: source, runner: runner)
     }
 
-    private func scheduleSave() {
+    private func scheduleSave(after debounce: TimeInterval = saveDebounce) {
         saveTask?.cancel()
-        saveTask = mainAsyncAfter(Self.saveDebounce) { saveNow() }
+        saveTask = mainAsyncAfter(debounce) { saveNow() }
     }
 
     private func saveNow() {
@@ -832,6 +838,9 @@ private struct ScriptSourceEditor: View {
         let content = ScriptHeaderParser.rebuild(shebang: shebang, params: params, body: source, runner: runner)
         guard content != savedSnapshot else { return }
         Self.write(content, to: script)
+        // Track what's now on disk; otherwise reverting an edit (e.g. toggling a
+        // param back off) matches the stale load-time snapshot and skips the write.
+        savedSnapshot = content
     }
 
 }

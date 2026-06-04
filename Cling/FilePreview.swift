@@ -252,7 +252,7 @@ struct FilePreviewPanel: View {
             // real modifiers here.
             guard pathCount > 1,
                   event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-                  event.window?.title == "Cling"
+                  event.window?.identifier?.rawValue == "main"
             else {
                 return event
             }

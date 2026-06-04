@@ -1,7 +1,10 @@
 import AppKit
 import Foundation
 import Lowtech
+import OSLog
 import System
+
+private let log = Logger(subsystem: clingSubsystem, category: "ShellIntegration")
 
 let CLING_CLI_BIN = Bundle.main.sharedSupportPath.map { ($0 + "/ClingCLI").filePath! }
 let CLING_CLI_LINK = (HOME / ".local/bin/cling")
@@ -49,11 +52,11 @@ class ShellIntegration {
 
             // Create symlink
             try fm.createSymbolicLink(atPath: linkPath.string, withDestinationPath: cliBin.string)
-            log.info("Created symlink \(linkPath) -> \(cliBin)")
+            log.info("Created symlink \(linkPath.string, privacy: .public) -> \(cliBin.string, privacy: .public)")
 
             return "Installed `cling` CLI to \(linkPath.shellString)"
         } catch {
-            log.error("Failed to install CLI: \(error)")
+            log.error("Failed to install CLI: \(error.localizedDescription, privacy: .public)")
             return "Failed to install CLI: \(error.localizedDescription)"
         }
     }
@@ -78,7 +81,7 @@ class ShellIntegration {
                 }
             }
         } catch {
-            log.error("Failed to update shell configs: \(error)")
+            log.error("Failed to update shell configs: \(error.localizedDescription, privacy: .public)")
         }
     }
 

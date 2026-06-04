@@ -1,7 +1,10 @@
 import Defaults
 import Foundation
 import Lowtech
+import OSLog
 import System
+
+private let log = Logger(subsystem: clingSubsystem, category: "Recents")
 
 let SORT_ATTRS = [
     kMDItemLastUsedDate,

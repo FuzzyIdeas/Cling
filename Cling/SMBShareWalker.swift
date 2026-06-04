@@ -4,7 +4,7 @@ import Lowtech
 import os.log
 import System
 
-private let slog = Logger(subsystem: "com.lowtechguys.Cling", category: "SMBShareWalker")
+private let slog = Logger(subsystem: clingSubsystem, category: "SMBShareWalker")
 
 // MARK: - NTSTATUS / SMB constants
 
@@ -103,7 +103,7 @@ final class SMBMetadataCache {
             try data.write(to: file.url)
             slog.info("SMBMetadataCache: saved \(snapshot.count) entries to \(file.string)")
         } catch {
-            slog.error("SMBMetadataCache: save failed: \(error)")
+            slog.error("SMBMetadataCache: save failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -115,7 +115,7 @@ final class SMBMetadataCache {
             lock.withLock { entries = loaded }
             slog.info("SMBMetadataCache: loaded \(loaded.count) entries from \(file.string)")
         } catch {
-            slog.error("SMBMetadataCache: load failed: \(error)")
+            slog.error("SMBMetadataCache: load failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

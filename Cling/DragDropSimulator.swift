@@ -1,5 +1,8 @@
 import Cocoa
 import Lowtech
+import OSLog
+
+private let log = Logger(subsystem: clingSubsystem, category: "DragDropSimulator")
 
 private let DD = "[DragDrop]"
 
@@ -21,7 +24,7 @@ final class DragSourceView: NSView, NSDraggingSource {
 
     override func mouseDragged(with event: NSEvent) {
         guard !fileURLs.isEmpty else {
-            log.warning("\(DD) view.mouseDragged with empty fileURLs — drag will have no payload")
+            log.warning("\(DD, privacy: .public) view.mouseDragged with empty fileURLs — drag will have no payload")
             super.mouseDragged(with: event)
             return
         }
@@ -74,7 +77,7 @@ final class DragDropSimulator {
 
     func performDrop(fileURLs urls: [URL], to dropCG: CGPoint, activating app: NSRunningApplication? = nil) {
         guard !urls.isEmpty else {
-            log.warning("\(DD) abort: no URLs")
+            log.warning("\(DD, privacy: .public) abort: no URLs")
             return
         }
 
@@ -133,7 +136,8 @@ final class DragDropSimulator {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard let self else { return }
             if !dragSessionStarted {
-                log.error("\(DD) WATCHDOG: drag session never started after 1s (mouseDown received=\(mouseDownReceived))")
+                let mouseDownReceived = self.mouseDownReceived
+                log.error("\(DD, privacy: .public) WATCHDOG: drag session never started after 1s (mouseDown received=\(mouseDownReceived))")
                 cleanup()
             }
         }
@@ -184,7 +188,7 @@ final class DragDropSimulator {
 
     private nonisolated static func post(_ type: CGEventType, at point: CGPoint, source: CGEventSource?) {
         guard let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else {
-            log.error("\(DD) failed to create CGEvent type=\(type.rawValue)")
+            log.error("\(DD, privacy: .public) failed to create CGEvent type=\(type.rawValue)")
             return
         }
         e.post(tap: .cghidEventTap)

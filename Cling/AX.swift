@@ -2,7 +2,10 @@ import ApplicationServices
 import Cocoa
 import Combine
 import Lowtech
+import OSLog
 import System
+
+private let log = Logger(subsystem: clingSubsystem, category: "AX")
 
 // MARK: - AppManager
 
@@ -84,7 +87,8 @@ class AppManager {
             return
         }
         guard let app = lastFrontmostApp, let target = axDropTarget(for: app) else {
-            log.warning("[DropFocused] no resolvable AX target for \(lastFrontmostApp?.name ?? "nil")")
+            let appName = lastFrontmostApp?.name ?? "nil"
+            log.warning("[DropFocused] no resolvable AX target for \(appName, privacy: .public)")
             return
         }
         let urls = paths.map(\.url)

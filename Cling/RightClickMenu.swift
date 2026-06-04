@@ -1,8 +1,11 @@
 import AppKit
 import Defaults
 import Lowtech
+import OSLog
 import SwiftUI
 import System
+
+private let log = Logger(subsystem: clingSubsystem, category: "RightClickMenu")
 
 extension Notification.Name {
     static let clingRequestRename = Notification.Name("cling.requestRename")
@@ -214,7 +217,7 @@ struct RightClickMenu: View {
                 try FileManager.default.copyItem(at: source.url, to: target.url)
                 created.append(target)
             } catch {
-                log.error("Failed to duplicate \(source.shellString): \(error.localizedDescription)")
+                log.error("Failed to duplicate \(source.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
         if !created.isEmpty {
@@ -277,13 +280,13 @@ struct RightClickMenu: View {
 
             await MainActor.run {
                 if let runError {
-                    log.error("Failed to compress: \(runError.localizedDescription)")
+                    log.error("Failed to compress: \(runError.localizedDescription, privacy: .public)")
                     FUZZY.logActivity("Compression failed", operationKey: opKey)
                     return
                 }
                 if status != 0 {
                     let detail = String(data: stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    log.error("7zz exited with status \(status)\(detail.isEmpty ? "" : ": \(detail)")")
+                    log.error("7zz exited with status \(status)\(detail.isEmpty ? "" : ": \(detail)", privacy: .public)")
                     FUZZY.logActivity("Compression failed (exit \(status))", operationKey: opKey)
                     return
                 }
@@ -298,12 +301,12 @@ struct RightClickMenu: View {
     private func moveToTrash() {
         var removed = Set<FilePath>()
         for path in orderedSelection {
-            log.info("Trashing \(path.shellString)")
+            log.info("Trashing \(path.shellString, privacy: .public)")
             do {
                 try FileManager.default.trashItem(at: path.url, resultingItemURL: nil)
                 removed.insert(path)
             } catch {
-                log.error("Error trashing \(path.shellString): \(error)")
+                log.error("Error trashing \(path.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
         selectedResults.subtract(removed)
@@ -341,7 +344,7 @@ struct RightClickMenu: View {
                     try exportPlaintext(to: url)
                 }
             } catch {
-                log.error("Failed to write to \(url.path): \(error.localizedDescription)")
+                log.error("Failed to write to \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -404,7 +407,7 @@ struct RightClickMenu: View {
                     }
                 } catch {
                     let operationName = operation == .copy ? "copy" : "move"
-                    log.error("Failed to \(operationName) \(file.shellString) to \(dir.shellString): \(error.localizedDescription)")
+                    log.error("Failed to \(operationName, privacy: .public) \(file.shellString, privacy: .public) to \(dir.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 }
             }
         }

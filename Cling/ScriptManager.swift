@@ -1,7 +1,10 @@
 import Defaults
 import Foundation
 import Lowtech
+import OSLog
 import System
+
+private let log = Logger(subsystem: clingSubsystem, category: "ScriptManager")
 
 let DEFAULT_SCRIPTS = [
     Bundle.main.url(forResource: "Copy to tmp", withExtension: "zsh")!.filePath!,
@@ -83,7 +86,9 @@ class ScriptManager {
             lastErrorFile = process.stderrFilePath?.existingFilePath
             process.terminationHandler = { [self] process in
                 mainActor {
-                    log.verbose("Script \(self.lastScript?.lastPathComponent ?? "unknown") terminated with status \(process.terminationStatus)")
+                    let scriptName = self.lastScript?.lastPathComponent ?? "unknown"
+                    let terminationStatus = process.terminationStatus
+                    log.trace("Script \(scriptName, privacy: .public) terminated with status \(terminationStatus)")
                     self.process = nil
                     self.clearLastProcessTask = mainAsyncAfter(30) {
                         self.clearLastProcess()
@@ -149,7 +154,7 @@ class ScriptManager {
 
     func run(script: URL, args: [String]) {
         guard script.fileExists else {
-            log.error("Script not found: \(script)")
+            log.error("Script not found: \(script.path, privacy: .public)")
             return
         }
         lastScript = script
@@ -232,7 +237,7 @@ class ScriptManager {
         } catch {
             scriptURLs = []
             scriptShortcuts = [:]
-            log.error("Failed to fetch scripts: \(error)")
+            log.error("Failed to fetch scripts: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -245,15 +250,15 @@ class ScriptManager {
                               .itemCreated, .itemRemoved, .itemRenamed, .itemModified, .itemChangeOwner,
                           ])
                     else {
-                        log.verbose("Ignoring script event \(event)")
+                        log.trace("Ignoring script event \(String(describing: event), privacy: .public)")
                         return
                     }
-                    log.verbose("Handling script event \(event)")
+                    log.trace("Handling script event \(String(describing: event), privacy: .public)")
                     fetchScripts()
                 }
             }
         } catch {
-            log.error("Failed to watch scripts folder \(scriptsFolder.shellString): \(error)")
+            log.error("Failed to watch scripts folder \(scriptsFolder.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -287,7 +292,7 @@ class ScriptManager {
             try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         } catch {
-            log.error("Failed to persist hotkey for \(url.lastPathComponent): \(error.localizedDescription)")
+            log.error("Failed to persist hotkey for \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 

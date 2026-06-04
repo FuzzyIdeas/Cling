@@ -147,7 +147,7 @@ struct OnboardingView: View {
         .frame(width: 560)
         .frame(maxHeight: .infinity)
         .onAppear {
-            if let window = NSApp.windows.first(where: { $0.title == "Welcome to Cling" }) {
+            if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "onboarding" }) {
                 window.level = .floating
                 window.titlebarAppearsTransparent = true
                 window.backgroundColor = .clear
@@ -264,7 +264,7 @@ struct OnboardingView: View {
 
         Defaults[.onboardingCompleted] = true
 
-        if let onboardingWindow = NSApp.windows.first(where: { $0.title == "Welcome to Cling" }) {
+        if let onboardingWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "onboarding" }) {
             onboardingWindow.close()
         }
         WM.open("main")

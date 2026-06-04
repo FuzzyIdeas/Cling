@@ -3,10 +3,10 @@ import Combine
 import Defaults
 import Foundation
 import Lowtech
-import os.log
+import OSLog
 import System
 
-private let vlog = Logger(subsystem: "com.lowtechguys.Cling", category: "VolumeIndex")
+private let log = Logger(subsystem: clingSubsystem, category: "VolumeIndex")
 
 let DEFAULT_VOLUME_REINDEX_INTERVAL: TimeInterval = 60 * 60 * 24 * 7 // 1 week
 
@@ -64,7 +64,7 @@ private func indexVolumeEngine(
 
     // Local external drives: use fts (fastest, uses getattrlistbulk internally)
     if isLocal {
-        vlog.info("Using fts walk for local volume \(volumePath)")
+        log.info("Using fts walk for local volume \(volumePath, privacy: .public)")
         let added = engine.walkDirectory(
             volumePath,
             ignoreFile: ignoreChecker,
@@ -89,10 +89,10 @@ private func indexVolumeEngine(
                 progress: progress,
                 cancelled: cancelled
             )
-            vlog.info("SMB walk succeeded for \(volumePath): \(added) entries")
+            log.info("SMB walk succeeded for \(volumePath, privacy: .public): \(added) entries")
             return (added, metadataCache)
         } catch {
-            vlog.warning("SMB walk failed for \(volumePath), falling back to FileManager: \(error)")
+            log.warning("SMB walk failed for \(volumePath, privacy: .public), falling back to FileManager: \(error.localizedDescription, privacy: .public)")
             engine.clear()
         }
     }
@@ -214,13 +214,13 @@ extension FuzzyClient {
             let file = volumeIndexFile(volume)
             if wasCancelled {
                 try? FileManager.default.removeItem(at: checkpointFile)
-                vlog.info("Cancelled volume indexing for \(volume.string)")
+                log.info("Cancelled volume indexing for \(volume.string, privacy: .public)")
             } else {
                 try? FileManager.default.removeItem(at: file.url)
                 if result.added > 0 {
                     volumeEngine.saveBinaryIndex(to: file.url)
                     result.metadataCache?.save(to: smbMetadataCacheFile(volume))
-                    log.debug("Indexed volume \(volumeName): \(result.added) entries -> \(file.string)")
+                    log.debug("Indexed volume \(volumeName, privacy: .public): \(result.added) entries -> \(file.string, privacy: .public)")
                 }
             }
 
