@@ -3,6 +3,7 @@
 # Show a side-by-side diff between two files
 #
 # description: Side-by-side diff of two files
+# key: d
 # filesOnly: true
 # minFiles: 2
 # maxFiles: 2

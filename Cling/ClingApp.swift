@@ -372,6 +372,9 @@ class AppDelegate: LowtechProAppDelegate {
         if window.title.contains("Settings"), !settingsWindowConfigured {
             settingsWindowConfigured = true
             window.toolbar?.showsBaselineSeparator = false
+            // Persist and restore the user's resized settings frame across opens/launches.
+            window.setFrameAutosaveName("ClingSettings")
+            window.setFrameUsingName("ClingSettings")
         }
 
         if window.title == "Cling" {
@@ -548,6 +551,13 @@ struct ClingApp: App {
         .defaultSize(width: WindowManager.DEFAULT_SIZE.width, height: WindowManager.DEFAULT_SIZE.height)
         .windowStyle(.hiddenTitleBar)
         .commands {
+            // The Settings scene used to provide this automatically; recreate it for the Window scene.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    WM.open("settings")
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
             CommandGroup(after: .help) {
                 Button("Check for updates (current version: v\(Bundle.main.version))") {
                     UM.updater?.checkForUpdates()
@@ -579,12 +589,14 @@ struct ClingApp: App {
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
 
-        Settings {
+        // A regular Window (not the Settings scene): the Settings scene's hosting view pins its size
+        // to the content's intrinsic size, so it can never be resized. A Window resizes normally.
+        Window("Settings", id: "settings") {
             SettingsView()
                 .environmentObject(envState)
         }
         .windowResizability(.contentMinSize)
-        .defaultSize(width: 820, height: 640)
+        .defaultSize(width: 920, height: 640)
     }
 
     @State private var wm = WM

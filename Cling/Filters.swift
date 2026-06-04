@@ -477,24 +477,36 @@ struct FilterEditorSheet: View {
     @State private var selection: FilterEditorSelection? = .quickFilters
     @Environment(\.dismiss) var dismiss
 
+    /// When true, the editor renders without the sheet header/Done button and fills its container.
+    /// Used when embedded inside the Settings window's Filters pane.
+    var embedded = false
+
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Filter Editor").font(.headline)
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
-            }
-            .padding()
+        if embedded {
+            editorContent
+        } else {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Filter Editor").font(.headline)
+                    Spacer()
+                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                }
+                .padding()
 
-            Divider()
-
-            HStack(spacing: 0) {
-                sidebar
                 Divider()
-                detail
+
+                editorContent
             }
+            .frame(width: 820, height: 580)
         }
-        .frame(width: 820, height: 580)
+    }
+
+    private var editorContent: some View {
+        HStack(spacing: 0) {
+            sidebar
+            Divider()
+            detail
+        }
         .onChange(of: quickFilters) { old, new in
             if case let .quickFilter(id) = selection, !new.contains(where: { $0.id == id }) {
                 // Same length + same position → it's a rename. Follow the renamed filter.

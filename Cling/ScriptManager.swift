@@ -52,6 +52,7 @@ class ScriptManager {
     static let CONFIRM_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+confirm:\s*(true|yes|1|on|enable)"#).anchorsMatchLineEndings().ignoresCase()
     static let SEQUENTIAL_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+sequential:\s*(true|yes|1|on|enable)"#).anchorsMatchLineEndings().ignoresCase()
     static let DESCRIPTION_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+description:\s*(.+)"#).anchorsMatchLineEndings().ignoresCase()
+    static let KEY_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+key:\s*([a-z0-9])"#).anchorsMatchLineEndings().ignoresCase()
 
     var reservedShortcuts: Set<Character> = []
     var scriptShortcuts: [URL: Character] = [:]
@@ -65,6 +66,7 @@ class ScriptManager {
     var scriptsWithConfirm: Set<URL> = []
     var scriptsSequential: Set<URL> = []
     var scriptDescriptions: [URL: String] = [:]
+    var scriptKeyOverrides: [URL: Character] = [:]
     var lastScript: URL?
     var lastOutputFile: FilePath?
     var lastErrorFile: FilePath?
@@ -190,6 +192,7 @@ class ScriptManager {
             scriptsWithConfirm = []
             scriptsSequential = []
             scriptDescriptions = [:]
+            scriptKeyOverrides = [:]
             for script in scriptURLs {
                 guard let scriptContents = try? String(contentsOf: script) else {
                     continue
@@ -219,9 +222,13 @@ class ScriptManager {
                 if let match = try? Self.DESCRIPTION_REGEX.firstMatch(in: scriptContents) {
                     scriptDescriptions[script] = match.1.trimmingCharacters(in: .whitespaces)
                 }
+                if let match = try? Self.KEY_REGEX.firstMatch(in: scriptContents), let ch = String(match.1).lowercased().first {
+                    scriptKeyOverrides[script] = ch
+                }
             }
 
-            scriptShortcuts = computeShortcuts(for: scriptURLs, reserved: reservedShortcuts)
+            assignMissingKeys()
+            scriptShortcuts = scriptKeyOverrides
         } catch {
             scriptURLs = []
             scriptShortcuts = [:]
@@ -253,6 +260,34 @@ class ScriptManager {
     @ObservationIgnored private var clearLastProcessTask: DispatchWorkItem? {
         didSet {
             oldValue?.cancel()
+        }
+    }
+
+    /// Gives every script a persisted `# key:` so the editor can pre-fill it. Only assigns letters to
+    /// scripts that don't already declare one, so the picking logic runs once per script (at creation
+    /// or first launch) instead of on every fetch — keyed scripts are skipped from here on.
+    private func assignMissingKeys() {
+        let keyless = scriptURLs.filter { scriptKeyOverrides[$0] == nil }.sorted(by: \.lastPathComponent)
+        guard !keyless.isEmpty else { return }
+        let used = reservedShortcuts.union(scriptKeyOverrides.values)
+        for (url, key) in computeShortcuts(for: keyless, reserved: used) {
+            persistKey(key, to: url)
+            scriptKeyOverrides[url] = key
+        }
+    }
+
+    /// Inserts a `# key:` comment near the top of the script file using its runner's comment prefix.
+    private func persistKey(_ key: Character, to url: URL) {
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return }
+        let firstLine = String(content.prefix(while: { $0 != "\n" }))
+        let runner = ScriptRunner(fromShebang: firstLine) ?? ScriptRunner(fromExtension: url.pathExtension) ?? .zsh
+        var lines = content.components(separatedBy: "\n")
+        lines.insert("\(runner.commentPrefix) key: \(key)", at: firstLine.hasPrefix("#!") ? 1 : 0)
+        do {
+            try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        } catch {
+            log.error("Failed to persist hotkey for \(url.lastPathComponent): \(error.localizedDescription)")
         }
     }
 

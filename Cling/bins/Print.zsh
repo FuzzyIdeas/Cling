@@ -3,6 +3,7 @@
 # Send PDF documents to the default printer
 #
 # description: Print PDFs on the default printer
+# key: p
 # extensions: pdf
 # filesOnly: true
 # sequential: true

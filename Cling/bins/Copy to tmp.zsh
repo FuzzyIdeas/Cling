@@ -8,6 +8,7 @@
 # The arguments are stored in $@ as an array
 #
 # description:  Copy files to a temporary folder and show it in Finder
+# key: t
 
 # Create a temporary directory
 dir=$(mktemp -d -t cling)

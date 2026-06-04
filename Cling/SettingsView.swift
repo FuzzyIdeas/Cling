@@ -19,7 +19,7 @@ let envState = EnvState()
 // MARK: - SettingsCategory
 
 private enum SettingsCategory: String, CaseIterable, Identifiable {
-    case general, interface, apps, search, exclusions, about
+    case general, interface, apps, search, filters, scripts, exclusions, about
 
     var id: String { rawValue }
 
@@ -29,6 +29,8 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         case .interface: "Interface"
         case .apps: "Apps"
         case .search: "Search"
+        case .filters: "Filters"
+        case .scripts: "Scripts"
         case .exclusions: "Exclusions"
         case .about: "About"
         }
@@ -40,6 +42,8 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         case .interface: "slider.horizontal.3"
         case .apps: "app.badge"
         case .search: "magnifyingglass"
+        case .filters: "line.3.horizontal.decrease.circle"
+        case .scripts: "terminal"
         case .exclusions: "eye.slash"
         case .about: "info.circle"
         }
@@ -51,6 +55,8 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         case .interface: .orange
         case .apps: .blue
         case .search: .green
+        case .filters: .teal
+        case .scripts: .indigo
         case .exclusions: .red
         case .about: .purple
         }
@@ -87,7 +93,7 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationSplitViewStyle(.balanced)
-        .frame(minWidth: 780, minHeight: 580)
+        .frame(minWidth: 820, maxWidth: .infinity, minHeight: 640, maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -97,6 +103,8 @@ struct SettingsView: View {
         case .interface: InterfaceSettingsPane()
         case .apps: AppsSettingsPane()
         case .search: SearchSettingsPane()
+        case .filters: FiltersSettingsPane()
+        case .scripts: ScriptsSettingsPane()
         case .exclusions: ExclusionsSettingsPane()
         case .about: AboutSettingsPane()
         }
@@ -597,6 +605,22 @@ private struct SearchSettingsPane: View {
             .controlSize(.small)
             .help("Reindex \(scope.label)")
         }
+    }
+}
+
+// MARK: - FiltersSettingsPane
+
+private struct FiltersSettingsPane: View {
+    var body: some View {
+        FilterEditorSheet(embedded: true)
+    }
+}
+
+// MARK: - ScriptsSettingsPane
+
+private struct ScriptsSettingsPane: View {
+    var body: some View {
+        ScriptEditorSheet(embedded: true)
     }
 }
 

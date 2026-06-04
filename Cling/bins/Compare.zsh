@@ -3,6 +3,7 @@
 # Compare two directories using treediff
 #
 # description: Compare two directory trees
+# key: c
 # dirsOnly: true
 # minFiles: 2
 # maxFiles: 2

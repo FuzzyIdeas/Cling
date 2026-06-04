@@ -8,6 +8,7 @@
 # The arguments are stored in $@ as an array
 #
 # description:  Archive files into a single ZIP file and show it in Finder
+# key: z
 
 
 # Create a temporary directory to store the archive

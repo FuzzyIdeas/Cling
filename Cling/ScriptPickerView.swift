@@ -521,6 +521,555 @@ struct AddScriptView: View {
     @Environment(\.dismiss) private var dismiss
 }
 
+// MARK: - ScriptEditorSheet
+
+/// Sidebar list of scripts + inline source editor. Mirrors `FilterEditorSheet`.
+/// Presented standalone as a sheet, or embedded inside the Settings window's Scripts pane.
+struct ScriptEditorSheet: View {
+    @State private var scriptManager = SM
+    @State private var selection: URL? = nil
+    @State private var isShowingAddScript = false
+    @State private var scriptName = ""
+    @State private var selectedRunner: ScriptRunner? = .zsh
+    @State private var deleteScript: URL? = nil
+    @Environment(\.dismiss) var dismiss
+
+    /// When true, renders without the sheet header/Done button and fills its container.
+    var embedded = false
+
+    var body: some View {
+        if embedded {
+            editorContent
+        } else {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Script Editor").font(.headline)
+                    Spacer()
+                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                }
+                .padding()
+
+                Divider()
+
+                editorContent
+            }
+            .frame(width: 820, height: 580)
+        }
+    }
+
+    private var scripts: [URL] {
+        scriptManager.scriptURLs.sorted(by: \.lastPathComponent)
+    }
+
+    private var editorContent: some View {
+        HStack(spacing: 0) {
+            sidebar
+            Divider()
+            detail
+        }
+        .sheet(isPresented: $isShowingAddScript, onDismiss: createNewScript) {
+            AddScriptView(name: $scriptName, selectedRunner: $selectedRunner)
+        }
+        .alert(
+            "Delete \(deleteScript?.lastPathComponent.ns.deletingPathExtension ?? "script")?",
+            isPresented: Binding(get: { deleteScript != nil }, set: { if !$0 { deleteScript = nil } })
+        ) {
+            Button("Delete", role: .destructive) {
+                if let script = deleteScript {
+                    try? FileManager.default.removeItem(at: script)
+                    if selection == script { selection = nil }
+                    deleteScript = nil
+                    scriptManager.fetchScripts()
+                }
+            }
+            Button("Cancel", role: .cancel) { deleteScript = nil }
+        } message: {
+            Text("This will permanently delete the script file")
+        }
+        .onAppear {
+            if selection == nil || !scripts.contains(selection!) { selection = scripts.first }
+        }
+        .onChange(of: scriptManager.scriptURLs) {
+            if let sel = selection, !scriptManager.scriptURLs.contains(sel) { selection = scripts.first }
+        }
+    }
+
+    @ViewBuilder
+    private var sidebar: some View {
+        List(selection: $selection) {
+            Section("Scripts") {
+                ForEach(scripts, id: \.self) { script in
+                    NavigationLink(value: script) {
+                        Label {
+                            Text(script.lastPathComponent.ns.deletingPathExtension)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        } icon: {
+                            Image(nsImage: icon(for: script))
+                        }
+                    }
+                }
+                Button(action: { isShowingAddScript = true }) {
+                    Label("New Script", systemImage: "plus.circle")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
+            }
+        }
+        .listStyle(.sidebar)
+        .frame(width: 240)
+        .foregroundStyle(.primary)
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        if let script = selection, scripts.contains(script) {
+            ScriptSourceEditor(
+                script: script,
+                scriptManager: scriptManager,
+                onDelete: { deleteScript = script },
+                onRename: { selection = $0 }
+            )
+            .id(script)
+        } else {
+            VStack(spacing: 6) {
+                Image(systemName: "applescript")
+                    .font(.system(size: 32))
+                    .foregroundStyle(.tertiary)
+                Text(scripts.isEmpty ? "No scripts yet" : "Select a script to edit")
+                    .foregroundStyle(.secondary)
+                if scripts.isEmpty {
+                    Button("New Script") { isShowingAddScript = true }
+                        .controlSize(.small)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func createNewScript() {
+        guard !scriptName.isEmpty else { return }
+        let ext = selectedRunner?.fileExtension ?? "sh"
+        let newScript = scriptsFolder / "\(scriptName.safeFilename).\(ext)"
+
+        do {
+            let runner = selectedRunner ?? .zsh
+            try "\(runner.shebang)\n\(runner.template)".write(to: newScript.url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: newScript.string)
+        } catch {
+            log.error("Failed to create script: \(error.localizedDescription)")
+        }
+
+        scriptName = ""
+        selectedRunner = .zsh
+        scriptManager.fetchScripts()
+        selection = newScript.url
+    }
+}
+
+// MARK: - ScriptSourceEditor
+
+/// Editor for a single script. Owns the parsed params + code and the save logic, and hands each
+/// off to a dedicated child view so typing in the code editor doesn't re-render the settings form
+/// (and vice versa) — only the child whose binding actually changed re-evaluates.
+private struct ScriptSourceEditor: View {
+    let script: URL
+    let scriptManager: ScriptManager
+    let onDelete: () -> Void
+    let onRename: (URL) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider()
+            ScriptCodeEditor(source: $source)
+                .id("code")
+            Divider()
+            ScriptParamsForm(params: $params)
+                .id("params")
+            Divider()
+            actionBar
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear(perform: load)
+        .onDisappear(perform: saveNow)
+        .onChange(of: params) { scheduleSave() }
+        .onChange(of: source) { scheduleSave() }
+    }
+
+    // Generous debounce so typing in the code editor never writes on every keystroke; the rebuild
+    // is deferred to fire time so each change just cancels and reschedules.
+    private static let saveDebounce: TimeInterval = 2
+
+    @State private var params = ScriptParams()
+    @State private var source = ""
+    @State private var name = ""
+    @State private var shebang: String? = nil
+    @State private var runner: ScriptRunner = .zsh
+    @State private var savedSnapshot = ""
+    @State private var saveTask: DispatchWorkItem?
+
+    @Default(.editorApp) private var editorApp
+
+    // Description lives with the params but is edited in the header; empty clears it (so it isn't written).
+    private var descriptionBinding: Binding<String> {
+        Binding(get: { params.description ?? "" }, set: { params.description = $0.isEmpty ? nil : $0 })
+    }
+
+    private var currentName: String { script.lastPathComponent.ns.deletingPathExtension }
+
+    private var renameTarget: URL {
+        let stem = name.trimmingCharacters(in: .whitespaces).safeFilename
+        let ext = script.pathExtension
+        return (scriptsFolder / (ext.isEmpty ? stem : "\(stem).\(ext)")).url
+    }
+
+    // Enabled only for a non-empty, changed name that wouldn't clobber another script.
+    private var canRename: Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed != currentName else { return false }
+        return !FileManager.default.fileExists(atPath: renameTarget.path)
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(nsImage: icon(for: script))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    TextField("Name", text: $name)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(maxWidth: 240)
+                        .onSubmit { if canRename { rename() } }
+                    if canRename {
+                        Button("Rename", action: rename)
+                            .controlSize(.small)
+                            .buttonStyle(.borderedProminent)
+                            .help("Rename the script file on disk")
+                    }
+                }
+                TextField("Description…", text: descriptionBinding)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: 320, alignment: .leading)
+            }
+            Spacer()
+            if let shortcut = scriptManager.scriptShortcuts[script] {
+                Text("⌘⌃\(String(shortcut).uppercased())")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+    }
+
+    private var actionBar: some View {
+        HStack(spacing: 8) {
+            Button { openInEditor(script) } label: { Label("Open Externally", systemImage: "arrow.up.forward.app") }
+                .help("Open in \(editorApp.filePath?.stem ?? "TextEdit")")
+            Button { NSWorkspace.shared.activateFileViewerSelecting([script]) } label: { Label("Reveal", systemImage: "folder") }
+                .help("Reveal in Finder")
+            Spacer()
+            Button(role: .destructive, action: onDelete) { Label("Delete", systemImage: "trash") }
+                .foregroundStyle(.red)
+        }
+        .controlSize(.small)
+        .padding(12)
+    }
+
+    /// Writes only if the file still exists, so a delete-while-open isn't undone by a pending or
+    /// on-disappear save, and re-applies the executable bit that the atomic (rename) write drops.
+    /// Scripts must stay executable or `ScriptManager.fetchScripts` filters them out of the list.
+    private static func write(_ text: String, to url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        } catch {
+            log.error("Failed to save script \(url.lastPathComponent): \(error.localizedDescription)")
+        }
+    }
+
+    // Renaming has to recreate the file (write current content to the new path, drop the old one)
+    // and repoint the selection, so it's an explicit button rather than part of the debounced save.
+    private func rename() {
+        guard canRename else { return }
+        let newURL = renameTarget
+        saveTask?.cancel()
+        let content = ScriptHeaderParser.rebuild(shebang: shebang, params: params, body: source, runner: runner)
+        do {
+            try content.write(to: newURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: newURL.path)
+            try? FileManager.default.removeItem(at: script)
+        } catch {
+            log.error("Failed to rename script \(script.lastPathComponent): \(error.localizedDescription)")
+            return
+        }
+        onRename(newURL)
+        scriptManager.fetchScripts()
+    }
+
+    private func load() {
+        let content = (try? String(contentsOf: script, encoding: .utf8)) ?? ""
+        name = currentName
+        shebang = ScriptHeaderParser.shebang(content)
+        runner = ScriptRunner(fromShebang: shebang ?? "") ?? ScriptRunner(fromExtension: script.pathExtension) ?? .zsh
+        params = ScriptHeaderParser.parse(content)
+        source = ScriptHeaderParser.body(content)
+        // Snapshot the normalized form so the load itself isn't treated as an edit and re-saved.
+        savedSnapshot = ScriptHeaderParser.rebuild(shebang: shebang, params: params, body: source, runner: runner)
+    }
+
+    private func scheduleSave() {
+        saveTask?.cancel()
+        saveTask = mainAsyncAfter(Self.saveDebounce) { saveNow() }
+    }
+
+    private func saveNow() {
+        saveTask?.cancel()
+        let content = ScriptHeaderParser.rebuild(shebang: shebang, params: params, body: source, runner: runner)
+        guard content != savedSnapshot else { return }
+        Self.write(content, to: script)
+    }
+
+}
+
+// MARK: - ScriptCodeEditor
+
+/// Fixed-height monospaced editor. Isolated so each keystroke only re-renders this view, not the
+/// settings form below it; the fixed height also keeps NSTextView managing its own scrolling.
+private struct ScriptCodeEditor: View {
+    @Binding var source: String
+
+    var body: some View {
+        TextEditor(text: $source)
+            .font(.system(size: 12, design: .monospaced))
+            .frame(height: 300)
+            .contentMargins(8)
+    }
+}
+
+// MARK: - ScriptParamsForm
+
+/// Grouped form of the behaviour params. Takes a binding so it only re-renders when `params`
+/// changes — not on every keystroke in the code editor.
+private struct ScriptParamsForm: View {
+    @Binding var params: ScriptParams
+
+    var body: some View {
+        Form {
+            detailsSection
+            eligibilitySection
+            behaviourSection
+        }
+        .formStyle(.grouped)
+    }
+
+    @State private var recording = false
+
+    // Bridges the stored single-letter `key` to the SauceKey that DynamicKey records; Escape clears it.
+    private var hotkeyBinding: Binding<SauceKey> {
+        Binding(
+            get: { params.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape },
+            set: { params.key = $0 == .escape ? nil : $0.lowercasedChar }
+        )
+    }
+
+    @ViewBuilder
+    private var detailsSection: some View {
+        Section {
+            LabeledContent("Hotkey") {
+                HStack(spacing: 4) {
+                    Text("⌘⌃ +").font(.system(size: 11)).foregroundStyle(.secondary)
+                    DynamicKey(key: hotkeyBinding, recording: $recording, allowedKeys: .ALPHANUMERIC_KEYS)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .frame(width: 28)
+                }
+            }
+        } header: {
+            Text("Hotkey")
+        } footer: {
+            Text("Press a key to override Cling's automatic ⌘⌃ shortcut, or Escape to clear the override.")
+        }
+    }
+
+    @ViewBuilder
+    private var eligibilitySection: some View {
+        Section {
+            Toggle("Show only on specific file types", isOn: enabled(\.extensions, fallback: ""))
+            if params.extensions != nil {
+                TextField("", text: text(\.extensions), prompt: Text("Space-separated dot-less extensions. e.g. jpg png pdf tar.gz"))
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            Toggle("Minimum selected files", isOn: enabled(\.minFiles, fallback: 1))
+            if let n = params.minFiles {
+                Stepper(value: int(\.minFiles), in: 1 ... 999) {
+                    Text("At least \(n) file\(n == 1 ? "" : "s")")
+                }
+            }
+
+            Toggle("Maximum selected files", isOn: enabled(\.maxFiles, fallback: 1))
+            if let n = params.maxFiles {
+                Stepper(value: int(\.maxFiles), in: 1 ... 999) {
+                    Text("At most \(n) file\(n == 1 ? "" : "s")")
+                }
+            }
+            Toggle("Files only (hide when folders are selected)", isOn: $params.filesOnly)
+            Toggle("Folders only (hide when files are selected)", isOn: $params.dirsOnly)
+        } header: {
+            Text("Eligibility")
+        } footer: {
+            Text("Controls when this script shows up in the picker for the selected files.")
+        }
+    }
+
+    @ViewBuilder
+    private var behaviourSection: some View {
+        Section("Behaviour") {
+            Toggle("Show confirmation before running", isOn: $params.confirm)
+            Toggle("Run once per file (sequential)", isOn: $params.sequential)
+            Toggle("Show output when finished", isOn: $params.showOutput)
+        }
+    }
+
+    // A toggle flips the optional param between nil (disabled) and a value; the field edits the value.
+    private func enabled<V>(_ key: WritableKeyPath<ScriptParams, V?>, fallback: V) -> Binding<Bool> {
+        Binding(
+            get: { params[keyPath: key] != nil },
+            set: { params[keyPath: key] = $0 ? (params[keyPath: key] ?? fallback) : nil }
+        )
+    }
+
+    private func text(_ key: WritableKeyPath<ScriptParams, String?>) -> Binding<String> {
+        Binding(get: { params[keyPath: key] ?? "" }, set: { params[keyPath: key] = $0 })
+    }
+
+    private func int(_ key: WritableKeyPath<ScriptParams, Int?>) -> Binding<Int> {
+        Binding(get: { params[keyPath: key] ?? 1 }, set: { params[keyPath: key] = $0 })
+    }
+
+}
+
+// MARK: - ScriptParams
+
+/// Optional behaviour settings parsed from (and written back into) a script's comment header.
+/// A `nil` String/Int or a `false` Bool means the setting is absent from the script.
+struct ScriptParams: Equatable {
+    var description: String? = nil
+    var key: String? = nil
+    var extensions: String? = nil
+    var minFiles: Int? = nil
+    var maxFiles: Int? = nil
+    var filesOnly = false
+    var dirsOnly = false
+    var confirm = false
+    var sequential = false
+    var showOutput = false
+
+    func commentLines(prefix c: String) -> [String] {
+        var lines: [String] = []
+        if let description, !description.isEmpty { lines.append("\(c) description: \(description)") }
+        if let key, !key.isEmpty { lines.append("\(c) key: \(key)") }
+        if let extensions, !extensions.isEmpty { lines.append("\(c) extensions: \(extensions)") }
+        if let minFiles { lines.append("\(c) minFiles: \(minFiles)") }
+        if let maxFiles { lines.append("\(c) maxFiles: \(maxFiles)") }
+        if filesOnly { lines.append("\(c) filesOnly: true") }
+        if dirsOnly { lines.append("\(c) dirsOnly: true") }
+        if confirm { lines.append("\(c) confirm: true") }
+        if sequential { lines.append("\(c) sequential: true") }
+        if showOutput { lines.append("\(c) showOutput: true") }
+        return lines
+    }
+}
+
+// MARK: - ScriptHeaderParser
+
+/// Splits a script into its managed behaviour header and the user's code, and rebuilds it on save.
+/// Reuses `ScriptManager`'s regexes for parsing so the form and the runtime agree on what's set.
+enum ScriptHeaderParser {
+    static func shebang(_ content: String) -> String? {
+        let first = String(content.prefix(while: { $0 != "\n" }))
+        return first.hasPrefix("#!") ? first : nil
+    }
+
+    static func parse(_ content: String) -> ScriptParams {
+        var p = ScriptParams()
+        if let m = try? ScriptManager.DESCRIPTION_REGEX.firstMatch(in: content) {
+            p.description = m.1.trimmingCharacters(in: .whitespaces)
+        }
+        if let m = try? ScriptManager.KEY_REGEX.firstMatch(in: content) {
+            p.key = String(m.1).lowercased()
+        }
+        if let m = try? ScriptManager.EXTENSIONS_REGEX.firstMatch(in: content) {
+            p.extensions = m.1.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let m = try? ScriptManager.MIN_FILES_REGEX.firstMatch(in: content), let n = Int(m.1) { p.minFiles = n }
+        if let m = try? ScriptManager.MAX_FILES_REGEX.firstMatch(in: content), let n = Int(m.1) { p.maxFiles = n }
+        p.filesOnly = content.contains(ScriptManager.FILES_ONLY_REGEX)
+        p.dirsOnly = content.contains(ScriptManager.DIRS_ONLY_REGEX)
+        p.confirm = content.contains(ScriptManager.CONFIRM_REGEX)
+        p.sequential = content.contains(ScriptManager.SEQUENTIAL_REGEX)
+        p.showOutput = content.contains(ScriptManager.SHOW_OUTPUT_REGEX)
+        return p
+    }
+
+    /// The script with its shebang and managed header lines removed, blank runs collapsed.
+    static func body(_ content: String) -> String {
+        var lines = content.components(separatedBy: "\n")
+        if let first = lines.first, first.hasPrefix("#!") { lines.removeFirst() }
+        var result: [String] = []
+        var lastBlank = false
+        for line in lines where !isManagedLine(line) {
+            let blank = line.trimmingCharacters(in: .whitespaces).isEmpty
+            if blank, lastBlank { continue }
+            result.append(line)
+            lastBlank = blank
+        }
+        return result.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func rebuild(shebang: String?, params: ScriptParams, body: String, runner: ScriptRunner) -> String {
+        var out: [String] = [shebang ?? runner.shebang]
+        let paramLines = params.commentLines(prefix: runner.commentPrefix)
+        if !paramLines.isEmpty {
+            out.append("")
+            out.append(contentsOf: paramLines)
+        }
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            out.append("")
+            out.append(trimmed)
+        }
+        return out.joined(separator: "\n") + "\n"
+    }
+
+    private static let paramLineRegex = try! Regex(
+        #"^[^A-Za-z0-9\n]+(description|key|extensions|minFiles|maxFiles|filesOnly|dirsOnly|confirm|sequential|showOutput)\s*\[?\s*:"#
+    ).ignoresCase()
+
+    // Descriptive comments emitted by older templates, stripped so the code editor stays clean.
+    private static let managedHelpPhrases: Set<String> = [
+        "All settings below are optional. Remove the brackets around [:] to enable a setting.",
+        "A short description shown in the script picker",
+        "Only show this script for specific file types",
+        "Require a specific number of selected files (e.g. for a diff script that needs exactly 2 files)",
+        "Only show this script when all selected items are files (not folders)",
+        "Only show this script when all selected items are folders",
+        "Ask for confirmation before running (useful for scripts that delete or move files)",
+        "Run the script once for each file instead of passing all files at once",
+        "Show the output of the script after it finishes executing",
+    ]
+
+    private static func isManagedLine(_ line: String) -> Bool {
+        if (try? paramLineRegex.firstMatch(in: line)) != nil { return true }
+        let stripped = line.trimmingCharacters(in: CharacterSet(charactersIn: "#/-").union(.whitespaces))
+        return managedHelpPhrases.contains(stripped)
+    }
+}
+
 // MARK: - ScriptRunner
 
 enum ScriptRunner: String, CaseIterable {
@@ -670,37 +1219,12 @@ enum ScriptRunner: String, CaseIterable {
         }
     }
 
+    // Behaviour settings (description, extensions, confirm, …) are managed through the
+    // Scripts editor form, which writes them into the comment header on save.
     var template: String {
-        let c = commentPrefix
-        return """
+        """
 
         \(argsHelp)
-
-        \(c) All settings below are optional. Remove the brackets around [:] to enable a setting.
-
-        \(c) A short description shown in the script picker
-        \(c) description[:]  My script description
-
-        \(c) Only show this script for specific file types
-        \(c) extensions[:]  jpg png pdf
-
-        \(c) Require a specific number of selected files (e.g. for a diff script that needs exactly 2 files)
-        \(c) minFiles[:]  2
-        \(c) maxFiles[:]  2
-
-        \(c) Only show this script when all selected items are files (not folders)
-        \(c) filesOnly[:]  true
-        \(c) Only show this script when all selected items are folders
-        \(c) dirsOnly[:]  true
-
-        \(c) Ask for confirmation before running (useful for scripts that delete or move files)
-        \(c) confirm[:]  true
-
-        \(c) Run the script once for each file instead of passing all files at once
-        \(c) sequential[:]  true
-
-        \(c) Show the output of the script after it finishes executing
-        \(c) showOutput[:]  true
 
         """
     }

@@ -108,7 +108,9 @@ struct StatusBarView: View {
 
             Text("**`\(triggerKeys.shortReadableStr) + \(showAppKey.character)`** to show/hide").padding(.trailing, 2)
 
-            SettingsLink {
+            Button {
+                WM.open("settings")
+            } label: {
                 Image(systemName: "gearshape").bold()
             }
             .buttonStyle(.text(borderColor: .clear))
