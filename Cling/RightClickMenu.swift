@@ -152,7 +152,7 @@ struct RightClickMenu: View {
 
     private func quicklookSelection() {
         let urls = orderedSelection.map(\.url)
-        QuickLooker.quicklook(urls: urls, selectedItemIndex: 0)
+        QLP.present(urls: urls, selectedItemIndex: 0)
     }
 
     private func openInTerminal(at terminal: URL) {

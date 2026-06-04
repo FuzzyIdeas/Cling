@@ -107,6 +107,7 @@ class AppDelegate: LowtechProAppDelegate {
         Migration.run()
         FUZZY.start()
         setupCleanup()
+        QuickLookSupport.shared.warmUp()
 
         if !SWIFTUI_PREVIEW {
             paddleVendorID = "122873"

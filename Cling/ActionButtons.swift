@@ -238,7 +238,7 @@ struct ActionButtons: View {
                 let resultsList = (FUZZY.noQuery && FUZZY.volumeFilter == nil)
                     ? (FUZZY.sortField == .score ? FUZZY.recents : FUZZY.sortedRecents)
                     : FUZZY.results
-                QuickLooker.quicklook(
+                QLP.present(
                     urls: sel.count > 1 ? sel.map(\.url) : resultsList.map(\.url),
                     selectedItemIndex: sel.count == 1 ? (resultsList.firstIndex(of: sel.first!) ?? 0) : 0
                 )
@@ -657,7 +657,7 @@ struct ActionButtons: View {
     }
 
     private func quicklook() {
-        QuickLooker.quicklook(
+        QLP.present(
             urls: selectedResults.count > 1 ? selectedResults.map(\.url) : results.map(\.url),
             selectedItemIndex: selectedResults.count == 1 ? (results.firstIndex(of: selectedResults.first!) ?? 0) : 0
         )

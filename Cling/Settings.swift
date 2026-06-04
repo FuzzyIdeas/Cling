@@ -430,6 +430,7 @@ extension Defaults.Keys {
     static let showActionRow = Key<Bool>("showActionRow", default: true)
     static let showOpenWithRow = Key<Bool>("showOpenWithRow", default: true)
     static let showScriptRow = Key<Bool>("showScriptRow", default: true)
+    static let showFilePreview = Key<Bool>("showFilePreview", default: true)
     static let hiddenActionButtons = Key<[HiddenActionButton]>("hiddenActionButtons", default: [])
     static let folderFilters = Key<[FolderFilter]>("folderFilters", default: DEFAULT_FOLDER_FILTERS)
     static let maxResultsCount = Key<Int>("maxResultsCount", default: 1000)

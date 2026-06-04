@@ -1,50 +1,30 @@
 import Foundation
 import Lowtech
-import QuickLookUI
+import SwiftUI
 
-final class QuickLooker: QLPreviewPanelDataSource {
-    init(urls: [URL]) {
-        self.urls = urls
+/// Drives the system Quick Look panel through SwiftUI's `.quickLookPreview(_:in:)`
+/// modifier. Setting `selection` shows the floating, fully interactive Quick Look
+/// window; the user dismissing it sets `selection` back to nil.
+@MainActor @Observable
+final class QuickLookPresenter {
+    static let shared = QuickLookPresenter()
+
+    /// The currently previewed URL (bound to `.quickLookPreview`).
+    var selection: URL?
+    /// The set the panel can arrow through.
+    var items: [URL] = []
+
+    var isVisible: Bool { selection != nil }
+
+    func present(urls: [URL], selectedItemIndex: Int = 0) {
+        guard !urls.isEmpty else { return }
+        items = urls
+        selection = urls[safe: selectedItemIndex] ?? urls.first
     }
 
-    static var shared: QuickLooker?
-
-    static var visible: Bool {
-        QLPreviewPanel.shared()?.isVisible ?? false
+    func close() {
+        selection = nil
     }
-
-    let urls: [URL]
-
-    static func quicklook(url: URL) {
-        shared = QuickLooker(urls: [url])
-        shared?.quicklook()
-    }
-    static func quicklook(urls: [URL], selectedItemIndex: Int = 0) {
-        shared = QuickLooker(urls: urls)
-        shared?.quicklook(selectedItemIndex: selectedItemIndex)
-    }
-
-    static func close() {
-        QLPreviewPanel.shared()?.close()
-    }
-
-    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
-        urls.count
-    }
-
-    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
-        urls[safe: index] as NSURL?
-    }
-
-    func quicklook(selectedItemIndex: Int = 0) {
-        guard let ql = QLPreviewPanel.shared() else { return }
-
-        focus()
-        ql.makeKeyAndOrderFront(nil)
-        ql.orderFrontRegardless()
-        ql.dataSource = self
-        ql.currentPreviewItemIndex = selectedItemIndex
-        ql.reloadData()
-    }
-
 }
+
+@MainActor let QLP = QuickLookPresenter.shared

@@ -9,6 +9,7 @@ import AppKit
 import Defaults
 import Lowtech
 import LowtechPro
+import QuickLook
 import SwiftUI
 import System
 import UniformTypeIdentifiers
@@ -107,6 +108,9 @@ struct ContentView: View {
 
     var body: some View {
         let _ = appearance.useGlass
+        // Track selection so the Quick Look panel re-presents even when `items`
+        // is unchanged (the manual binding closures don't register observation).
+        let _ = quickLook.selection
         ZStack(alignment: .topTrailing) {
             HStack(spacing: 6) {
                 pinButton
@@ -165,8 +169,14 @@ struct ContentView: View {
                     }
                 }
                 .disabled(!wm.mainWindowActive)
+                .quickLookPreview(
+                    Binding(get: { quickLook.selection }, set: { quickLook.selection = $0 }),
+                    in: quickLook.items
+                )
         }
     }
+
+    @State private var quickLook = QLP
 
     var content: some View {
         ZStack(alignment: .topLeading) {
@@ -182,35 +192,7 @@ struct ContentView: View {
                         phases: [.down], action: handleFilterKeyPress
                     )
 
-                if fuzzy.showLiveIndex {
-                    VStack(spacing: 0) {
-                        HStack {
-                            Spacer()
-                            Toggle("Indexed only", isOn: $liveChangesIndexedOnly)
-                                .toggleStyle(.switch)
-                                .controlSize(.mini)
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                                .padding(.trailing, 8).padding(.vertical, 4)
-                        }
-                        liveIndexTable
-                    }
-                    .raisedPanel()
-                } else if fuzzy.showActivityLog {
-                    activityLogList
-                } else if fuzzy.showRunHistory {
-                    runHistoryTable
-                        .raisedPanel()
-                } else if showFullHistory {
-                    fullHistoryList
-                } else {
-                    resultsListWithKeys
-                        .overlay {
-                            if let volume = fuzzy.volumeFilter, fuzzy.volumesIndexing.contains(volume) {
-                                volumeIndexingOverlay(volume)
-                            }
-                        }
-                }
+                middleRow
 
                 if showingResults {
                     actionButtonRows
@@ -233,6 +215,79 @@ struct ContentView: View {
             view.overlay(fullDiskAccessOverlay)
         }
     }
+
+    /// The results/index table next to the optional file preview panel. The
+    /// preview steals width from the table instead of growing the window.
+    private var middleRow: some View {
+        HStack(spacing: 10) {
+            middleSection
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if showFilePreview, isShowingResultsTable {
+                FilePreviewPanel(paths: previewPaths)
+                    .frame(width: previewWidth)
+                    .raisedPanel()
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.32, dampingFraction: 0.85), value: showFilePreview)
+    }
+
+    @ViewBuilder
+    private var middleSection: some View {
+        if fuzzy.showLiveIndex {
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer()
+                    Toggle("Indexed only", isOn: $liveChangesIndexedOnly)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .padding(.trailing, 8).padding(.vertical, 4)
+                }
+                liveIndexTable
+            }
+            .raisedPanel()
+        } else if fuzzy.showActivityLog {
+            activityLogList
+        } else if fuzzy.showRunHistory {
+            runHistoryTable
+                .raisedPanel()
+        } else if showFullHistory {
+            fullHistoryList
+        } else {
+            resultsListWithKeys
+                .overlay {
+                    if let volume = fuzzy.volumeFilter, fuzzy.volumesIndexing.contains(volume) {
+                        volumeIndexingOverlay(volume)
+                    }
+                }
+        }
+    }
+
+    /// Whether the normal results table (not a log/history/live view) is showing,
+    /// the only context where the file preview panel makes sense.
+    private var isShowingResultsTable: Bool {
+        !fuzzy.showLiveIndex && !fuzzy.showActivityLog && !fuzzy.showRunHistory && !showFullHistory
+    }
+
+    /// Files whose previews are shown: the selected results in table order, falling
+    /// back to the first row so the panel is never blank when results exist.
+    private var previewPaths: [FilePath] {
+        let selected = results.filter { selectedResults.contains($0) }
+        if !selected.isEmpty { return selected }
+        if let first = results.first { return [first] }
+        return []
+    }
+
+    /// Roughly a third of the table's width, clamped so it stays usable.
+    private var previewWidth: CGFloat {
+        let available = wm.size.width - 32
+        return min(max(available * 0.26, 300), 520)
+    }
+
+    @Default(.showFilePreview) private var showFilePreview
 
     private var activityLogList: some View {
         List {
@@ -339,7 +394,7 @@ struct ContentView: View {
                     return .ignored
                 }
                 if !fuzzy.query.isEmpty { SearchHistory.shared.commit(fuzzy.query) }
-                QuickLooker.quicklook(
+                QLP.present(
                     urls: selectedResults.count > 1 ? selectedResults.map(\.url) : results.map(\.url),
                     selectedItemIndex: selectedResults.count == 1 ? (results.firstIndex(of: selectedResults.first!) ?? 0) : 0
                 )
@@ -747,6 +802,11 @@ struct ContentView: View {
                 NSApp.windows.first { $0.title == "Cling" }?.level = wm.pinned ? .floating : .normal
                 return nil
             }
+            // ⌘⇧P → toggle file preview panel
+            if mods == [.command, .shift], chars == "p" {
+                Defaults[.showFilePreview].toggle()
+                return nil
+            }
             // ⌘S → save current query as Quick Filter (when applicable)
             if mods == .command, chars == "s",
                !fuzzy.query.isEmpty, showingResults, proactive
@@ -762,8 +822,8 @@ struct ContentView: View {
             }
             // Esc → quicklook close / dismiss / clear query (xButton behavior)
             if kc == 53, mods.isEmpty, !showHistorySuggestions, !DropZoneOverlay.shared.isPresenting {
-                if QuickLooker.visible {
-                    QuickLooker.close()
+                if QLP.isVisible {
+                    QLP.close()
                     return nil
                 }
                 if fuzzy.query.isEmpty {
@@ -977,8 +1037,8 @@ struct ContentView: View {
 
     private var xButton: some View {
         Button(action: {
-            if QuickLooker.visible {
-                QuickLooker.close()
+            if QLP.isVisible {
+                QLP.close()
             } else if fuzzy.query.isEmpty {
                 dismiss()
                 appManager.lastFrontmostApp?.activate()
@@ -1026,7 +1086,15 @@ struct ContentView: View {
                 applySortOrder(newOrder)
             }
             .onChange(of: results) {
-                selectFirstResult()
+                // Auto-select the top row only when the query actually changed (a real
+                // new search). Background updates to the list (file watching, reindexing,
+                // recents refresh) keep the user's current selection put.
+                if lastSelectionQuery != fuzzy.query {
+                    lastSelectionQuery = fuzzy.query
+                    selectFirstResult()
+                } else {
+                    preserveSelectionAcrossResultsUpdate()
+                }
             }
             .onChange(of: selectedResultIDs) {
                 selectedResults = Set(results.filter { selectedResultIDs.contains($0.string) })
@@ -1276,6 +1344,21 @@ struct ContentView: View {
             selectedResultIDs = [firstResult.string]
         } else {
             selectedResultIDs.removeAll()
+        }
+    }
+
+    /// Keep the user's selection when the results list mutates for reasons other
+    /// than a new query (file watching, reindexing). Only drop ids that vanished,
+    /// and fall back to the first row if the whole selection is gone.
+    @State private var lastSelectionQuery: String? = nil
+
+    private func preserveSelectionAcrossResultsUpdate() {
+        let resultIDs = Set(results.map(\.string))
+        let stillValid = selectedResultIDs.intersection(resultIDs)
+        if stillValid.isEmpty {
+            selectFirstResult()
+        } else if stillValid != selectedResultIDs {
+            selectedResultIDs = stillValid
         }
     }
 }
