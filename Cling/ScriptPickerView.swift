@@ -902,6 +902,7 @@ private struct ScriptParamsForm: View {
             if params.extensions != nil {
                 TextField("", text: text(\.extensions), prompt: Text("Space-separated dot-less extensions. e.g. jpg png pdf tar.gz"))
                     .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
             }
 
             Toggle("Minimum selected files", isOn: enabled(\.minFiles, fallback: 1))

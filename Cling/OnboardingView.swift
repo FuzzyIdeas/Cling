@@ -76,7 +76,7 @@ struct OnboardingView: View {
                     HStack {
                         DirectionalModifierView(triggerKeys: $triggerKeys, showFnCaps: false)
                         Text("+").heavy(12)
-                        DynamicKey(key: $showAppKey, recording: $env.recording, allowedKeys: .ALL_KEYS)
+                        DynamicKey(key: $showAppKey, recording: $env.recording, allowedKeys: .showAppKeyChoices)
                     }
                     .disabled(!enableGlobalHotkey)
                     .opacity(enableGlobalHotkey ? 1 : 0.5)

@@ -14,6 +14,15 @@ extension Binding<Int> {
     }
 }
 
+extension Set where Element == SauceKey {
+    /// Keys offered in the show/hide hotkey recorder: everything in `ALL_KEYS` plus a few non-symbol
+    /// keys (Space, Tab, Return, Delete, arrows) so combos like ⌘Space / ⌥Space can be set. All of
+    /// these register through Carbon (`RegisterEventHotKey`), so no extra permissions are needed.
+    static var showAppKeyChoices: Set<SauceKey> {
+        SauceKey.ALL_KEYS.set.union([.space, .tab, .return, .delete, .upArrow, .downArrow, .leftArrow, .rightArrow])
+    }
+}
+
 let envState = EnvState()
 
 // MARK: - SettingsCategory
@@ -338,7 +347,7 @@ private struct GeneralSettingsPane: View {
                         DirectionalModifierView(triggerKeys: $triggerKeys, showFnCaps: false)
                             .disabled(!enableGlobalHotkey)
                         Text("+").heavy(12)
-                        DynamicKey(key: $showAppKey, recording: $env.recording, allowedKeys: .ALL_KEYS)
+                        DynamicKey(key: $showAppKey, recording: $env.recording, allowedKeys: .showAppKeyChoices)
                     }
                     .disabled(!enableGlobalHotkey)
                     .opacity(enableGlobalHotkey ? 1 : 0.5)
