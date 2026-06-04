@@ -126,12 +126,12 @@ struct ContentView: View {
                            focused == .search,
                            !SearchHistory.shared.entries.isEmpty
                         {
-                            showHistorySuggestions.toggle()
+                            showSuggestionsList.toggle()
                             suggestionIndex = -1
                             return nil
                         }
                         if event.keyCode == 53, // escape
-                           showHistorySuggestions
+                           showSuggestionsList
                         {
                             // Let IME consume Esc to cancel composition.
                             if let responder = event.window?.firstResponder as? NSTextInputClient,
@@ -139,7 +139,7 @@ struct ContentView: View {
                             {
                                 return event
                             }
-                            showHistorySuggestions = false
+                            showSuggestionsList = false
                             suggestionIndex = -1
                             return nil
                         }
@@ -407,12 +407,12 @@ struct ContentView: View {
 
     @ViewBuilder
     private var historySuggestionsOverlay: some View {
-        if showHistorySuggestions, !historySuggestions.isEmpty, historyIndex < 0, showingResults {
+        if showSuggestionsList, !historySuggestions.isEmpty, historyIndex < 0, showingResults {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(historySuggestions.enumerated()), id: \.offset) { i, suggestion in
                     Button(action: {
                         fuzzy.query = suggestion
-                        showHistorySuggestions = false
+                        showSuggestionsList = false
                     }) {
                         Text(suggestion)
                             .font(.system(size: 12))
@@ -821,14 +821,42 @@ struct ContentView: View {
     @State private var querySaved = "" // query before navigating history
     @State private var navigatingHistory = false
     @State private var showHistorySuggestions = false
-    @State private var suggestionIndex = -1
     @State private var imeComposing = false
+    @State private var showSuggestionsList = false
+    @State private var suggestionIndex = -1
 
+    /// History entries matching the query, for the ⌘↓ suggestions list.
     private var historySuggestions: [String] {
         let trimmed = fuzzy.query.trimmingCharacters(in: .whitespaces)
         return SearchHistory.shared.suggestions(for: fuzzy.query)
             .filter { $0.trimmingCharacters(in: .whitespaces) != trimmed }
             .prefix(8).map { $0 }
+    }
+
+    /// Best history entry that the current query is a prefix of, used for the inline ghost completion.
+    private var inlineSuggestion: String? {
+        guard focused == .search, !imeComposing, historyIndex < 0, showHistorySuggestions else { return nil }
+        let q = fuzzy.query
+        guard !q.isEmpty else { return nil }
+        let lower = q.lowercased()
+        return SearchHistory.shared.entries.first { entry in
+            entry.count > q.count && entry.lowercased().hasPrefix(lower)
+        }
+    }
+
+    /// The part of `inlineSuggestion` after what the user has already typed.
+    private var inlineSuffix: String? {
+        guard let s = inlineSuggestion else { return nil }
+        return String(s.dropFirst(fuzzy.query.count))
+    }
+
+    private func completionHint(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(.quaternary, lineWidth: 0.5))
     }
 
     private var searchBar: some View {
@@ -842,6 +870,23 @@ struct ContentView: View {
                     .transition(.opacity)
                     .allowsHitTesting(false)
             }
+            if let suffix = inlineSuffix {
+                // Ghost completion: the typed text is invisible here (the real TextField draws it), so
+                // the suffix lines up right after it, with completion hints trailing in tertiary.
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Text(fuzzy.query).foregroundStyle(.clear)
+                    Text(suffix).foregroundStyle(.secondary)
+                    completionHint("tab to complete").padding(.leading, 8)
+                    if suffix.contains(" ") {
+                        completionHint("→ word by word").padding(.leading, 8)
+                    }
+                    completionHint("⌘↓ suggestions").padding(.leading, 8)
+                }
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .allowsHitTesting(false)
+            }
             TextField("", text: $fuzzy.query)
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 10)
@@ -854,7 +899,9 @@ struct ContentView: View {
                     querySaved: $querySaved,
                     navigatingHistory: $navigatingHistory,
                     showHistorySuggestions: $showHistorySuggestions,
+                    showSuggestionsList: $showSuggestionsList,
                     suggestionIndex: $suggestionIndex,
+                    inlineSuggestion: inlineSuggestion,
                     historySuggestions: historySuggestions
                 ))
         }
@@ -876,9 +923,12 @@ struct ContentView: View {
             if showFullHistory { showFullHistory = false }
         }
         .onChange(of: focused) {
-            suggestionIndex = -1
             showHistorySuggestions = focused == .search && !fuzzy.query.isEmpty
-            if focused != .search, imeComposing { imeComposing = false }
+            if focused != .search {
+                showSuggestionsList = false
+                suggestionIndex = -1
+                if imeComposing { imeComposing = false }
+            }
         }
         .task(id: shouldCyclePlaceholder) {
             guard shouldCyclePlaceholder else {
@@ -1454,7 +1504,9 @@ struct SearchBarKeyHandlers: ViewModifier {
     @Binding var querySaved: String
     @Binding var navigatingHistory: Bool
     @Binding var showHistorySuggestions: Bool
+    @Binding var showSuggestionsList: Bool
     @Binding var suggestionIndex: Int
+    var inlineSuggestion: String?
     var historySuggestions: [String]
 
     func body(content: Content) -> some View {
@@ -1462,11 +1514,11 @@ struct SearchBarKeyHandlers: ViewModifier {
             .onKeyPress(.upArrow) {
                 guard focused.wrappedValue == .search else { return .ignored }
                 if isIMEComposing() { return .ignored }
-                if showHistorySuggestions, !historySuggestions.isEmpty, historyIndex < 0 {
+                if showSuggestionsList, !historySuggestions.isEmpty {
                     if suggestionIndex > 0 {
                         suggestionIndex -= 1
                     } else {
-                        showHistorySuggestions = false
+                        showSuggestionsList = false
                         suggestionIndex = -1
                     }
                     return .handled
@@ -1496,31 +1548,41 @@ struct SearchBarKeyHandlers: ViewModifier {
                     query = querySaved
                     return .handled
                 }
-                let suggestions = historySuggestions
-                if showHistorySuggestions, !suggestions.isEmpty {
-                    if suggestionIndex < suggestions.count - 1 {
+                if showSuggestionsList, !historySuggestions.isEmpty {
+                    if suggestionIndex < historySuggestions.count - 1 {
                         suggestionIndex += 1
                         return .handled
                     }
-                    showHistorySuggestions = false
+                    showSuggestionsList = false
                     suggestionIndex = -1
                 }
                 focused.wrappedValue = .list
                 return .handled
             }
+            .onKeyPress(.rightArrow) {
+                guard focused.wrappedValue == .search else { return .ignored }
+                if isIMEComposing() { return .ignored }
+                guard let suggestion = inlineSuggestion else { return .ignored }
+                // Only intercept when the caret is at the very end of the typed text; otherwise let the
+                // arrow move the caret as usual.
+                guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView,
+                      editor.selectedRange().length == 0,
+                      editor.selectedRange().location == (editor.string as NSString).length
+                else { return .ignored }
+                // Accept just the next word of the suggestion.
+                let suffix = suggestion.dropFirst(query.count)
+                var end = suffix.startIndex
+                while end < suffix.endIndex, suffix[end] == " " { end = suffix.index(after: end) }
+                while end < suffix.endIndex, suffix[end] != " " { end = suffix.index(after: end) }
+                query += String(suffix[suffix.startIndex ..< end])
+                return .handled
+            }
             .onKeyPress(.tab) {
                 guard focused.wrappedValue == .search else { return .ignored }
                 if isIMEComposing() { return .ignored }
-                let suggestions = historySuggestions
-                if showHistorySuggestions, !suggestions.isEmpty {
-                    let suggestion = suggestions[max(suggestionIndex, 0)]
-                    let currentTokens = query.split(separator: " ")
-                    let suggestionTokens = suggestion.split(separator: " ")
-                    if currentTokens.count < suggestionTokens.count {
-                        query = suggestionTokens.prefix(currentTokens.count + 1).joined(separator: " ")
-                    } else {
-                        query = suggestion
-                    }
+                // Tab accepts the ghost completion in full.
+                if let suggestion = inlineSuggestion {
+                    query = suggestion
                     return .handled
                 }
                 return .ignored
@@ -1532,11 +1594,18 @@ struct SearchBarKeyHandlers: ViewModifier {
                     historyIndex = -1
                     return .handled
                 }
-                let suggestions = historySuggestions
-                if showHistorySuggestions, !suggestions.isEmpty {
-                    query = suggestions[max(suggestionIndex, 0)]
-                    showHistorySuggestions = false
+                // With the ⌘↓ list open, Enter accepts the highlighted (or first) suggestion.
+                if showSuggestionsList, !historySuggestions.isEmpty {
+                    query = historySuggestions[max(suggestionIndex, 0)]
+                    showSuggestionsList = false
                     suggestionIndex = -1
+                    return .handled
+                }
+                // While the inline ghost is showing, Enter commits the typed query as-is and just hides
+                // the suggestion, instead of moving to the results / running the Enter action. Press it
+                // again (no suggestion shown) to get the normal Enter behavior.
+                if showHistorySuggestions, inlineSuggestion != nil {
+                    showHistorySuggestions = false
                     return .handled
                 }
                 focused.wrappedValue = .list

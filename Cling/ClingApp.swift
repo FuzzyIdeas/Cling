@@ -372,9 +372,6 @@ class AppDelegate: LowtechProAppDelegate {
         if window.title.contains("Settings"), !settingsWindowConfigured {
             settingsWindowConfigured = true
             window.toolbar?.showsBaselineSeparator = false
-            // Persist and restore the user's resized settings frame across opens/launches.
-            window.setFrameAutosaveName("ClingSettings")
-            window.setFrameUsingName("ClingSettings")
         }
 
         if window.title == "Cling" {
