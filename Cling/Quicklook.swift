@@ -2,6 +2,8 @@ import Foundation
 import Lowtech
 import SwiftUI
 
+// MARK: - QuickLookPresenter
+
 /// Drives the system Quick Look panel through SwiftUI's `.quickLookPreview(_:in:)`
 /// modifier. Setting `selection` shows the floating, fully interactive Quick Look
 /// window; the user dismissing it sets `selection` back to nil.

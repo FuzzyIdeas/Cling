@@ -138,31 +138,6 @@ struct FilePreviewPanel: View {
         return paths[safe: index] ?? paths.first
     }
 
-    private func header(for path: FilePath) -> some View {
-        HStack(spacing: 8) {
-            Image(nsImage: path.memoz.icon)
-                .resizable()
-                .frame(width: 20, height: 20)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(path.name.string)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(path.dir.shellString)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            Spacer(minLength: 0)
-            if paths.count > 1 {
-                navControls
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-    }
-
     private var navControls: some View {
         HStack(spacing: 4) {
             Button { step(-1) } label: {
@@ -181,26 +156,6 @@ struct FilePreviewPanel: View {
             .disabled(index >= paths.count - 1)
         }
         .help("Step through selected files (← →)")
-    }
-
-    @ViewBuilder
-    private func content(for path: FilePath) -> some View {
-        switch PreviewKind(for: path.url) {
-        case .folder:
-            FolderPreview(path: path)
-        case .archive:
-            ArchivePreview(path: path)
-        case .image:
-            ImageScrollPreview(url: path.url)
-        case .pdf:
-            PDFKitPreview(url: path.url)
-        case .video, .audio:
-            AVPreview(url: path.url)
-        case .text:
-            TextScrollPreview(url: path.url)
-        case .quicklook:
-            QuickLookPreview(url: path.url)
-        }
     }
 
     private var hideHint: some View {
@@ -235,6 +190,51 @@ struct FilePreviewPanel: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func header(for path: FilePath) -> some View {
+        HStack(spacing: 8) {
+            Image(nsImage: path.memoz.icon)
+                .resizable()
+                .frame(width: 20, height: 20)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(path.name.string)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(path.dir.shellString)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 0)
+            if paths.count > 1 {
+                navControls
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+    }
+
+    @ViewBuilder
+    private func content(for path: FilePath) -> some View {
+        switch PreviewKind(for: path.url) {
+        case .folder:
+            FolderPreview(path: path)
+        case .archive:
+            ArchivePreview(path: path)
+        case .image:
+            ImageScrollPreview(url: path.url)
+        case .pdf:
+            PDFKitPreview(url: path.url)
+        case .video, .audio:
+            AVPreview(url: path.url)
+        case .text:
+            CodePreviewView(url: path.url)
+        case .quicklook:
+            QuickLookPreview(url: path.url)
+        }
     }
 
     private func step(_ delta: Int) {
@@ -279,6 +279,26 @@ struct FilePreviewPanel: View {
 // MARK: - PDFKitPreview
 
 struct PDFKitPreview: NSViewRepresentable {
+    final class Coordinator {
+        weak var view: PDFView?
+
+        func load(_ url: URL) {
+            guard loadedURL != url else { return }
+            loadedURL = url
+            // Parse off the main thread: a huge or malformed PDF can be slow.
+            DispatchQueue.global(qos: .userInitiated).async {
+                let document = PDFDocument(url: url)
+                DispatchQueue.main.async {
+                    guard self.loadedURL == url else { return }
+                    self.view?.document = document
+                }
+            }
+        }
+
+        private var loadedURL: URL?
+
+    }
+
     let url: URL
 
     func makeNSView(context: Context) -> PDFView {
@@ -298,29 +318,17 @@ struct PDFKitPreview: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    final class Coordinator {
-        weak var view: PDFView?
-        private var loadedURL: URL?
-
-        func load(_ url: URL) {
-            guard loadedURL != url else { return }
-            loadedURL = url
-            // Parse off the main thread: a huge or malformed PDF can be slow.
-            DispatchQueue.global(qos: .userInitiated).async {
-                let document = PDFDocument(url: url)
-                DispatchQueue.main.async {
-                    guard self.loadedURL == url else { return }
-                    self.view?.document = document
-                }
-            }
-        }
-    }
 }
 
 // MARK: - AVPreview
 
 struct AVPreview: NSViewRepresentable {
     let url: URL
+
+    static func dismantleNSView(_ nsView: AVPlayerView, coordinator: ()) {
+        nsView.player?.pause()
+        nsView.player = nil
+    }
 
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
@@ -338,16 +346,76 @@ struct AVPreview: NSViewRepresentable {
         nsView.player = AVPlayer(url: url)
     }
 
-    static func dismantleNSView(_ nsView: AVPlayerView, coordinator: ()) {
-        nsView.player?.pause()
-        nsView.player = nil
-    }
 }
 
 // MARK: - ImageScrollPreview
 
 /// An image inside a scroll view with native trackpad pinch-to-zoom and scroll.
 struct ImageScrollPreview: NSViewRepresentable {
+    final class Coordinator {
+        weak var scroll: ZoomableImageScrollView?
+        weak var fallback: NSView?
+
+        func load(_ url: URL) {
+            guard loadedURL != url else { return }
+            loadedURL = url
+            guard let scroll, let imageView = scroll.documentView as? NSImageView else { return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let image = Self.loadBounded(url)
+                DispatchQueue.main.async {
+                    guard self.loadedURL == url else { return }
+                    if let image {
+                        imageView.image = image
+                        scroll.isHidden = false
+                        scroll.refit()
+                    } else {
+                        // NSImage can't decode it (RAW, exotic formats): hand off to QuickLook.
+                        self.showQuickLookFallback(for: url)
+                    }
+                }
+            }
+        }
+
+        private var loadedURL: URL?
+
+        /// Decodes the image, downsampling anything enormous so a giant file
+        /// (e.g. a 30000×30000 TIFF) can't allocate gigabytes and hang the UI.
+        private static func loadBounded(_ url: URL) -> NSImage? {
+            let maxPixel = 8192
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+                return NSImage(contentsOf: url)
+            }
+            let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            let width = props?[kCGImagePropertyPixelWidth] as? Int ?? 0
+            let height = props?[kCGImagePropertyPixelHeight] as? Int ?? 0
+            guard width > maxPixel || height > maxPixel else {
+                return NSImage(contentsOf: url)
+            }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+            ]
+            guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+                return nil
+            }
+            return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        }
+
+        private func showQuickLookFallback(for url: URL) {
+            guard let fallback, let scroll else { return }
+            scroll.isHidden = true
+            if fallback.subviews.contains(where: { $0 is QLPreviewView }) {
+                (fallback.subviews.first { $0 is QLPreviewView } as? QLPreviewView)?.previewItem = url as NSURL
+                return
+            }
+            guard let ql = QLPreviewView(frame: fallback.bounds, style: .normal) else { return }
+            ql.autoresizingMask = [.width, .height]
+            ql.previewItem = url as NSURL
+            fallback.addSubview(ql)
+        }
+    }
+
     let url: URL
 
     func makeNSView(context: Context) -> NSView {
@@ -397,81 +465,13 @@ struct ImageScrollPreview: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    final class Coordinator {
-        weak var scroll: ZoomableImageScrollView?
-        weak var fallback: NSView?
-        private var loadedURL: URL?
-
-        func load(_ url: URL) {
-            guard loadedURL != url else { return }
-            loadedURL = url
-            guard let scroll, let imageView = scroll.documentView as? NSImageView else { return }
-            DispatchQueue.global(qos: .userInitiated).async {
-                let image = Self.loadBounded(url)
-                DispatchQueue.main.async {
-                    guard self.loadedURL == url else { return }
-                    if let image {
-                        imageView.image = image
-                        scroll.isHidden = false
-                        scroll.refit()
-                    } else {
-                        // NSImage can't decode it (RAW, exotic formats): hand off to QuickLook.
-                        self.showQuickLookFallback(for: url)
-                    }
-                }
-            }
-        }
-
-        /// Decodes the image, downsampling anything enormous so a giant file
-        /// (e.g. a 30000×30000 TIFF) can't allocate gigabytes and hang the UI.
-        private static func loadBounded(_ url: URL) -> NSImage? {
-            let maxPixel = 8192
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-                return NSImage(contentsOf: url)
-            }
-            let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-            let width = props?[kCGImagePropertyPixelWidth] as? Int ?? 0
-            let height = props?[kCGImagePropertyPixelHeight] as? Int ?? 0
-            guard width > maxPixel || height > maxPixel else {
-                return NSImage(contentsOf: url)
-            }
-            let options: [CFString: Any] = [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceThumbnailMaxPixelSize: maxPixel,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-            ]
-            guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
-                return nil
-            }
-            return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
-        }
-
-        private func showQuickLookFallback(for url: URL) {
-            guard let fallback, let scroll else { return }
-            scroll.isHidden = true
-            if fallback.subviews.contains(where: { $0 is QLPreviewView }) {
-                (fallback.subviews.first { $0 is QLPreviewView } as? QLPreviewView)?.previewItem = url as NSURL
-                return
-            }
-            guard let ql = QLPreviewView(frame: fallback.bounds, style: .normal) else { return }
-            ql.autoresizingMask = [.width, .height]
-            ql.previewItem = url as NSURL
-            fallback.addSubview(ql)
-        }
-    }
 }
+
+// MARK: - ZoomableImageScrollView
 
 /// Scroll view that fits its image to the viewport the first time it gets a real
 /// size, and again whenever the image changes.
 final class ZoomableImageScrollView: NSScrollView {
-    private var fitted = false
-
-    func refit() {
-        fitted = false
-        needsLayout = true
-        layoutSubtreeIfNeeded()
-    }
-
     override func layout() {
         super.layout()
         guard !fitted,
@@ -487,7 +487,18 @@ final class ZoomableImageScrollView: NSScrollView {
         magnification = min(fit, 1) // show small images at 100%, shrink large ones to fit
         fitted = true
     }
+
+    func refit() {
+        fitted = false
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+    }
+
+    private var fitted = false
+
 }
+
+// MARK: - CenteringClipView
 
 /// Keeps the image centered in the viewport when it's smaller than the panel,
 /// instead of letting it sink to the bottom-left (AppKit's default origin).
@@ -506,67 +517,6 @@ final class CenteringClipView: NSClipView {
     }
 }
 
-// MARK: - TextScrollPreview
-
-struct TextScrollPreview: NSViewRepresentable {
-    let url: URL
-
-    // Only read the head of the file: a multi-GB log must never be loaded whole.
-    private static let cap = 256 * 1024
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSTextView.scrollableTextView()
-        scroll.drawsBackground = false
-        scroll.hasVerticalScroller = true
-        scroll.hasHorizontalScroller = false
-        scroll.borderType = .noBorder
-
-        if let textView = scroll.documentView as? NSTextView {
-            textView.isEditable = false
-            textView.isSelectable = true
-            textView.drawsBackground = false
-            textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-            textView.textContainerInset = NSSize(width: 8, height: 8)
-            textView.isHorizontallyResizable = false
-            textView.textContainer?.widthTracksTextView = true
-            // Lazy layout keeps even the 256 KB head responsive.
-            textView.layoutManager?.allowsNonContiguousLayout = true
-            context.coordinator.textView = textView
-        }
-        context.coordinator.load(url)
-        return scroll
-    }
-
-    func updateNSView(_ nsView: NSScrollView, context: Context) {
-        context.coordinator.load(url)
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    final class Coordinator {
-        weak var textView: NSTextView?
-        private var loadedURL: URL?
-
-        func load(_ url: URL) {
-            guard loadedURL != url else { return }
-            loadedURL = url
-            let cap = TextScrollPreview.cap
-            DispatchQueue.global(qos: .userInitiated).async {
-                let handle = try? FileHandle(forReadingFrom: url)
-                let data = (try? handle?.read(upToCount: cap)) ?? Data()
-                try? handle?.close()
-                var text = String(decoding: data, as: UTF8.self)
-                if data.count >= cap { text += "\n\n… preview truncated" }
-                DispatchQueue.main.async {
-                    guard self.loadedURL == url else { return }
-                    self.textView?.string = text
-                    self.textView?.scroll(.zero)
-                }
-            }
-        }
-    }
-}
-
 // MARK: - QuickLookPreview
 
 /// Embedded QuickLook preview backed by `QLPreviewView`. Used only as a fallback
@@ -574,6 +524,10 @@ struct TextScrollPreview: NSViewRepresentable {
 /// inside this panel window.
 struct QuickLookPreview: NSViewRepresentable {
     let url: URL
+
+    static func dismantleNSView(_ nsView: QLPreviewView, coordinator: ()) {
+        nsView.close()
+    }
 
     func makeNSView(context: Context) -> QLPreviewView {
         let view = QLPreviewView(frame: .zero, style: .normal) ?? QLPreviewView(frame: .zero)!
@@ -588,9 +542,6 @@ struct QuickLookPreview: NSViewRepresentable {
         nsView.refreshPreviewItem()
     }
 
-    static func dismantleNSView(_ nsView: QLPreviewView, coordinator: ()) {
-        nsView.close()
-    }
 }
 
 // MARK: - DirEntry
@@ -598,6 +549,7 @@ struct QuickLookPreview: NSViewRepresentable {
 private struct DirEntry: Identifiable {
     let path: FilePath
     let isDir: Bool
+
     var id: String { path.string }
 }
 
@@ -756,7 +708,13 @@ enum SevenZip {
     struct Entry: Identifiable {
         let name: String
         let isDir: Bool
+
         var id: String { name }
+    }
+
+    struct Listing {
+        let entries: [Entry]
+        let truncated: Bool
     }
 
     /// Archive, disk-image, and filesystem-image extensions 7-Zip can list.
@@ -772,19 +730,9 @@ enum SevenZip {
         "ext2", "ext3", "ext4", "msi",
     ]
 
-    struct Listing {
-        let entries: [Entry]
-        let truncated: Bool
-    }
-
     static func canList(_ url: URL) -> Bool {
         listableExtensions.contains(url.pathExtension.lowercased())
     }
-
-    // Bounds so a zip bomb or huge archive can never hang the UI or run forever.
-    private static let timeout: TimeInterval = 6
-    private static let maxBytes = 8 * 1024 * 1024
-    private static let maxEntries = 5000
 
     static func list(_ url: URL) async -> Listing? {
         let process = Process()
@@ -839,6 +787,11 @@ enum SevenZip {
         }
     }
 
+    // Bounds so a zip bomb or huge archive can never hang the UI or run forever.
+    private static let timeout: TimeInterval = 6
+    private static let maxBytes = 8 * 1024 * 1024
+    private static let maxEntries = 5000
+
     /// Pairs each `Path =` with the following `Folder =`/`Mode =` marker, which
     /// drops the archive's own header line and tells files from directories.
     /// Stops at `maxEntries` so a bomb with millions of entries stays bounded.
@@ -874,11 +827,12 @@ enum SevenZip {
 /// Which audiovisual types AVFoundation can actually play. MKV/WebM and other
 /// containers it can't decode are absent, so they fall through to QuickLook.
 enum AVSupport {
-    private static let playable: [UTType] = AVURLAsset.audiovisualTypes().compactMap { UTType($0.rawValue) }
-
     static func canPlay(_ type: UTType) -> Bool {
         playable.contains { type.conforms(to: $0) }
     }
+
+    private static let playable: [UTType] = AVURLAsset.audiovisualTypes().compactMap { UTType($0.rawValue) }
+
 }
 
 // MARK: - QuickLookSupport
@@ -891,11 +845,6 @@ final class QuickLookSupport {
     static let shared = QuickLookSupport()
 
     private(set) var supportedUTIs: Set<String> = []
-    private var ready = false
-
-    /// Modern QuickLook provider extensions don't show up in `qlmanage -m`; keep
-    /// a small supplement so they aren't mistaken for unsupported.
-    private static let supplement: Set<String> = ["org.idpf.epub-container"]
 
     func warmUp() {
         guard !ready else { return }
@@ -911,22 +860,11 @@ final class QuickLookSupport {
         return type.supertypes.contains { supportedUTIs.contains($0.identifier) }
     }
 
-    private func detect(attemptsLeft: Int) {
-        DispatchQueue.global(qos: .utility).async {
-            let utis = Self.runQLManage()
-            DispatchQueue.main.async {
-                // qlmanage occasionally returns empty/errors; retry a couple times.
-                if utis.isEmpty, attemptsLeft > 1 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        self.detect(attemptsLeft: attemptsLeft - 1)
-                    }
-                    return
-                }
-                self.supportedUTIs = utis.union(Self.supplement)
-                self.ready = true
-            }
-        }
-    }
+    /// Modern QuickLook provider extensions don't show up in `qlmanage -m`; keep
+    /// a small supplement so they aren't mistaken for unsupported.
+    private static let supplement: Set<String> = ["org.idpf.epub-container"]
+
+    private var ready = false
 
     private static func runQLManage() -> Set<String> {
         let process = Process()
@@ -956,4 +894,22 @@ final class QuickLookSupport {
         }
         return set
     }
+
+    private func detect(attemptsLeft: Int) {
+        DispatchQueue.global(qos: .utility).async {
+            let utis = Self.runQLManage()
+            DispatchQueue.main.async {
+                // qlmanage occasionally returns empty/errors; retry a couple times.
+                if utis.isEmpty, attemptsLeft > 1 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        self.detect(attemptsLeft: attemptsLeft - 1)
+                    }
+                    return
+                }
+                self.supportedUTIs = utis.union(Self.supplement)
+                self.ready = true
+            }
+        }
+    }
+
 }

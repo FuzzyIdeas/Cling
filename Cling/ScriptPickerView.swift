@@ -682,7 +682,7 @@ private struct ScriptSourceEditor: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            ScriptCodeEditor(source: $source)
+            ScriptCodeEditor(source: $source, language: SyntaxHighlighter.language(forExtension: script.pathExtension) ?? "bash")
                 .id("code")
             Divider()
             ScriptParamsForm(params: $params)
@@ -838,16 +838,17 @@ private struct ScriptSourceEditor: View {
 
 // MARK: - ScriptCodeEditor
 
-/// Fixed-height monospaced editor. Isolated so each keystroke only re-renders this view, not the
-/// settings form below it; the fixed height also keeps NSTextView managing its own scrolling.
+/// Fixed-height syntax-highlighted editor. Isolated so each keystroke only re-renders this view,
+/// not the settings form below it; the fixed height also keeps the text view managing its own scrolling.
 private struct ScriptCodeEditor: View {
     @Binding var source: String
 
+    var language: String?
+
     var body: some View {
-        TextEditor(text: $source)
-            .font(.system(size: 12, design: .monospaced))
+        CodeEditorView(source: $source, language: language, fontSize: 12)
             .frame(height: 300)
-            .contentMargins(8)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 }
 

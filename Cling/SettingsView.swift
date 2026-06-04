@@ -14,7 +14,7 @@ extension Binding<Int> {
     }
 }
 
-extension Set where Element == SauceKey {
+extension Set<SauceKey> {
     /// Keys offered in the show/hide hotkey recorder: everything in `ALL_KEYS` plus a few non-symbol
     /// keys (Space, Tab, Return, Delete, arrows) so combos like ⌘Space / ⌥Space can be set. All of
     /// these register through Carbon (`RegisterEventHotKey`), so no extra permissions are needed.

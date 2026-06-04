@@ -14,6 +14,7 @@
 		C761722B2D50F5D000D78B4F /* LowtechIndie in Frameworks */ = {isa = PBXBuildFile; productRef = C761722A2D50F5D000D78B4F /* LowtechIndie */; };
 		C761722D2D50F5D000D78B4F /* LowtechPro in Frameworks */ = {isa = PBXBuildFile; productRef = C761722C2D50F5D000D78B4F /* LowtechPro */; };
 		C7FE59F12D635D1500141592 /* ClopSDK in Frameworks */ = {isa = PBXBuildFile; productRef = C7FE59F02D635D1500141592 /* ClopSDK */; };
+		AA11000000000000000000A3 /* Highlighter in Frameworks */ = {isa = PBXBuildFile; productRef = AA11000000000000000000A2 /* Highlighter */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -94,6 +95,7 @@
 				C7FE59F12D635D1500141592 /* ClopSDK in Frameworks */,
 				C761722B2D50F5D000D78B4F /* LowtechIndie in Frameworks */,
 				C761722D2D50F5D000D78B4F /* LowtechPro in Frameworks */,
+				AA11000000000000000000A3 /* Highlighter in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -178,6 +180,7 @@
 				C761722C2D50F5D000D78B4F /* LowtechPro */,
 				C74B68A02D50F95800FCDEBA /* Ignore */,
 				C7FE59F02D635D1500141592 /* ClopSDK */,
+				AA11000000000000000000A2 /* Highlighter */,
 			);
 			productName = Cling;
 			productReference = C76172132D50E43600D78B4F /* Cling.app */;
@@ -215,6 +218,7 @@
 				C76172272D50F5D000D78B4F /* XCRemoteSwiftPackageReference "Lowtech" */,
 				C76172332D50F8B100D78B4F /* XCRemoteSwiftPackageReference "swift-ignore" */,
 				C7FE59EF2D635CDC00141592 /* XCRemoteSwiftPackageReference "ClopSDK" */,
+				AA11000000000000000000A1 /* XCRemoteSwiftPackageReference "HighlighterSwift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C76172142D50E43600D78B4F /* Products */;
@@ -558,6 +562,14 @@
 				minimumVersion = 1.1.0;
 			};
 		};
+		AA11000000000000000000A1 /* XCRemoteSwiftPackageReference "HighlighterSwift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/smittytone/HighlighterSwift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.1.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -590,6 +602,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C7FE59EF2D635CDC00141592 /* XCRemoteSwiftPackageReference "ClopSDK" */;
 			productName = ClopSDK;
+		};
+		AA11000000000000000000A2 /* Highlighter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA11000000000000000000A1 /* XCRemoteSwiftPackageReference "HighlighterSwift" */;
+			productName = Highlighter;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
