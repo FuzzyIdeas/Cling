@@ -55,7 +55,11 @@ final class DragSourceView: NSView, NSDraggingSource {
     }
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        [.copy, .generic, .link]
+        // Copy only. Advertising `.link` lets Finder resolve the drop to "make alias"
+        // (and `.generic` can become a move), which is what produced stray alias files.
+        // SwiftUI's `.draggable(url)` used for manual drags offers copy only too, so this
+        // keeps the synthesized drag behaving identically.
+        .copy
     }
 
     func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
