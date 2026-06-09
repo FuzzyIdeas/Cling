@@ -1043,6 +1043,9 @@ class FuzzyClient {
             await withTaskGroup(of: (SearchScope, SearchEngine).self) { group in
                 for scope in scopes {
                     let dirs = await self.walkDirs(for: scope)
+                    // Scopes rooted in read-only/SIP locations (Applications, System, Root) get their own
+                    // gitignore stored in our cache dir, matched against the real scope dir via a rooted check.
+                    let scopeIgnoreFile = ScopeIgnore.rootedScopes.contains(scope) ? ScopeIgnore.activeFile(for: scope) : nil
                     group.addTask {
                         let scopeEngine = SearchEngine()
                         scopeEngine.reserveCapacity(100_000)
@@ -1058,9 +1061,10 @@ class FuzzyClient {
                                 if volumePaths.contains(path) { return true }
                                 return false
                             }
-                            let ignore = dir.applyIgnore ? ignoreChecker : nil
+                            let ignore = scopeIgnoreFile ?? (dir.applyIgnore ? ignoreChecker : nil)
+                            let ignoreRoot = scopeIgnoreFile != nil ? dir.dir : nil
                             let opKey = "scope:\(scope.rawValue)"
-                            scopeEngine.walkDirectory(dir.dir, ignoreFile: ignore, skipDir: skipDir, applyBlocklist: true, progress: { count, _ in
+                            scopeEngine.walkDirectory(dir.dir, ignoreFile: ignore, ignoreRoot: ignoreRoot, skipDir: skipDir, applyBlocklist: true, progress: { count, _ in
                                 Task { @MainActor in
                                     self.logActivity("Indexing \(scope.label): \(count.formatted()) files", ongoing: true, operationKey: opKey, count: count)
                                 }
@@ -1723,12 +1727,14 @@ class FuzzyClient {
 
         var homeLines: [String] = []
         var volumeLines: [FilePath: [String]] = [:]
+        var scopeLines: [SearchScope: [String]] = [:]
         var blockedPrefixLines: [String] = []
         var blockedContainsLines: [String] = []
         for rule in rules {
             switch rule.mechanism {
             case .homeIgnore: homeLines.append(rule.line)
             case let .volumeIgnore(v): volumeLines[v, default: []].append(rule.line)
+            case let .scopeIgnore(scope): scopeLines[scope, default: []].append(rule.line)
             case .blocklist: rule.blocklistPrefix ? blockedPrefixLines.append(rule.line) : blockedContainsLines.append(rule.line)
             }
         }
@@ -1738,6 +1744,12 @@ class FuzzyClient {
         }
         for (volume, lines) in volumeLines where !lines.isEmpty {
             appendIgnoreLines(lines, to: volume / ".fsignore", suppressWatcher: false)
+        }
+        if !scopeLines.isEmpty {
+            ScopeIgnore.ensureDir()
+            for (scope, lines) in scopeLines where !lines.isEmpty {
+                appendIgnoreLines(lines, to: ScopeIgnore.file(for: scope), suppressWatcher: false)
+            }
         }
         var blocklistChanged = false
         if !blockedPrefixLines.isEmpty {

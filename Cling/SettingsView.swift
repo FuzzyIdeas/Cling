@@ -668,11 +668,30 @@ private struct ExclusionsSettingsPane: View {
         ScrollView {
             VStack(spacing: 16) {
                 homeIgnoreSection
+                scopeIgnoreSection
                 blocklistSection
                 volumeIgnoreSection
             }
             .padding()
         }
+    }
+
+    private var scopeIgnoreSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Scope Ignore Files").font(.system(size: 12, weight: .semibold))
+                    Text("Gitignore syntax for read-only scopes (stored in Cling's cache, since these roots can't hold a `.fsignore`). Patterns are relative to the scope root, so `*/Contents/MacOS/*/` drops helper folders under every app's MacOS dir while keeping the binaries.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(ScopeIgnore.rootedScopes, id: \.self) { scope in
+                    ScopeIgnoreEditor(scope: scope)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .groupBoxStyle(SettingsCardGroupBoxStyle())
     }
 
     private var homeIgnoreSection: some View {
@@ -957,6 +976,58 @@ struct VolumeIgnoreEditor: View {
 
     private var fsignorePath: FilePath { volume / ".fsignore" }
 
+}
+
+// MARK: - ScopeIgnoreEditor
+
+struct ScopeIgnoreEditor: View {
+    init(scope: SearchScope) {
+        self.scope = scope
+        _content = State(initialValue: ScopeIgnore.content(for: scope))
+    }
+
+    let scope: SearchScope
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "folder.badge.gearshape")
+                Text(scope.label).font(.system(size: 12, weight: .semibold))
+                Spacer()
+            }
+
+            TextEditor(text: $content)
+                .font(.system(size: 11, design: .monospaced))
+                .contentMargins(6)
+                .frame(height: 100)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary, lineWidth: 0.5))
+                .onChange(of: content) {
+                    saveTask?.cancel()
+                    saveTask = DispatchWorkItem { [content, scope] in
+                        ScopeIgnore.write(content, for: scope)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: saveTask!)
+                }
+
+            HStack {
+                Button("Apply & Reindex") {
+                    saveTask?.cancel()
+                    ScopeIgnore.write(content, for: scope)
+                    FUZZY.refresh(pauseSearch: false, scopes: [scope])
+                }
+                .controlSize(.small)
+                .disabled(fuzzy.backgroundIndexing)
+                .help("Save and reindex \(scope.label)")
+                Spacer()
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    @State private var content: String
+    @State private var saveTask: DispatchWorkItem?
+    @State private var fuzzy = FUZZY
 }
 
 // MARK: - IgnoreHelpText

@@ -1042,6 +1042,7 @@ final class SearchEngine: @unchecked Sendable {
     func walkDirectory(
         _ dir: String,
         ignoreFile: String? = nil,
+        ignoreRoot: String? = nil,
         skipDir: ((String) -> Bool)? = nil,
         applyBlocklist: Bool = false,
         progress: ((Int, String) -> Void)? = nil,
@@ -1068,16 +1069,22 @@ final class SearchEngine: @unchecked Sendable {
         // dirs and must filter their files). With no exceptions, directory pruning alone is exact, so skip it.
         let blocklistAllows = applyBlocklist && PathBlocklist.shared.hasAllows
 
-        // The gitignore (swift-ignore / Rust `ignore` crate) panics if queried with a path
-        // that is not a descendant of the ignore file's parent directory. Only apply the
-        // ignore check when the walked dir is actually under that root.
-        let ignoreRootPrefix: String? = ignoreFile.flatMap { f -> String? in
-            let parent = (f as NSString).deletingLastPathComponent
+        // The gitignore (swift-ignore / Rust `ignore` crate) panics if queried with a path that is not a
+        // descendant of the matcher's root. Two modes:
+        //  - rooted (ignoreRoot != nil): patterns anchor to `ignoreRoot` (== the walked dir) while the file
+        //    lives elsewhere (e.g. a scope ignore for /Applications stored in our cache dir).
+        //  - file-rooted (default): patterns anchor to the ignore file's own parent directory.
+        let ignoreCheck: ((String) -> Bool)? = {
+            guard let ignoreFile else { return nil }
+            if let ignoreRoot {
+                return { $0.isIgnored(in: ignoreFile, root: ignoreRoot) }
+            }
+            let parent = (ignoreFile as NSString).deletingLastPathComponent
             guard !parent.isEmpty else { return nil }
             let prefix = parent.hasSuffix("/") ? parent : parent + "/"
-            return (dir == parent || dir.hasPrefix(prefix)) ? prefix : nil
-        }
-        let effectiveIgnoreFile: String? = ignoreRootPrefix != nil ? ignoreFile : nil
+            guard dir == parent || dir.hasPrefix(prefix) else { return nil }
+            return { $0.isIgnored(in: ignoreFile) }
+        }()
 
         var added = 0
         var skippedIgnore = 0
@@ -1120,7 +1127,7 @@ final class SearchEngine: @unchecked Sendable {
 
                 let fullPath = String(decoding: UnsafeBufferPointer(start: pathPtr, count: pathLen), as: UTF8.self)
 
-                if let effectiveIgnoreFile, fullPath.isIgnored(in: effectiveIgnoreFile) {
+                if let ignoreCheck, ignoreCheck(fullPath) {
                     // When negation patterns exist (e.g. `*` + `!some/path/`), don't skip
                     // ignored directories so that un-ignored descendants can still be visited.
                     if !hasNegationPatterns {
@@ -1178,7 +1185,7 @@ final class SearchEngine: @unchecked Sendable {
                 }
 
                 let fullPath = String(decoding: UnsafeBufferPointer(start: pathPtr, count: pathLen), as: UTF8.self)
-                if let effectiveIgnoreFile, fullPath.isIgnored(in: effectiveIgnoreFile) {
+                if let ignoreCheck, ignoreCheck(fullPath) {
                     skippedIgnore &+= 1
                     continue
                 }

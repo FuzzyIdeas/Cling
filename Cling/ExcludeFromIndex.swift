@@ -14,6 +14,7 @@ private let log = Logger(subsystem: clingSubsystem, category: "ExcludeFromIndex"
 enum ExcludeMechanism: Equatable, Hashable {
     case homeIgnore
     case volumeIgnore(FilePath)
+    case scopeIgnore(SearchScope)
     case blocklist
 
     var supportsGlobs: Bool { self != .blocklist }
@@ -22,6 +23,7 @@ enum ExcludeMechanism: Equatable, Hashable {
         switch self {
         case .homeIgnore: "~/.fsignore"
         case let .volumeIgnore(v): "\(v.name.string)/.fsignore"
+        case let .scopeIgnore(scope): "\(scope.label) ignore"
         case .blocklist: "blocklist"
         }
     }
@@ -87,6 +89,10 @@ struct ExcludePathInfo {
             mechanism = .volumeIgnore(v)
             root = v.string
             rel = Self.relativize(p, v.string)
+        } else if let (scope, scopeRoot) = ScopeIgnore.scopeAndRoot(forPath: p) {
+            mechanism = .scopeIgnore(scope)
+            root = scopeRoot
+            rel = Self.relativize(p, scopeRoot)
         } else {
             mechanism = .blocklist
             root = nil
@@ -100,6 +106,7 @@ struct ExcludePathInfo {
         switch mechanism {
         case .homeIgnore: "home"
         case let .volumeIgnore(v): "vol:" + v.string
+        case let .scopeIgnore(scope): "scope:" + scope.rawValue
         case .blocklist: "blk"
         }
     }
