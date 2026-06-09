@@ -1043,6 +1043,7 @@ final class SearchEngine: @unchecked Sendable {
         _ dir: String,
         ignoreFile: String? = nil,
         skipDir: ((String) -> Bool)? = nil,
+        applyBlocklist: Bool = false,
         progress: ((Int, String) -> Void)? = nil,
         cancelled: (() -> Bool)? = nil
     ) -> Int {
@@ -1063,6 +1064,9 @@ final class SearchEngine: @unchecked Sendable {
         let ignoreContent: String? = ignoreFile.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
         let ignoredExtensions: Set<String> = ignoreContent.map { Self.extractExtensionPatterns(from: $0) } ?? []
         let hasNegationPatterns: Bool = ignoreContent?.contains("\n!") == true || ignoreContent?.hasPrefix("!") == true
+        // Per-file blocklist checks are only needed when there are `!` exceptions (then we descend into blocked
+        // dirs and must filter their files). With no exceptions, directory pruning alone is exact, so skip it.
+        let blocklistAllows = applyBlocklist && PathBlocklist.shared.hasAllows
 
         // The gitignore (swift-ignore / Rust `ignore` crate) panics if queried with a path
         // that is not a descendant of the ignore file's parent directory. Only apply the
@@ -1125,6 +1129,19 @@ final class SearchEngine: @unchecked Sendable {
                     skippedIgnore &+= 1
                     continue
                 }
+                if applyBlocklist, pathBlockMatch(fullPath) {
+                    if !isPathBlocked(fullPath) {
+                        // An allow exception wins at this level (e.g. `!.app/Contents/MacOS/`): index and descend.
+                    } else if blocklistDirHasAllowedDescendant(fullPath) {
+                        // Blocked, but an allow-exception lives below: descend without indexing this dir.
+                        skippedIgnore &+= 1
+                        continue
+                    } else {
+                        fts_set(ftsp, ent, Int32(FTS_SKIP))
+                        skippedIgnore &+= 1
+                        continue
+                    }
+                }
                 if let skipDir, skipDir(fullPath) {
                     fts_set(ftsp, ent, Int32(FTS_SKIP))
                     continue
@@ -1162,6 +1179,12 @@ final class SearchEngine: @unchecked Sendable {
 
                 let fullPath = String(decoding: UnsafeBufferPointer(start: pathPtr, count: pathLen), as: UTF8.self)
                 if let effectiveIgnoreFile, fullPath.isIgnored(in: effectiveIgnoreFile) {
+                    skippedIgnore &+= 1
+                    continue
+                }
+                // When blocklist exceptions exist, files are checked individually: we descend into blocked
+                // directories to reach allowed paths, so each file must be re-tested so only allowed ones get in.
+                if blocklistAllows, isPathBlocked(fullPath) {
                     skippedIgnore &+= 1
                     continue
                 }

@@ -26,54 +26,158 @@ final class PathBlocklist: @unchecked Sendable {
     private(set) var prefixes: [[UInt8]] = []
     private(set) var components: [[UInt8]] = []
 
+    // Exceptions: lines starting with `!`. A path matching one of these is indexed even if a block rule
+    // also matches it (e.g. block `.app/Contents/`, allow `!.app/Contents/MacOS/`). Kept as both UTF-8
+    // bytes (for fast matching) and strings (for the ancestor-descent test during directory walks).
+    private(set) var allowPrefixes: [[UInt8]] = []
+    private(set) var allowComponents: [[UInt8]] = []
+    private(set) var allowPrefixesStr: [String] = []
+    private(set) var allowComponentsStr: [String] = []
+
+    var hasAllows: Bool { !allowPrefixes.isEmpty || !allowComponents.isEmpty }
+
     func rebuild() {
-        let rawPrefixes = Defaults[.blockedPrefixes]
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
-        // Auto-generate /private counterparts for paths under symlinked dirs
-        var allPrefixes = [String]()
-        for p in rawPrefixes {
-            allPrefixes.append(p)
-            if p.hasPrefix("/tmp/") || p.hasPrefix("/var/") || p.hasPrefix("/etc/") {
-                allPrefixes.append("/private" + p)
-            } else if p.hasPrefix("/private/tmp/") || p.hasPrefix("/private/var/") || p.hasPrefix("/private/etc/") {
-                allPrefixes.append(String(p.dropFirst("/private".count)))
+        let (blockPrefixes, allowPfx) = Self.split(Defaults[.blockedPrefixes])
+        let (blockContains, allowContains) = Self.split(Defaults[.blockedContains])
+
+        prefixes = Self.expandPrivate(blockPrefixes).map { Array($0.utf8) }
+        let expandedAllow = Self.expandPrivate(allowPfx)
+        allowPrefixesStr = expandedAllow
+        allowPrefixes = expandedAllow.map { Array($0.utf8) }
+        components = blockContains.map { Array($0.utf8) }
+        allowComponentsStr = allowContains
+        allowComponents = allowContains.map { Array($0.utf8) }
+    }
+
+    /// Split non-comment lines into (block, allow). Allow lines start with `!`.
+    private static func split(_ s: String) -> (block: [String], allow: [String]) {
+        var block = [String]()
+        var allow = [String]()
+        for raw in s.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+            if line.hasPrefix("!") {
+                let value = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
+                if !value.isEmpty { allow.append(value) }
+            } else {
+                block.append(line)
             }
         }
-        prefixes = allPrefixes.map { Array($0.utf8) }
-        components = Defaults[.blockedContains]
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
-            .map { Array($0.utf8) }
+        return (block, allow)
+    }
+
+    /// Auto-generate /private counterparts for paths under symlinked dirs.
+    private static func expandPrivate(_ prefixes: [String]) -> [String] {
+        var out = [String]()
+        for p in prefixes {
+            out.append(p)
+            if p.hasPrefix("/tmp/") || p.hasPrefix("/var/") || p.hasPrefix("/etc/") {
+                out.append("/private" + p)
+            } else if p.hasPrefix("/private/tmp/") || p.hasPrefix("/private/var/") || p.hasPrefix("/private/etc/") {
+                out.append(String(p.dropFirst("/private".count)))
+            }
+        }
+        return out
     }
 }
 
-func isPathBlocked(_ path: String) -> Bool {
-    let bl = PathBlocklist.shared
-    var blocked = false
+/// Length of the longest pattern that matches `path` (0 if none). Used as a specificity score so a more
+/// specific rule can override a broader one (e.g. an exact prefix beats a shallow `contains` exception).
+private func blocklistMatchLength(_ path: String, prefixes: [[UInt8]], components: [[UInt8]]) -> Int {
+    var best = 0
     path.utf8.withContiguousStorageIfAvailable { buf in
         let len = buf.count
-        for prefix in bl.prefixes {
-            guard len >= prefix.count else { continue }
-            if memcmp(buf.baseAddress!, prefix, prefix.count) == 0 { blocked = true; return }
+        for prefix in prefixes {
+            let pLen = prefix.count
+            guard pLen > best else { continue } // can't beat the current best
+            if len >= pLen, memcmp(buf.baseAddress!, prefix, pLen) == 0 { best = pLen; continue }
+            // A prefix ending in "/" also matches the bare directory itself ("X/" matches path "X").
+            if prefix[pLen - 1] == 0x2F, len == pLen - 1, memcmp(buf.baseAddress!, prefix, pLen - 1) == 0 {
+                best = pLen
+            }
         }
-        for component in bl.components {
+        for component in components {
             let cLen = component.count
-            guard len >= cLen else { continue }
+            guard cLen > best, len >= cLen else { continue }
+            var matched = false
             let end = len - cLen
-            for i in 0 ... end {
-                if memcmp(buf.baseAddress! + i, component, cLen) == 0 { blocked = true; return }
+            var i = 0
+            while i <= end {
+                if memcmp(buf.baseAddress! + i, component, cLen) == 0 { matched = true; break }
+                i += 1
             }
-            // Also match when path ends with the component minus trailing slash
-            // e.g. path "/foo/build" matches component "/build/" because fts_read omits trailing /
-            if cLen >= 2, component[cLen - 1] == 0x2F, len >= cLen - 1 {
-                if memcmp(buf.baseAddress! + len - (cLen - 1), component, cLen - 1) == 0 { blocked = true; return }
+            // Also match when the path ends with the component minus its trailing slash
+            // e.g. path "/foo/build" matches component "/build/" because fts_read omits the trailing /
+            if !matched, cLen >= 2, component[cLen - 1] == 0x2F, len >= cLen - 1 {
+                if memcmp(buf.baseAddress! + len - (cLen - 1), component, cLen - 1) == 0 { matched = true }
             }
+            if matched { best = cLen }
         }
     }
-    return blocked
+    return best
+}
+
+/// Specificity of the strongest block rule matching `path` (0 if none).
+func pathBlockLength(_ path: String) -> Int {
+    let bl = PathBlocklist.shared
+    return blocklistMatchLength(path, prefixes: bl.prefixes, components: bl.components)
+}
+
+/// Specificity of the strongest allow exception matching `path` (0 if none).
+func pathAllowLength(_ path: String) -> Int {
+    let bl = PathBlocklist.shared
+    guard bl.hasAllows else { return 0 }
+    return blocklistMatchLength(path, prefixes: bl.allowPrefixes, components: bl.allowComponents)
+}
+
+/// Whether a path matches a block rule (ignoring exceptions).
+func pathBlockMatch(_ path: String) -> Bool { pathBlockLength(path) > 0 }
+
+/// Whether a path matches an allow exception (`!` rule).
+func pathAllowMatch(_ path: String) -> Bool { pathAllowLength(path) > 0 }
+
+/// Blocked when a block rule matches and no allow exception is at least as specific. The most specific
+/// (longest) matching rule wins, so a deep block can re-exclude inside a shallower allowed area.
+func isPathBlocked(_ path: String) -> Bool {
+    let block = pathBlockLength(path)
+    guard block > 0 else { return false }
+    return block > pathAllowLength(path)
+}
+
+/// For a blocked directory, whether an allow-exception could match something beneath it, meaning the
+/// walker should descend into it (without indexing the directory itself) instead of pruning it.
+func blocklistDirHasAllowedDescendant(_ path: String) -> Bool {
+    let bl = PathBlocklist.shared
+    guard bl.hasAllows else { return false }
+    let withSlash = path + "/"
+    for rule in bl.allowComponentsStr {
+        // The allow pattern already appears in the path, or continuing down could complete it.
+        if withSlash.contains(rule) { return true }
+        if suffixIsPrefix(of: rule, in: withSlash) { return true }
+    }
+    for rule in bl.allowPrefixesStr where rule.hasPrefix(withSlash) {
+        return true
+    }
+    return false
+}
+
+/// True if any non-empty suffix of `s` equals a prefix of `r` (a partial match in progress).
+private func suffixIsPrefix(of r: String, in s: String) -> Bool {
+    let sb = Array(s.utf8)
+    let rb = Array(r.utf8)
+    let maxLen = min(sb.count, rb.count)
+    guard maxLen > 0 else { return false }
+    for len in stride(from: maxLen, through: 1, by: -1) {
+        let off = sb.count - len
+        var ok = true
+        var k = 0
+        while k < len {
+            if sb[off + k] != rb[k] { ok = false; break }
+            k += 1
+        }
+        if ok { return true }
+    }
+    return false
 }
 
 let indexFolder: FilePath =
@@ -946,15 +1050,17 @@ class FuzzyClient {
                             let excludeSkip: ((String) -> Bool)? = dir.excludePrefix.map { excl in
                                 { path in path.hasPrefix(excl) }
                             }
+                            // Blocklist (incl. `!` exceptions) is handled inside walkDirectory via
+                            // applyBlocklist, so it can descend into a blocked dir that has an allowed
+                            // descendant instead of pruning it. skipDir only covers scope/volume excludes.
                             let skipDir: ((String) -> Bool)? = { path in
-                                if isPathBlocked(path) { return true }
                                 if excludeSkip?(path) ?? false { return true }
                                 if volumePaths.contains(path) { return true }
                                 return false
                             }
                             let ignore = dir.applyIgnore ? ignoreChecker : nil
                             let opKey = "scope:\(scope.rawValue)"
-                            scopeEngine.walkDirectory(dir.dir, ignoreFile: ignore, skipDir: skipDir, progress: { count, _ in
+                            scopeEngine.walkDirectory(dir.dir, ignoreFile: ignore, skipDir: skipDir, applyBlocklist: true, progress: { count, _ in
                                 Task { @MainActor in
                                     self.logActivity("Indexing \(scope.label): \(count.formatted()) files", ongoing: true, operationKey: opKey, count: count)
                                 }
@@ -1508,6 +1614,167 @@ class FuzzyClient {
         recents = recents.without(paths)
         sortedRecents = sortedRecents.without(paths)
         scheduleSaveIndexes()
+    }
+
+    /// Force a previously-excluded path back into the index by removing blocklist rules and/or appending
+    /// `!` re-include rules to the relevant ignore file, then reindexing the affected scopes/volumes.
+    /// Inverse of `excludeFromIndex`. See `IndexInclusionAnalyzer` for how plans are produced.
+    func includeInIndex(_ plan: IndexInclusionPlan) {
+        guard !plan.isEmpty || plan.fullReindex || !plan.reindexScopes.isEmpty || !plan.reindexVolumes.isEmpty else { return }
+        logActivity("Reindexing a path that was excluded")
+
+        // 1. Update the global blocklist: add `!` exceptions and/or remove matched rules.
+        var blocklistChanged = false
+        if !plan.addBlockedPrefixes.isEmpty {
+            Defaults[.blockedPrefixes] = Self.appendingLines(plan.addBlockedPrefixes, to: Defaults[.blockedPrefixes])
+            blocklistChanged = true
+        }
+        if !plan.removeBlockedPrefixes.isEmpty {
+            Defaults[.blockedPrefixes] = Self.removingLines(plan.removeBlockedPrefixes, from: Defaults[.blockedPrefixes])
+            blocklistChanged = true
+        }
+        if !plan.addBlockedContains.isEmpty {
+            Defaults[.blockedContains] = Self.appendingLines(plan.addBlockedContains, to: Defaults[.blockedContains])
+            blocklistChanged = true
+        }
+        if !plan.removeBlockedContains.isEmpty {
+            Defaults[.blockedContains] = Self.removingLines(plan.removeBlockedContains, from: Defaults[.blockedContains])
+            blocklistChanged = true
+        }
+        if blocklistChanged {
+            PathBlocklist.shared.rebuild()
+        }
+
+        // 2. Append ignore-file lines (re-exclusions first, then `!` re-includes, already ordered by the plan).
+        if !plan.addHomeFsignoreLines.isEmpty {
+            appendIgnoreLines(plan.addHomeFsignoreLines, to: fsignore, suppressWatcher: true)
+        }
+        for (volume, lines) in plan.volumeFsignoreLines where !lines.isEmpty {
+            appendIgnoreLines(lines, to: volume / ".fsignore", suppressWatcher: false)
+        }
+
+        // 3. Reindex what's affected.
+        if plan.fullReindex {
+            refresh(pauseSearch: false)
+        } else {
+            if !plan.reindexScopes.isEmpty {
+                refresh(pauseSearch: false, scopes: Array(plan.reindexScopes))
+            }
+            for volume in plan.reindexVolumes {
+                indexVolume(volume)
+            }
+        }
+    }
+
+    private static func removingLines(_ remove: [String], from content: String) -> String {
+        let toRemove = Set(remove.map { $0.trimmingCharacters(in: .whitespaces) })
+        return content
+            .components(separatedBy: .newlines)
+            .filter { !toRemove.contains($0.trimmingCharacters(in: .whitespaces)) }
+            .joined(separator: "\n")
+    }
+
+    private static func appendingLines(_ add: [String], to content: String) -> String {
+        let existing = Set(content.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) })
+        let newLines = add.filter { !existing.contains($0.trimmingCharacters(in: .whitespaces)) }
+        guard !newLines.isEmpty else { return content }
+        var updated = content
+        if !updated.isEmpty, !updated.hasSuffix("\n") { updated += "\n" }
+        updated += newLines.joined(separator: "\n")
+        return updated
+    }
+
+    private func appendIgnoreLines(_ lines: [String], to file: FilePath, suppressWatcher: Bool) {
+        let existing = Set((try? String(contentsOfFile: file.string, encoding: .utf8))?.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) } ?? [])
+        let newLines = lines.filter { !existing.contains($0.trimmingCharacters(in: .whitespaces)) }
+        guard !newLines.isEmpty else { return }
+
+        if suppressWatcher {
+            fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 10
+            fsignoreReindexTask?.cancel()
+        }
+
+        do {
+            if !file.exists {
+                FileManager.default.createFile(atPath: file.string, contents: nil)
+            }
+            let handle = try FileHandle(forUpdating: file.url)
+            handle.seekToEndOfFile()
+            if let data = "\n\(newLines.joined(separator: "\n"))".data(using: .utf8) {
+                handle.write(data)
+            }
+            handle.closeFile()
+        } catch {
+            log.error("Failed to append to \(file.string, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+
+        bust_gitignore_cache()
+        if suppressWatcher {
+            fsignoreContentHashes[file.string] = contentHash(of: file.string)
+        }
+    }
+
+    /// Apply a set of exclusion rules chosen in the Exclude-from-index sheet: append ignore-file lines and/or
+    /// blocklist lines, drop the selected paths from the live index immediately, then reindex if the rules are
+    /// broad enough to also match other indexed paths.
+    func excludeFromIndex(rules: [ExcludeRule], paths: Set<FilePath>, reindex: Bool) {
+        guard !rules.isEmpty else { return }
+        logActivity("Excluded \(paths.count) path\(paths.count == 1 ? "" : "s") from index")
+
+        var homeLines: [String] = []
+        var volumeLines: [FilePath: [String]] = [:]
+        var blockedPrefixLines: [String] = []
+        var blockedContainsLines: [String] = []
+        for rule in rules {
+            switch rule.mechanism {
+            case .homeIgnore: homeLines.append(rule.line)
+            case let .volumeIgnore(v): volumeLines[v, default: []].append(rule.line)
+            case .blocklist: rule.blocklistPrefix ? blockedPrefixLines.append(rule.line) : blockedContainsLines.append(rule.line)
+            }
+        }
+
+        if !homeLines.isEmpty {
+            appendIgnoreLines(homeLines, to: fsignore, suppressWatcher: true)
+        }
+        for (volume, lines) in volumeLines where !lines.isEmpty {
+            appendIgnoreLines(lines, to: volume / ".fsignore", suppressWatcher: false)
+        }
+        var blocklistChanged = false
+        if !blockedPrefixLines.isEmpty {
+            Defaults[.blockedPrefixes] = Self.appendingLines(blockedPrefixLines, to: Defaults[.blockedPrefixes])
+            blocklistChanged = true
+        }
+        if !blockedContainsLines.isEmpty {
+            Defaults[.blockedContains] = Self.appendingLines(blockedContainsLines, to: Defaults[.blockedContains])
+            blocklistChanged = true
+        }
+        if blocklistChanged { PathBlocklist.shared.rebuild() }
+
+        // Drop the selected paths from the live index immediately for instant feedback.
+        excludedPaths.formUnion(paths.map(\.string))
+        for path in paths {
+            for eng in scopeEngines.values { eng.removePath(path.string) }
+            for eng in volumeEngines.values { eng.removePath(path.string) }
+            recentsEngine.removePath(path.string)
+        }
+        removedFiles.formUnion(paths.map(\.string))
+        results = results.without(paths)
+        scoredResults = scoredResults.without(paths)
+        recents = recents.without(paths)
+        sortedRecents = sortedRecents.without(paths)
+
+        if reindex {
+            let scopes = Set(paths.flatMap { IndexInclusionAnalyzer.scopesForPath($0.string, home: HOME.string) })
+            let volumes = Set(paths.compactMap { p in enabledVolumes.first { p.starts(with: $0) } })
+            for volume in volumes { indexVolume(volume) }
+            if !scopes.isEmpty {
+                refresh(pauseSearch: false, scopes: Array(scopes))
+            } else if volumes.isEmpty {
+                refresh(pauseSearch: false)
+            }
+        } else {
+            scheduleSaveIndexes()
+        }
     }
 
     // MARK: - Sorting

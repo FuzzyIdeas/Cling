@@ -28,7 +28,7 @@ let envState = EnvState()
 // MARK: - SettingsCategory
 
 private enum SettingsCategory: String, CaseIterable, Identifiable {
-    case general, interface, apps, search, filters, scripts, exclusions, about
+    case general, interface, apps, search, volumes, filters, scripts, exclusions, about
 
     var id: String { rawValue }
 
@@ -38,6 +38,7 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         case .interface: "Interface"
         case .apps: "Apps"
         case .search: "Search"
+        case .volumes: "Volumes"
         case .filters: "Filters"
         case .scripts: "Scripts"
         case .exclusions: "Exclusions"
@@ -51,6 +52,7 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         case .interface: "slider.horizontal.3"
         case .apps: "app.badge"
         case .search: "magnifyingglass"
+        case .volumes: "externaldrive"
         case .filters: "line.3.horizontal.decrease.circle"
         case .scripts: "terminal"
         case .exclusions: "eye.slash"
@@ -64,6 +66,7 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         case .interface: .orange
         case .apps: .blue
         case .search: .green
+        case .volumes: .cyan
         case .filters: .teal
         case .scripts: .indigo
         case .exclusions: .red
@@ -112,6 +115,7 @@ struct SettingsView: View {
         case .interface: InterfaceSettingsPane()
         case .apps: AppsSettingsPane()
         case .search: SearchSettingsPane()
+        case .volumes: VolumesSettingsPane()
         case .filters: FiltersSettingsPane()
         case .scripts: ScriptsSettingsPane()
         case .exclusions: ExclusionsSettingsPane()
@@ -470,11 +474,6 @@ private struct SearchSettingsPane: View {
                 proScopeRow(.root, label: "Root", detail: "`/usr`, `/bin`, `/sbin`, `/opt`, `/etc`, `/Library`, `/var`, `/private`")
             }
 
-            Section("External Volumes") {
-                VolumeListView().disabled(!proactive)
-                MissingPathRow()
-            }
-
             Section("Results") {
                 SettingRow(
                     title: "Max results",
@@ -618,6 +617,26 @@ private struct SearchSettingsPane: View {
     }
 }
 
+// MARK: - VolumesSettingsPane
+
+private struct VolumesSettingsPane: View {
+    var body: some View {
+        Form {
+            Section {
+                VolumeListView().disabled(!proactive)
+            } header: {
+                Text("External Volumes")
+            } footer: {
+                Text("Index external or network drives so their files show up in search. Each volume can have its own `.fsignore`, editable under Exclusions.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+    }
+}
+
 // MARK: - FiltersSettingsPane
 
 private struct FiltersSettingsPane: View {
@@ -731,7 +750,7 @@ private struct ExclusionsSettingsPane: View {
             VStack(alignment: .leading, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Global Blocklist").font(.system(size: 12, weight: .semibold))
-                    Text("Applied on all scopes (including root and live index) before the home ignore file, using fast byte matching. One pattern per line. Lines starting with `#` are ignored.")
+                    Text("Applied on all scopes (including root and live index) before the home ignore file, using fast byte matching. One pattern per line. Lines starting with `#` are ignored. Prefix a line with `!` to make an exception that indexes those paths even when a block rule matches a parent (e.g. block `.app/Contents/` but add `!.app/Contents/MacOS/` to keep app binaries searchable).")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -749,7 +768,7 @@ private struct ExclusionsSettingsPane: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Contains matching").font(.system(size: 11, weight: .semibold))
-                    Text("Blocks paths containing any of these strings anywhere.").font(.system(size: 10)).foregroundStyle(.secondary)
+                    Text("Blocks paths containing any of these strings anywhere. Prefix with `!` for an exception.").font(.system(size: 10)).foregroundStyle(.secondary)
                     TextEditor(text: $blockedContains)
                         .font(.system(size: 11, design: .monospaced))
                         .contentMargins(6)

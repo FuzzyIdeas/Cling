@@ -10,6 +10,7 @@ private let log = Logger(subsystem: clingSubsystem, category: "RightClickMenu")
 extension Notification.Name {
     static let clingRequestRename = Notification.Name("cling.requestRename")
     static let clingDidCreateFiles = Notification.Name("cling.didCreateFiles")
+    static let clingRequestExcludeSheet = Notification.Name("cling.requestExcludeSheet")
 }
 
 // MARK: - RightClickMenu
@@ -18,6 +19,10 @@ struct RightClickMenu: View {
     @Binding var selectedResults: Set<FilePath>
 
     var orderedResults: [FilePath]
+
+    /// Paths resolved from the context menu's own selection set. Authoritative for the right-clicked rows,
+    /// since `selectedResults` is synced a beat later and can briefly lag (or be empty) when the menu opens.
+    var contextPaths: [FilePath] = []
 
     var body: some View {
         Button("Open") { openSelection() }
@@ -87,8 +92,10 @@ struct RightClickMenu: View {
 
         Divider()
 
-        Button("Exclude from Index") {
-            FUZZY.excludeFromIndex(paths: selectedResults)
+        Button("Exclude from Index...") {
+            let paths = contextPaths.isEmpty ? Array(selectedResults) : contextPaths
+            guard !paths.isEmpty else { return }
+            NotificationCenter.default.post(name: .clingRequestExcludeSheet, object: paths)
         }
 
         if let source = selectedSourceIndex {

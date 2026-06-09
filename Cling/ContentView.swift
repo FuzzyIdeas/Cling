@@ -414,12 +414,16 @@ struct ContentView: View {
             )
             .raisedPanel()
             .contextMenu(forSelectionType: String.self) { ids in
-                RightClickMenu(selectedResults: $selectedResults, orderedResults: results)
-                    .onAppear {
-                        if !ids.isEmpty, !ids.isSubset(of: selectedResultIDs) {
-                            selectedResultIDs = ids
-                        }
+                RightClickMenu(
+                    selectedResults: $selectedResults,
+                    orderedResults: results,
+                    contextPaths: results.filter { ids.contains($0.string) }
+                )
+                .onAppear {
+                    if !ids.isEmpty, !ids.isSubset(of: selectedResultIDs) {
+                        selectedResultIDs = ids
                     }
+                }
             } primaryAction: { ids in
                 let paths = results.filter { ids.contains($0.string) }
                 RH.trackRun(Set(paths))
@@ -1070,6 +1074,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var resultsList: some View {
+        VStack(spacing: 0) {
         ZStack(alignment: .topTrailing) {
             Table(of: FilePath.self, selection: $selectedResultIDs, sortOrder: $sortOrder) {
                 iconColumn
@@ -1140,7 +1145,22 @@ struct ContentView: View {
             .padding(.top, 9)
         }
         .background(.background.opacity(0.3))
+
+            if !fuzzy.noQuery {
+                MissingPathResultsBar(query: fuzzy.query)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .clingRequestExcludeSheet)) { notif in
+            guard let paths = notif.object as? [FilePath], !paths.isEmpty else { return }
+            excludeRequest = ExcludeSheetRequest(paths: paths)
+        }
+        .sheet(item: $excludeRequest) { request in
+            ExcludeFromIndexSheet(paths: request.paths)
+                .frame(width: 600, height: 540)
+        }
     }
+
+    @State private var excludeRequest: ExcludeSheetRequest?
 
     @State private var liveChangeSortOrder = [KeyPathComparator(\FuzzyClient.IndexChange.date, order: .reverse)]
     @State private var liveChangesIndexedOnly = true

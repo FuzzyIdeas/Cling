@@ -232,6 +232,12 @@ class AppDelegate: LowtechProAppDelegate {
     override func applicationDidResignActive(_ notification: Notification) {
         let settingsVisible = settingsWindow?.isVisible ?? false
         log.debug("Resigned active: pinned=\(WM.pinned) keepOpen=\(Defaults[.keepWindowOpenWhenDefocused]) settingsVisible=\(settingsVisible)")
+        // Keep the window fully visible while a sheet is attached (e.g. "Reindex excluded path"), so clicking
+        // outside the app or dragging a file into the sheet doesn't dismiss the window and the sheet with it.
+        if mainWindow?.attachedSheet != nil {
+            log.debug("Skipping window hide: a sheet is attached to the main window")
+            return
+        }
         if !Defaults[.keepWindowOpenWhenDefocused], !settingsVisible {
             settingsWindow?.close()
         }
