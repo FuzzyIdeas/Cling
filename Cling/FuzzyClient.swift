@@ -1656,6 +1656,12 @@ class FuzzyClient {
         for (volume, lines) in plan.volumeFsignoreLines where !lines.isEmpty {
             appendIgnoreLines(lines, to: volume / ".fsignore", suppressWatcher: false)
         }
+        if !plan.scopeFsignoreLines.isEmpty {
+            ScopeIgnore.ensureDir()
+            for (scope, lines) in plan.scopeFsignoreLines where !lines.isEmpty {
+                appendIgnoreLines(lines, to: ScopeIgnore.file(for: scope), suppressWatcher: false)
+            }
+        }
 
         // 3. Reindex what's affected.
         if plan.fullReindex {

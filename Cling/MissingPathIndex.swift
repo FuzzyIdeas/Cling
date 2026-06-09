@@ -19,6 +19,7 @@ struct IndexInclusionPlan {
     var removeBlockedContains: [String] = []
     var addHomeFsignoreLines: [String] = []
     var volumeFsignoreLines: [FilePath: [String]] = [:]
+    var scopeFsignoreLines: [SearchScope: [String]] = [:]
     var reindexScopes: Set<SearchScope> = []
     var reindexVolumes: Set<FilePath> = []
     var fullReindex = false
@@ -26,7 +27,8 @@ struct IndexInclusionPlan {
     var isEmpty: Bool {
         addBlockedPrefixes.isEmpty && addBlockedContains.isEmpty &&
             removeBlockedPrefixes.isEmpty && removeBlockedContains.isEmpty &&
-            addHomeFsignoreLines.isEmpty && volumeFsignoreLines.allSatisfy { $0.value.isEmpty }
+            addHomeFsignoreLines.isEmpty && volumeFsignoreLines.allSatisfy { $0.value.isEmpty } &&
+            scopeFsignoreLines.allSatisfy { $0.value.isEmpty }
     }
 }
 
@@ -39,6 +41,7 @@ enum IgnoreSource: Equatable, Hashable {
     case blocklistContains
     case homeIgnore
     case volumeIgnore(root: String, name: String)
+    case scopeIgnore(SearchScope)
 
     var label: String {
         switch self {
@@ -46,15 +49,25 @@ enum IgnoreSource: Equatable, Hashable {
         case .blocklistContains: "Global blocklist (contains)"
         case .homeIgnore: "Home ignore file (~/.fsignore)"
         case let .volumeIgnore(_, name): "Volume ignore file (\(name)/.fsignore)"
+        case let .scopeIgnore(scope): "\(scope.label) ignore file"
         }
     }
 
     var isBlocklist: Bool {
         switch self {
         case .blocklistPrefix, .blocklistContains: true
-        case .homeIgnore, .volumeIgnore: false
+        case .homeIgnore, .volumeIgnore, .scopeIgnore: false
         }
     }
+}
+
+// MARK: - IgnoreDest
+
+/// Where re-include (`!`) lines should be written for an inclusion option.
+enum IgnoreDest: Equatable {
+    case home
+    case volume(FilePath)
+    case scope(SearchScope)
 }
 
 // MARK: - IgnoreHit
@@ -77,6 +90,7 @@ struct RootContext: Equatable {
     enum Kind: Equatable {
         case home
         case volume(FilePath)
+        case scope(SearchScope)
     }
 
     let kind: Kind
@@ -84,6 +98,15 @@ struct RootContext: Equatable {
     let rel: String
 
     var isHome: Bool { if case .home = kind { return true }; return false }
+
+    /// Where `!` re-include lines for this context's ignore file should be written.
+    var ignoreDest: IgnoreDest {
+        switch kind {
+        case .home: .home
+        case let .volume(v): .volume(v)
+        case let .scope(s): .scope(s)
+        }
+    }
 }
 
 // MARK: - PathStatus
@@ -126,7 +149,7 @@ struct InclusionOption: Identifiable, Equatable {
     var removeBlocklist: [IgnoreHit] = []
     var reExcludeFsignore: [String] = []
     var reIncludeFsignore: [String] = []
-    var fsignoreRoot: FilePath? // nil = home, otherwise the volume root
+    var ignoreDest: IgnoreDest = .home // which ignore file the fsignore lines go to
 
     /// Lines, in apply order: re-exclusions first, then `!` re-inclusions (so negation wins as the last match).
     var fsignoreLines: [String] { reExcludeFsignore + reIncludeFsignore }
@@ -137,7 +160,7 @@ struct InclusionOption: Identifiable, Equatable {
     var signature: String {
         let add = (addBlocklistPrefixes + addBlocklistContains).sorted().joined(separator: ",")
         let rm = removeBlocklist.map(\.rule).sorted().joined(separator: ",")
-        return "\(add)|\(rm)|\(fsignoreRoot?.string ?? "home")|\(fsignoreLines.joined(separator: ","))"
+        return "\(add)|\(rm)|\(ignoreDest)|\(fsignoreLines.joined(separator: ","))"
     }
 }
 
@@ -168,10 +191,12 @@ struct PathDiagnosis {
             default: break
             }
         }
-        if let root = option.fsignoreRoot {
-            plan.volumeFsignoreLines[root, default: []].append(contentsOf: option.fsignoreLines)
-        } else {
-            plan.addHomeFsignoreLines.append(contentsOf: option.fsignoreLines)
+        if !option.fsignoreLines.isEmpty {
+            switch option.ignoreDest {
+            case .home: plan.addHomeFsignoreLines.append(contentsOf: option.fsignoreLines)
+            case let .volume(v): plan.volumeFsignoreLines[v, default: []].append(contentsOf: option.fsignoreLines)
+            case let .scope(s): plan.scopeFsignoreLines[s, default: []].append(contentsOf: option.fsignoreLines)
+            }
         }
 
         switch reindex {
@@ -192,6 +217,7 @@ struct IndexSnapshot {
     let blockedContains: [String]
     let homeFsignore: String?
     let volumes: [(root: String, name: String, fsignore: String?)]
+    let scopeIgnores: [SearchScope: String] // rooted scope -> ignore file content
 
     @MainActor
     static func capture() -> IndexSnapshot {
@@ -203,7 +229,11 @@ struct IndexSnapshot {
             let content = try? String(contentsOf: (vol / ".fsignore").url, encoding: .utf8)
             return (root: vol.string, name: vol.name.string, fsignore: content)
         }
-        return IndexSnapshot(home: homeStr, blockedPrefixes: prefixes, blockedContains: contains, homeFsignore: homeIgnore, volumes: vols)
+        var scopeIgnores: [SearchScope: String] = [:]
+        for scope in ScopeIgnore.rootedScopes {
+            scopeIgnores[scope] = ScopeIgnore.content(for: scope)
+        }
+        return IndexSnapshot(home: homeStr, blockedPrefixes: prefixes, blockedContains: contains, homeFsignore: homeIgnore, volumes: vols, scopeIgnores: scopeIgnores)
     }
 
     static func nonCommentLines(_ s: String) -> [String] {
@@ -268,9 +298,12 @@ enum IndexInclusionAnalyzer {
                 let entry = snapshot.volumes.first { $0.root == v.string }
                 content = entry?.fsignore
                 source = .volumeIgnore(root: v.string, name: v.name.string)
+            case let .scope(scope):
+                content = snapshot.scopeIgnores[scope]
+                source = .scopeIgnore(scope)
             }
-            if let content, !content.isEmpty, isIgnoredAtRoot(rel: root.rel, content: content) {
-                for line in fsignoreRuleLines(content) where isIgnoredAtRoot(rel: root.rel, content: line) {
+            if let content, !content.isEmpty, isIgnoredRooted(path: path, root: root.rootPath, content: content) {
+                for line in fsignoreRuleLines(content) where isIgnoredRooted(path: path, root: root.rootPath, content: line) {
                     fsignoreHits.append(IgnoreHit(source: source, rule: line))
                 }
                 // If the net result is ignored but no single positive rule matched alone, surface a generic hit.
@@ -331,6 +364,9 @@ enum IndexInclusionAnalyzer {
                 return RootContext(kind: .volume(FilePath(vol.root)), rootPath: vol.root, rel: relativize(path, to: vol.root))
             }
         }
+        if let (scope, scopeRoot) = ScopeIgnore.scopeAndRoot(forPath: path) {
+            return RootContext(kind: .scope(scope), rootPath: scopeRoot, rel: relativize(path, to: scopeRoot))
+        }
         return nil
     }
 
@@ -372,22 +408,19 @@ enum IndexInclusionAnalyzer {
             .filter { !$0.isEmpty && !$0.hasPrefix("#") && !$0.hasPrefix("!") }
     }
 
-    /// Write `content` to a throwaway ignore file whose root is a temp dir, then check `rel` under it.
-    /// The crate requires the path to live under the ignore file's root and anchors patterns to it, so we
-    /// reconstruct `<tempRoot>/<rel>` to preserve gitignore semantics without touching HOME or the volume.
-    nonisolated static func isIgnoredAtRoot(rel: String, content: String) -> Bool {
-        let tmpRoot = NSTemporaryDirectory() + "cling-ignore-probe-" + UUID().uuidString
-        let ignoreFile = tmpRoot + "/.fsignore"
-        defer { try? FileManager.default.removeItem(atPath: tmpRoot) }
+    /// Whether the real `path` is ignored by `content` anchored at `root`, using the rooted matcher. Writing
+    /// `content` to a throwaway file (anywhere) keeps the real ignore file untouched; matching the real path
+    /// means `is_dir` is accurate, so directory-only rules (`foo/`) correctly match a directory the user types.
+    nonisolated static func isIgnoredRooted(path: String, root: String, content: String) -> Bool {
+        let tmp = NSTemporaryDirectory() + "cling-ignore-probe-" + UUID().uuidString + ".fsignore"
+        defer { try? FileManager.default.removeItem(atPath: tmp) }
         do {
-            try FileManager.default.createDirectory(atPath: tmpRoot, withIntermediateDirectories: true)
-            try content.write(toFile: ignoreFile, atomically: true, encoding: .utf8)
+            try content.write(toFile: tmp, atomically: true, encoding: .utf8)
         } catch {
             log.error("ignore probe write failed: \(error.localizedDescription, privacy: .public)")
             return false
         }
-        let probePath = rel.isEmpty ? tmpRoot : tmpRoot + "/" + rel
-        return probePath.isIgnored(in: ignoreFile)
+        return path.isIgnored(in: tmp, root: root)
     }
 
     // MARK: - Re-inclusion option generation
@@ -397,7 +430,7 @@ enum IndexInclusionAnalyzer {
         blocklistHits: [IgnoreHit], fsignoreHits: [IgnoreHit]
     ) -> [InclusionOption] {
         let rel = root?.rel
-        let volRoot: FilePath? = { if case let .volume(v) = root?.kind { return v }; return nil }()
+        let dest: IgnoreDest = root?.ignoreDest ?? .home
         let hasFs = !fsignoreHits.isEmpty && rel != nil
 
         // When the path is also excluded by an ignore file, the same option must add an fsignore `!` for the
@@ -408,7 +441,7 @@ enum IndexInclusionAnalyzer {
             guard hasFs else { return }
             option.reExcludeFsignore = fsTarget.reExclude
             option.reIncludeFsignore = fsTarget.reInclude
-            option.fsignoreRoot = volRoot
+            option.ignoreDest = dest
         }
 
         var options: [InclusionOption] = []
@@ -461,7 +494,7 @@ enum IndexInclusionAnalyzer {
                 breadth: .exact,
                 reExcludeFsignore: target.reExclude,
                 reIncludeFsignore: target.reInclude,
-                fsignoreRoot: volRoot
+                ignoreDest: dest
             ))
             if let parentRel = parentRelative(rel) {
                 let parentName = (parentRel as NSString).lastPathComponent
@@ -473,7 +506,7 @@ enum IndexInclusionAnalyzer {
                         breadth: .pattern,
                         reExcludeFsignore: glob.reExclude,
                         reIncludeFsignore: glob.reInclude,
-                        fsignoreRoot: volRoot
+                        ignoreDest: dest
                     ))
                 }
                 options.append(InclusionOption(
@@ -481,7 +514,7 @@ enum IndexInclusionAnalyzer {
                     summary: "Indexes everything inside `\(parentName)`.",
                     breadth: .folder,
                     reIncludeFsignore: ["!\(parentRel)", "!\(parentRel)/**"],
-                    fsignoreRoot: volRoot
+                    ignoreDest: dest
                 ))
             }
         }
@@ -839,7 +872,11 @@ struct MissingPathSheet: View {
     }
 
     private func changeList(_ option: InclusionOption, diagnosis d: PathDiagnosis) -> some View {
-        let ignoreLabel = option.fsignoreRoot == nil ? "~/.fsignore" : "\(option.fsignoreRoot!.name.string)/.fsignore"
+        let ignoreLabel: String = switch option.ignoreDest {
+        case .home: "~/.fsignore"
+        case let .volume(v): "\(v.name.string)/.fsignore"
+        case let .scope(s): "\(s.label) ignore"
+        }
         return VStack(alignment: .leading, spacing: 3) {
             ForEach(Array((option.addBlocklistPrefixes + option.addBlocklistContains).enumerated()), id: \.offset) { _, line in
                 changeLine(sign: "+", color: .green, label: "Add to blocklist", value: line)
@@ -912,10 +949,10 @@ struct MissingPathSheet: View {
     }
 
     private func reindex(for d: PathDiagnosis) {
-        switch d.rootContext?.kind {
-        case .home: FUZZY.refresh(pauseSearch: false, scopes: [.home, .library])
+        switch d.reindex {
+        case let .scopes(scopes): FUZZY.refresh(pauseSearch: false, scopes: scopes)
         case let .volume(v): FUZZY.indexVolume(v)
-        case nil: FUZZY.refresh(pauseSearch: false)
+        case .full: FUZZY.refresh(pauseSearch: false)
         }
     }
 }
