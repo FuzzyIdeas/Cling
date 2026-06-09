@@ -14,6 +14,21 @@ let CLING_CLI_LINK = (HOME / ".local/bin/cling")
 class ShellIntegration {
     static let pathExport = "export PATH=\"$PATH:$HOME/.local/bin\""
 
+    /// Whether the `cling` symlink exists and points at this bundle's CLI binary.
+    /// Catches stale links (the app was moved or updated to a new path) and broken
+    /// links that `CLING_CLI_LINK.exists` would miss, so the UI offers a repairing
+    /// reinstall instead of claiming the CLI is already installed.
+    static var isInstalled: Bool {
+        guard let cliBin = CLING_CLI_BIN, cliBin.exists else { return false }
+        let fm = FileManager.default
+        let link = CLING_CLI_LINK.string
+        guard let attrs = try? fm.attributesOfItem(atPath: link),
+              (attrs[.type] as? FileAttributeType) == .typeSymbolicLink,
+              let dest = try? fm.destinationOfSymbolicLink(atPath: link)
+        else { return false }
+        return dest == cliBin.string
+    }
+
     static var needsPathSetup: Bool {
         let shellConfigs: [(file: FilePath, check: String)] = [
             (HOME / ".zshrc", ".local/bin"),

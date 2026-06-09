@@ -472,6 +472,7 @@ private struct SearchSettingsPane: View {
 
             Section("External Volumes") {
                 VolumeListView().disabled(!proactive)
+                MissingPathRow()
             }
 
             Section("Results") {
@@ -530,9 +531,9 @@ private struct SearchSettingsPane: View {
                     title: "Command Line Tool",
                     detail: "Installs `cling` to `~/.local/bin/` for searching from the terminal."
                 ) {
-                    Button(CLING_CLI_LINK.exists ? "Reinstall" : "Install") {
+                    Button(ShellIntegration.isInstalled ? "Reinstall" : "Install") {
                         cliInstallMessage = ShellIntegration.installCLI()
-                        cliInstallSuccess = CLING_CLI_LINK.exists
+                        cliInstallSuccess = ShellIntegration.isInstalled
                         if cliInstallSuccess, ShellIntegration.needsPathSetup {
                             showCLIPathAlert = true
                         } else {
@@ -542,7 +543,7 @@ private struct SearchSettingsPane: View {
                     .truncationMode(.middle)
                 }
 
-                if CLING_CLI_LINK.exists {
+                if ShellIntegration.isInstalled {
                     Text("Installed at \(CLING_CLI_LINK.shellString)")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.secondary)
