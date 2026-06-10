@@ -75,7 +75,7 @@ extension URL {
         do {
             try (self as NSURL).getResourceValue(&type, forKey: .contentTypeKey)
         } catch {
-            log.error("\(error.localizedDescription, privacy: .public)")
+            log.error("\(error.localizedDescription)")
         }
         return type as? UTType
     }

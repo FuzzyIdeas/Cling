@@ -103,7 +103,7 @@ final class SMBMetadataCache {
             try data.write(to: file.url)
             slog.info("SMBMetadataCache: saved \(snapshot.count) entries to \(file.string)")
         } catch {
-            slog.error("SMBMetadataCache: save failed: \(error.localizedDescription, privacy: .public)")
+            slog.error("SMBMetadataCache: save failed: \(error.localizedDescription)")
         }
     }
 
@@ -115,7 +115,7 @@ final class SMBMetadataCache {
             lock.withLock { entries = loaded }
             slog.info("SMBMetadataCache: loaded \(loaded.count) entries from \(file.string)")
         } catch {
-            slog.error("SMBMetadataCache: load failed: \(error.localizedDescription, privacy: .public)")
+            slog.error("SMBMetadataCache: load failed: \(error.localizedDescription)")
         }
     }
 

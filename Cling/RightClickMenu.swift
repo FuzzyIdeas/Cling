@@ -224,7 +224,7 @@ struct RightClickMenu: View {
                 try FileManager.default.copyItem(at: source.url, to: target.url)
                 created.append(target)
             } catch {
-                log.error("Failed to duplicate \(source.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                log.error("Failed to duplicate \(source.shellString): \(error.localizedDescription)")
             }
         }
         if !created.isEmpty {
@@ -287,13 +287,13 @@ struct RightClickMenu: View {
 
             await MainActor.run {
                 if let runError {
-                    log.error("Failed to compress: \(runError.localizedDescription, privacy: .public)")
+                    log.error("Failed to compress: \(runError.localizedDescription)")
                     FUZZY.logActivity("Compression failed", operationKey: opKey)
                     return
                 }
                 if status != 0 {
                     let detail = String(data: stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    log.error("7zz exited with status \(status)\(detail.isEmpty ? "" : ": \(detail)", privacy: .public)")
+                    log.error("7zz exited with status \(status)\(detail.isEmpty ? "" : ": \(detail)")")
                     FUZZY.logActivity("Compression failed (exit \(status))", operationKey: opKey)
                     return
                 }
@@ -308,12 +308,12 @@ struct RightClickMenu: View {
     private func moveToTrash() {
         var removed = Set<FilePath>()
         for path in orderedSelection {
-            log.info("Trashing \(path.shellString, privacy: .public)")
+            log.info("Trashing \(path.shellString)")
             do {
                 try FileManager.default.trashItem(at: path.url, resultingItemURL: nil)
                 removed.insert(path)
             } catch {
-                log.error("Error trashing \(path.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                log.error("Error trashing \(path.shellString): \(error.localizedDescription)")
             }
         }
         selectedResults.subtract(removed)
@@ -351,7 +351,7 @@ struct RightClickMenu: View {
                     try exportPlaintext(to: url)
                 }
             } catch {
-                log.error("Failed to write to \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                log.error("Failed to write to \(url.path): \(error.localizedDescription)")
             }
         }
     }
@@ -414,7 +414,7 @@ struct RightClickMenu: View {
                     }
                 } catch {
                     let operationName = operation == .copy ? "copy" : "move"
-                    log.error("Failed to \(operationName, privacy: .public) \(file.shellString, privacy: .public) to \(dir.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    log.error("Failed to \(operationName) \(file.shellString) to \(dir.shellString): \(error.localizedDescription)")
                 }
             }
         }

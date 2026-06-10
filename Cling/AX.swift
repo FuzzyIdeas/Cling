@@ -88,7 +88,7 @@ class AppManager {
         }
         guard let app = lastFrontmostApp, let target = axDropTarget(for: app) else {
             let appName = lastFrontmostApp?.name ?? "nil"
-            log.warning("[DropFocused] no resolvable AX target for \(appName, privacy: .public)")
+            log.warning("[DropFocused] no resolvable AX target for \(appName)")
             return
         }
         let urls = paths.map(\.url)

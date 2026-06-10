@@ -67,11 +67,11 @@ class ShellIntegration {
 
             // Create symlink
             try fm.createSymbolicLink(atPath: linkPath.string, withDestinationPath: cliBin.string)
-            log.info("Created symlink \(linkPath.string, privacy: .public) -> \(cliBin.string, privacy: .public)")
+            log.info("Created symlink \(linkPath.string) -> \(cliBin.string)")
 
             return "Installed `cling` CLI to \(linkPath.shellString)"
         } catch {
-            log.error("Failed to install CLI: \(error.localizedDescription, privacy: .public)")
+            log.error("Failed to install CLI: \(error.localizedDescription)")
             return "Failed to install CLI: \(error.localizedDescription)"
         }
     }
@@ -96,7 +96,7 @@ class ShellIntegration {
                 }
             }
         } catch {
-            log.error("Failed to update shell configs: \(error.localizedDescription, privacy: .public)")
+            log.error("Failed to update shell configs: \(error.localizedDescription)")
         }
     }
 

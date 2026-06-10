@@ -1423,7 +1423,7 @@ class FilePathBackgroundTasks {
                 attrs = try FileManager.default.attributesOfItem(atPath: path.string)
                 icon = NSWorkspace.shared.icon(forFile: path.string)
             } catch {
-                log.error("Error fetching file metadata for \(path.string, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                log.error("Error fetching file metadata for \(path.string): \(error.localizedDescription)")
                 mainActor { self.attrFetchers[path] = nil }
                 return
             }

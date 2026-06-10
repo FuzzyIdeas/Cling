@@ -124,7 +124,7 @@ struct ScriptPickerView: View {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: newScript.string)
             newScript.edit()
         } catch {
-            log.error("Failed to create script: \(error.localizedDescription, privacy: .public)")
+            log.error("Failed to create script: \(error.localizedDescription)")
         }
 
         scriptName = ""
@@ -660,7 +660,7 @@ struct ScriptEditorSheet: View {
             try "\(runner.shebang)\n\(runner.template)".write(to: newScript.url, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: newScript.string)
         } catch {
-            log.error("Failed to create script: \(error.localizedDescription, privacy: .public)")
+            log.error("Failed to create script: \(error.localizedDescription)")
         }
 
         scriptName = ""
@@ -794,7 +794,7 @@ private struct ScriptSourceEditor: View {
             try text.write(to: url, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         } catch {
-            log.error("Failed to save script \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            log.error("Failed to save script \(url.lastPathComponent): \(error.localizedDescription)")
         }
     }
 
@@ -810,7 +810,7 @@ private struct ScriptSourceEditor: View {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: newURL.path)
             try? FileManager.default.removeItem(at: script)
         } catch {
-            log.error("Failed to rename script \(script.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            log.error("Failed to rename script \(script.lastPathComponent): \(error.localizedDescription)")
             return
         }
         onRename(newURL)

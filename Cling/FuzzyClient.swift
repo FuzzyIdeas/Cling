@@ -772,7 +772,7 @@ class FuzzyClient {
     func startIndex() {
         if !fsignore.exists {
             do { try FS_IGNORE.copy(to: fsignore) }
-            catch { log.error("Failed to copy \(FS_IGNORE.string, privacy: .public) to \(fsignoreString, privacy: .public): \(error.localizedDescription, privacy: .public)") }
+            catch { log.error("Failed to copy \(FS_IGNORE.string) to \(fsignoreString): \(error.localizedDescription)") }
         }
         ScopeIgnore.ensureSeeded()
 
@@ -836,7 +836,7 @@ class FuzzyClient {
 
                 bust_gitignore_cache()
 
-                log.info("Ignore file changed: \(path, privacy: .public), scheduling reindex in 60s")
+                log.info("Ignore file changed: \(path), scheduling reindex in 60s")
                 fsignoreReindexTask?.cancel()
                 fsignoreReindexTask = DispatchWorkItem { [self] in
                     mainActor {
@@ -1085,7 +1085,7 @@ class FuzzyClient {
                     try? FileManager.default.removeItem(at: file.url)
                     scopeEngine.saveBinaryIndex(to: file.url)
                     let added = scopeEngine.count
-                    log.debug("Indexed \(scope.label, privacy: .public): \(added) entries -> \(file.string, privacy: .public)")
+                    log.debug("Indexed \(scope.label): \(added) entries -> \(file.string)")
 
                     let reloadedEngine = SearchEngine()
                     _ = reloadedEngine.loadBinaryIndex(from: file.url)
@@ -1132,7 +1132,7 @@ class FuzzyClient {
             return (volume.string + "/", vfsignore.string)
         }
 
-        log.debug("cleanRecentsEngine: \(entries.count) entries, ignoreFile=\(ignoreFile ?? "nil", privacy: .public)")
+        log.debug("cleanRecentsEngine: \(entries.count) entries, ignoreFile=\(ignoreFile ?? "nil")")
 
         var toRemove: [String] = []
         var i = 0
@@ -1223,7 +1223,7 @@ class FuzzyClient {
                 }
             }
         } catch {
-            log.error("Failed to watch files: \(error.localizedDescription, privacy: .public)")
+            log.error("Failed to watch files: \(error.localizedDescription)")
         }
     }
 
@@ -1286,7 +1286,7 @@ class FuzzyClient {
             volumeFilter.map { "volume=\($0.name.string)" },
         ].compactMap { $0 }.joined(separator: " ")
         let engineCount = activeEngines.count
-        log.debug("performSearch: q=\"\(query, privacy: .public)\" engines=\(engineCount) \(filterDesc, privacy: .public)")
+        log.debug("performSearch: q=\"\(query)\" engines=\(engineCount) \(filterDesc)")
         let maxResults = proactive ? Defaults[.maxResultsCount] : min(Defaults[.maxResultsCount], 500)
         let folderPrefixes = folderFilter?.folders.map(\.string)
         let volumePrefix = volumeFilter?.string
@@ -1538,7 +1538,7 @@ class FuzzyClient {
                     }
                     fileHandle.closeFile()
                 } catch {
-                    log.error("Failed to write to fsignore: \(error.localizedDescription, privacy: .public)")
+                    log.error("Failed to write to fsignore: \(error.localizedDescription)")
                 }
 
                 bust_gitignore_cache()
@@ -1584,7 +1584,7 @@ class FuzzyClient {
                         }
                         fileHandle.closeFile()
                     } catch {
-                        log.error("Failed to write to \(volumeFsignore.string, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                        log.error("Failed to write to \(volumeFsignore.string): \(error.localizedDescription)")
                     }
                 }
             }
@@ -1718,7 +1718,7 @@ class FuzzyClient {
             }
             handle.closeFile()
         } catch {
-            log.error("Failed to append to \(file.string, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            log.error("Failed to append to \(file.string): \(error.localizedDescription)")
         }
 
         bust_gitignore_cache()

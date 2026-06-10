@@ -64,7 +64,7 @@ private func indexVolumeEngine(
 
     // Local external drives: use fts (fastest, uses getattrlistbulk internally)
     if isLocal {
-        log.info("Using fts walk for local volume \(volumePath, privacy: .public)")
+        log.info("Using fts walk for local volume \(volumePath)")
         let added = engine.walkDirectory(
             volumePath,
             ignoreFile: ignoreChecker,
@@ -89,10 +89,10 @@ private func indexVolumeEngine(
                 progress: progress,
                 cancelled: cancelled
             )
-            log.info("SMB walk succeeded for \(volumePath, privacy: .public): \(added) entries")
+            log.info("SMB walk succeeded for \(volumePath): \(added) entries")
             return (added, metadataCache)
         } catch {
-            log.warning("SMB walk failed for \(volumePath, privacy: .public), falling back to FileManager: \(error.localizedDescription, privacy: .public)")
+            log.warning("SMB walk failed for \(volumePath), falling back to FileManager: \(error.localizedDescription)")
             engine.clear()
         }
     }
@@ -214,13 +214,13 @@ extension FuzzyClient {
             let file = volumeIndexFile(volume)
             if wasCancelled {
                 try? FileManager.default.removeItem(at: checkpointFile)
-                log.info("Cancelled volume indexing for \(volume.string, privacy: .public)")
+                log.info("Cancelled volume indexing for \(volume.string)")
             } else {
                 try? FileManager.default.removeItem(at: file.url)
                 if result.added > 0 {
                     volumeEngine.saveBinaryIndex(to: file.url)
                     result.metadataCache?.save(to: smbMetadataCacheFile(volume))
-                    log.debug("Indexed volume \(volumeName, privacy: .public): \(result.added) entries -> \(file.string, privacy: .public)")
+                    log.debug("Indexed volume \(volumeName): \(result.added) entries -> \(file.string)")
                 }
             }
 

@@ -88,7 +88,7 @@ class ScriptManager {
                 mainActor {
                     let scriptName = self.lastScript?.lastPathComponent ?? "unknown"
                     let terminationStatus = process.terminationStatus
-                    log.trace("Script \(scriptName, privacy: .public) terminated with status \(terminationStatus)")
+                    log.trace("Script \(scriptName) terminated with status \(terminationStatus)")
                     self.process = nil
                     self.clearLastProcessTask = mainAsyncAfter(30) {
                         self.clearLastProcess()
@@ -154,7 +154,7 @@ class ScriptManager {
 
     func run(script: URL, args: [String]) {
         guard script.fileExists else {
-            log.error("Script not found: \(script.path, privacy: .public)")
+            log.error("Script not found: \(script.path)")
             return
         }
         lastScript = script
@@ -237,7 +237,7 @@ class ScriptManager {
         } catch {
             scriptURLs = []
             scriptShortcuts = [:]
-            log.error("Failed to fetch scripts: \(error.localizedDescription, privacy: .public)")
+            log.error("Failed to fetch scripts: \(error.localizedDescription)")
         }
     }
 
@@ -250,15 +250,15 @@ class ScriptManager {
                               .itemCreated, .itemRemoved, .itemRenamed, .itemModified, .itemChangeOwner,
                           ])
                     else {
-                        log.trace("Ignoring script event \(String(describing: event), privacy: .public)")
+                        log.trace("Ignoring script event \(String(describing: event))")
                         return
                     }
-                    log.trace("Handling script event \(String(describing: event), privacy: .public)")
+                    log.trace("Handling script event \(String(describing: event))")
                     fetchScripts()
                 }
             }
         } catch {
-            log.error("Failed to watch scripts folder \(scriptsFolder.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            log.error("Failed to watch scripts folder \(scriptsFolder.shellString): \(error.localizedDescription)")
         }
     }
 
@@ -292,7 +292,7 @@ class ScriptManager {
             try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         } catch {
-            log.error("Failed to persist hotkey for \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            log.error("Failed to persist hotkey for \(url.lastPathComponent): \(error.localizedDescription)")
         }
     }
 

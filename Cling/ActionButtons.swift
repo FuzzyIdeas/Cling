@@ -322,12 +322,12 @@ struct ActionButtons: View {
     private static func performTrash(selection: Binding<Set<FilePath>>) {
         var removed = Set<FilePath>()
         for path in selection.wrappedValue {
-            log.info("Trashing \(path.shellString, privacy: .public)")
+            log.info("Trashing \(path.shellString)")
             do {
                 try FileManager.default.trashItem(at: path.url, resultingItemURL: nil)
                 removed.insert(path)
             } catch {
-                log.error("Error trashing \(path.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                log.error("Error trashing \(path.shellString): \(error.localizedDescription)")
             }
         }
         selection.wrappedValue.subtract(removed)
@@ -337,12 +337,12 @@ struct ActionButtons: View {
     private static func performDelete(selection: Binding<Set<FilePath>>) {
         var removed = Set<FilePath>()
         for path in selection.wrappedValue {
-            log.info("Permanently deleting \(path.shellString, privacy: .public)")
+            log.info("Permanently deleting \(path.shellString)")
             do {
                 try FileManager.default.removeItem(at: path.url)
                 removed.insert(path)
             } catch {
-                log.error("Error deleting \(path.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                log.error("Error deleting \(path.shellString): \(error.localizedDescription)")
             }
         }
         selection.wrappedValue.subtract(removed)
@@ -503,12 +503,12 @@ struct ActionButtons: View {
     private func permanentlyDelete() {
         var removed = Set<FilePath>()
         for path in selectedResults {
-            log.info("Permanently deleting \(path.shellString, privacy: .public)")
+            log.info("Permanently deleting \(path.shellString)")
             do {
                 try FileManager.default.removeItem(at: path.url)
                 removed.insert(path)
             } catch {
-                log.error("Error deleting \(path.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                log.error("Error deleting \(path.shellString): \(error.localizedDescription)")
             }
         }
 
@@ -646,12 +646,12 @@ struct ActionButtons: View {
     private func moveToTrash() {
         var removed = Set<FilePath>()
         for path in selectedResults {
-            log.info("Trashing \(path.shellString, privacy: .public)")
+            log.info("Trashing \(path.shellString)")
             do {
                 try FileManager.default.trashItem(at: path.url, resultingItemURL: nil)
                 removed.insert(path)
             } catch {
-                log.error("Error trashing \(path.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                log.error("Error trashing \(path.shellString): \(error.localizedDescription)")
             }
         }
 
@@ -688,7 +688,7 @@ struct ActionButtons: View {
             selectedResults = selectedResults.map { renamed[$0] ?? $0 }.set
             selectedResultIDs = Set(selectedResults.map(\.string))
         } catch {
-            log.error("Error renaming files: \(error.localizedDescription, privacy: .public)")
+            log.error("Error renaming files: \(error.localizedDescription)")
         }
         self.renameSubmission = nil
     }
@@ -804,7 +804,7 @@ struct FileOperationSheet: View {
                     }
                     onComplete(Set(files))
                 } catch {
-                    log.error("Failed to \(operation.rawValue.lowercased(), privacy: .public) \(files[0].shellString, privacy: .public) to \(dest.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    log.error("Failed to \(operation.rawValue.lowercased()) \(files[0].shellString) to \(dest.shellString): \(error.localizedDescription)")
                 }
             } else {
                 // Destination is a file path, ensure parent directory exists
@@ -814,7 +814,7 @@ struct FileOperationSheet: View {
                     do {
                         try FileManager.default.createDirectory(atPath: parentPath, withIntermediateDirectories: true)
                     } catch {
-                        log.error("Failed to create directory \(parentPath, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                        log.error("Failed to create directory \(parentPath): \(error.localizedDescription)")
                         return
                     }
                 }
@@ -827,7 +827,7 @@ struct FileOperationSheet: View {
                     }
                     onComplete(Set(files))
                 } catch {
-                    log.error("Failed to \(operation.rawValue.lowercased(), privacy: .public) \(files[0].shellString, privacy: .public) to \(dest.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    log.error("Failed to \(operation.rawValue.lowercased()) \(files[0].shellString) to \(dest.shellString): \(error.localizedDescription)")
                 }
             }
         } else {
@@ -837,7 +837,7 @@ struct FileOperationSheet: View {
                 do {
                     try FileManager.default.createDirectory(atPath: destPath, withIntermediateDirectories: true)
                 } catch {
-                    log.error("Failed to create directory \(destPath, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    log.error("Failed to create directory \(destPath): \(error.localizedDescription)")
                     return
                 }
             }
@@ -852,7 +852,7 @@ struct FileOperationSheet: View {
                     }
                     processed.insert(file)
                 } catch {
-                    log.error("Failed to \(operation.rawValue.lowercased(), privacy: .public) \(file.shellString, privacy: .public) to \(dest.shellString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    log.error("Failed to \(operation.rawValue.lowercased()) \(file.shellString) to \(dest.shellString): \(error.localizedDescription)")
                 }
             }
             onComplete(processed)

@@ -285,12 +285,12 @@ class AppDelegate: LowtechProAppDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        log.debug("Open URLs: \(String(describing: urls), privacy: .public)")
+        log.debug("Open URLs: \(String(describing: urls))")
         handleURLs(application, urls)
     }
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
-        log.debug("Open files: \(String(describing: filenames), privacy: .public)")
+        log.debug("Open files: \(String(describing: filenames))")
         handleURLs(sender, filenames.compactMap(\.url))
     }
 

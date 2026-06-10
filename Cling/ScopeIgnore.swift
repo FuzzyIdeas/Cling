@@ -54,7 +54,7 @@ enum ScopeIgnore {
             let existing = (try? String(contentsOfFile: f.string, encoding: .utf8)) ?? ""
             guard existing.allSatisfy(\.isWhitespace), let template = bundledTemplate(for: scope) else { continue }
             do { try template.write(to: f.url, atomically: true, encoding: .utf8) }
-            catch { log.error("Failed to seed \(scope.rawValue) ignore: \(error.localizedDescription, privacy: .public)") }
+            catch { log.error("Failed to seed \(scope.rawValue) ignore: \(error.localizedDescription)") }
         }
     }
 

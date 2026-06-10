@@ -417,7 +417,7 @@ enum IndexInclusionAnalyzer {
         do {
             try content.write(toFile: tmp, atomically: true, encoding: .utf8)
         } catch {
-            log.error("ignore probe write failed: \(error.localizedDescription, privacy: .public)")
+            log.error("ignore probe write failed: \(error.localizedDescription)")
             return false
         }
         return path.isIgnored(in: tmp, root: root)

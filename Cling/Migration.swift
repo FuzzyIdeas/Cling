@@ -35,7 +35,7 @@ enum Migration {
                 try FS_IGNORE.copy(to: fsignore, force: true)
                 log.info("Migration v1: updated fsignore")
             } catch {
-                log.error("Migration v1: failed to update fsignore: \(error.localizedDescription, privacy: .public)")
+                log.error("Migration v1: failed to update fsignore: \(error.localizedDescription)")
             }
         }
 
@@ -43,7 +43,7 @@ enum Migration {
             let path = scriptsFolder / name
             if path.exists {
                 try? FileManager.default.removeItem(atPath: path.string)
-                log.info("Migration v1: deleted old script \(name, privacy: .public)")
+                log.info("Migration v1: deleted old script \(name)")
             }
         }
 
@@ -66,7 +66,7 @@ enum Migration {
                 log.info("Migration v2: patched Spotify ignore pattern in fsignore")
             }
         } catch {
-            log.error("Migration v2: failed to patch fsignore: \(error.localizedDescription, privacy: .public)")
+            log.error("Migration v2: failed to patch fsignore: \(error.localizedDescription)")
         }
     }
 
@@ -136,7 +136,7 @@ enum Migration {
                     try updated.write(toFile: fsignore.string, atomically: true, encoding: .utf8)
                     log.info("Migration v3: appended new default ignore rules to fsignore")
                 } catch {
-                    log.error("Migration v3: failed to update fsignore: \(error.localizedDescription, privacy: .public)")
+                    log.error("Migration v3: failed to update fsignore: \(error.localizedDescription)")
                 }
             }
         }
