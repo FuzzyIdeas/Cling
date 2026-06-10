@@ -775,6 +775,11 @@ private struct ExclusionsSettingsPane: View {
                     .controlSize(.small)
                     .disabled(fuzzy.backgroundIndexing)
                     .help("Save the ignore file and reindex Home and Library scopes")
+                    Button("Reset to Default") {
+                        fsignoreContent = (try? String(contentsOf: FS_IGNORE.url, encoding: .utf8)) ?? ""
+                    }
+                    .controlSize(.small)
+                    .help("Replace with Cling's built-in default ignore rules")
                     Spacer()
                     Button("Open in external editor") {
                         NSWorkspace.shared.open([fsignore.url], withApplicationAt: editorApp.fileURL ?? "/Applications/TextEdit.app".fileURL!, configuration: .init(), completionHandler: { _, _ in })
@@ -798,7 +803,13 @@ private struct ExclusionsSettingsPane: View {
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Prefix matching").font(.system(size: 11, weight: .semibold))
+                    HStack {
+                        Text("Prefix matching").font(.system(size: 11, weight: .semibold))
+                        Spacer()
+                        Button("Reset to Default") { Defaults.reset(.blockedPrefixes) }
+                            .controlSize(.small)
+                            .help("Restore the built-in prefix blocklist")
+                    }
                     Text("Blocks paths that start with any of these strings.").font(.system(size: 10)).foregroundStyle(.secondary)
                     TextEditor(text: $blockedPrefixes)
                         .font(.system(size: 11, design: .monospaced))
@@ -809,7 +820,13 @@ private struct ExclusionsSettingsPane: View {
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Contains matching").font(.system(size: 11, weight: .semibold))
+                    HStack {
+                        Text("Contains matching").font(.system(size: 11, weight: .semibold))
+                        Spacer()
+                        Button("Reset to Default") { Defaults.reset(.blockedContains) }
+                            .controlSize(.small)
+                            .help("Restore the built-in contains blocklist")
+                    }
                     Text("Blocks paths containing any of these strings anywhere. Prefix with `!` for an exception.").font(.system(size: 10)).foregroundStyle(.secondary)
                     TextEditor(text: $blockedContains)
                         .font(.system(size: 11, design: .monospaced))
@@ -988,6 +1005,9 @@ struct VolumeIgnoreEditor: View {
                 .controlSize(.small)
                 .disabled(FUZZY.volumesIndexing.contains(volume))
                 .help("Save the ignore file and reindex \(volume.name.string)")
+                Button("Reset to Default") { content = "" }
+                    .controlSize(.small)
+                    .help("Clear this volume's ignore rules (no rules is the default)")
                 Spacer()
             }
         }
@@ -1042,6 +1062,11 @@ struct ScopeIgnoreEditor: View {
                 .controlSize(.small)
                 .disabled(fuzzy.backgroundIndexing)
                 .help("Save and reindex \(scope.label)")
+                Button("Reset to Default") {
+                    content = ScopeIgnore.bundledTemplate(for: scope) ?? ""
+                }
+                .controlSize(.small)
+                .help("Restore the built-in default rules for \(scope.label)")
                 Spacer()
             }
         }
