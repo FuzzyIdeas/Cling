@@ -125,6 +125,24 @@ enum StructuralPatterns {
             ))
         }
 
+        // C' — hidden (dot) directories: a hidden config/secrets/tooling folder is clutter the user usually
+        // wants gone wherever it appears, even when the files inside it have nothing in common. Offer to drop
+        // every directory with that name via the global blocklist, same as C. Pick the deepest dot-folder
+        // ancestor (the hidden folder the selection sits directly inside); skip "." / ".." and names C already
+        // covers so the two never emit a duplicate candidate.
+        if let di = comps.lastIndex(where: { c in
+            c.hasPrefix(".") && c != "." && c != ".." && !noiseDirs.contains(c)
+        }), di < comps.count - 1 || info.isDir {
+            let name = comps[di]
+            out.append(Candidate(
+                rules: [ExcludeRule(mechanism: .blocklist, line: "/\(name)/", blocklistPrefix: false)],
+                title: "All “\(name)” folders",
+                summary: "Skips every hidden `\(name)` directory anywhere. Fast global blocklist rule.",
+                breadth: .broad,
+                rank: 0
+            ))
+        }
+
         // Everything below needs glob support (an fsignore store).
         guard m.supportsGlobs else {
             mediaBlocklistFallback(comps, info: info, into: &out)
