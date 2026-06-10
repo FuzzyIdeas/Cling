@@ -659,23 +659,102 @@ private struct ExclusionsSettingsPane: View {
     @Default(.blockedPrefixes) private var blockedPrefixes
     @Default(.blockedContains) private var blockedContains
     @Default(.honorGitignore) private var honorGitignore
+    @Default(.editorApp) private var editorApp
     @State private var fuzzy = FUZZY
-    @State private var showHelp = false
     @State private var fsignoreContent: String = (try? String(contentsOf: fsignore.url, encoding: .utf8)) ?? ""
     @State private var fsignoreSaveTask: DispatchWorkItem?
-    @Default(.editorApp) private var editorApp
+    @State private var scopeContents: [String: String] = Dictionary(
+        uniqueKeysWithValues: ScopeIgnore.rootedScopes.map { ($0.rawValue, ScopeIgnore.content(for: $0)) }
+    )
+    @State private var scopeSaveTasks: [String: DispatchWorkItem] = [:]
+    @State private var showResetAllConfirm = false
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                homeIgnoreSection
+                resetAllHeader
+                homeEditor
                 gitignoreSection
-                scopeIgnoreSection
-                blocklistSection
+                scopeEditors
+                blocklistEditors
                 volumeIgnoreSection
             }
             .padding()
         }
+    }
+
+    private var resetAllHeader: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Index Exclusions").font(.system(size: 13, weight: .bold))
+                Text("Toggle whole groups on or off. Open Edit as text under any list for full gitignore control.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(role: .destructive) { showResetAllConfirm = true } label: {
+                Label("Reset All to Default", systemImage: "arrow.counterclockwise")
+            }
+            .controlSize(.small)
+            .confirmationDialog(
+                "Reset all exclusion rules to Cling's defaults?",
+                isPresented: $showResetAllConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Reset All", role: .destructive) { resetAllToDefault() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Replaces the Home ignore file, the global blocklist, and every per-scope ignore file with Cling's built-in rules. Your custom rules in these lists are removed. Volume ignore files are left untouched.")
+            }
+        }
+    }
+
+    private var homeBinding: Binding<String> {
+        Binding(
+            get: { fsignoreContent },
+            set: { newVal in
+                fsignoreContent = newVal
+                fsignoreSaveTask?.cancel()
+                let task = DispatchWorkItem {
+                    FUZZY.fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 5
+                    try? newVal.write(to: fsignore.url, atomically: true, encoding: .utf8)
+                }
+                fsignoreSaveTask = task
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: task)
+            }
+        )
+    }
+
+    private func scopeBinding(_ scope: SearchScope) -> Binding<String> {
+        Binding(
+            get: { scopeContents[scope.rawValue] ?? "" },
+            set: { newVal in
+                scopeContents[scope.rawValue] = newVal
+                scopeSaveTasks[scope.rawValue]?.cancel()
+                let task = DispatchWorkItem { ScopeIgnore.write(newVal, for: scope) }
+                scopeSaveTasks[scope.rawValue] = task
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: task)
+            }
+        )
+    }
+
+    private func resetAllToDefault() {
+        let homeDefault = (try? String(contentsOf: FS_IGNORE.url, encoding: .utf8)) ?? ""
+        fsignoreContent = homeDefault
+        fsignoreSaveTask?.cancel()
+        FUZZY.fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 5
+        try? homeDefault.write(to: fsignore.url, atomically: true, encoding: .utf8)
+
+        Defaults.reset(.blockedPrefixes)
+        Defaults.reset(.blockedContains)
+        PathBlocklist.shared.rebuild()
+
+        for scope in ScopeIgnore.rootedScopes {
+            let def = ScopeIgnore.bundledTemplate(for: scope) ?? ""
+            scopeContents[scope.rawValue] = def
+            ScopeIgnore.write(def, for: scope)
+        }
+
+        FUZZY.refresh(pauseSearch: false)
     }
 
     private var gitignoreSection: some View {
@@ -699,153 +778,79 @@ private struct ExclusionsSettingsPane: View {
         .groupBoxStyle(SettingsCardGroupBoxStyle())
     }
 
-    private var scopeIgnoreSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Scope Ignore Files").font(.system(size: 12, weight: .semibold))
-                    Text("Gitignore syntax for read-only scopes (stored in Cling's cache, since these roots can't hold a `.fsignore`). Patterns are relative to the scope root, so `*/Contents/MacOS/*/` drops helper folders under every app's MacOS dir while keeping the binaries.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(ScopeIgnore.rootedScopes, id: \.self) { scope in
-                    ScopeIgnoreEditor(scope: scope)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .groupBoxStyle(SettingsCardGroupBoxStyle())
-    }
-
-    private var homeIgnoreSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Home Ignore File").font(.system(size: 12, weight: .semibold))
-                        Text("Uses gitignore syntax for excluding files from the index.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button(action: { showHelp.toggle() }) {
-                        Image(systemName: "questionmark.circle").foregroundColor(.secondary)
-                    }
-                    .sheet(isPresented: $showHelp) {
-                        VStack(spacing: 5) {
-                            HStack {
-                                Button(action: { showHelp = false }) {
-                                    Image(systemName: "xmark")
-                                        .font(.heavy(7))
-                                        .foregroundColor(.bg.warm)
-                                }
-                                .buttonStyle(FlatButton(color: .fg.warm.opacity(0.6), circle: true, horizontalPadding: 5, verticalPadding: 5))
-                                .padding(.top, 8).padding(.leading, 8)
-                                Spacer()
-                            }
-                            IgnoreHelpText().padding()
-                        }
-                        .frame(width: 500)
-                    }
-                    .buttonStyle(.borderlessText)
-                }
-
-                TextEditor(text: $fsignoreContent)
-                    .font(.system(size: 11, design: .monospaced))
-                    .contentMargins(6)
-                    .frame(height: 200)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary, lineWidth: 0.5))
-                    .onChange(of: fsignoreContent) {
-                        fsignoreSaveTask?.cancel()
-                        fsignoreSaveTask = DispatchWorkItem { [fsignoreContent] in
-                            FUZZY.fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 5
-                            try? fsignoreContent.write(to: fsignore.url, atomically: true, encoding: .utf8)
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: fsignoreSaveTask!)
-                    }
-
-                HStack {
-                    Button("Apply & Reindex") {
-                        fsignoreSaveTask?.cancel()
-                        FUZZY.fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 5
-                        try? fsignoreContent.write(to: fsignore.url, atomically: true, encoding: .utf8)
-                        FUZZY.refresh(pauseSearch: false, scopes: [.home, .library])
-                    }
-                    .controlSize(.small)
-                    .disabled(fuzzy.backgroundIndexing)
-                    .help("Save the ignore file and reindex Home and Library scopes")
-                    Button("Reset to Default") {
-                        fsignoreContent = (try? String(contentsOf: FS_IGNORE.url, encoding: .utf8)) ?? ""
-                    }
-                    .controlSize(.small)
-                    .help("Replace with Cling's built-in default ignore rules")
-                    Spacer()
-                    Button("Open in external editor") {
-                        NSWorkspace.shared.open([fsignore.url], withApplicationAt: editorApp.fileURL ?? "/Applications/TextEdit.app".fileURL!, configuration: .init(), completionHandler: { _, _ in })
-                    }
-                    .controlSize(.small)
-                    .truncationMode(.middle)
-                }
+    private var scopeEditors: some View {
+        VStack(spacing: 16) {
+            ForEach(ScopeIgnore.rootedScopes, id: \.self) { scope in
+                GroupedIgnoreEditor(
+                    title: "\(scope.label) Ignore File",
+                    subtitle: "Rules for the \(scope.label) scope (stored in Cling's cache, since this root can't hold a `.fsignore`). Patterns are relative to the scope root.",
+                    rawText: scopeBinding(scope),
+                    rawEditorHeight: 120,
+                    applyDisabled: fuzzy.backgroundIndexing,
+                    onApply: {
+                        scopeSaveTasks[scope.rawValue]?.cancel()
+                        ScopeIgnore.write(scopeContents[scope.rawValue] ?? "", for: scope)
+                        FUZZY.refresh(pauseSearch: false, scopes: [scope])
+                    },
+                    defaultText: { ScopeIgnore.bundledTemplate(for: scope) ?? "" }
+                )
             }
         }
-        .groupBoxStyle(SettingsCardGroupBoxStyle())
     }
 
-    private var blocklistSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Global Blocklist").font(.system(size: 12, weight: .semibold))
-                    Text("Applied on all scopes (including root and live index) before the home ignore file, using fast byte matching. One pattern per line. Lines starting with `#` are ignored. Prefix a line with `!` to make an exception that indexes those paths even when a block rule matches a parent (e.g. block `.app/Contents/` but add `!.app/Contents/MacOS/` to keep app binaries searchable).")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
+    private var homeEditor: some View {
+        GroupedIgnoreEditor(
+            title: "Home Ignore File",
+            subtitle: "gitignore rules applied while indexing your Home and Library folders.",
+            rawText: homeBinding,
+            rawEditorHeight: 200,
+            applyDisabled: fuzzy.backgroundIndexing,
+            showHelpButton: true,
+            onApply: {
+                fsignoreSaveTask?.cancel()
+                FUZZY.fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 5
+                try? fsignoreContent.write(to: fsignore.url, atomically: true, encoding: .utf8)
+                FUZZY.refresh(pauseSearch: false, scopes: [.home, .library])
+            },
+            defaultText: { (try? String(contentsOf: FS_IGNORE.url, encoding: .utf8)) ?? "" },
+            openExternal: {
+                NSWorkspace.shared.open(
+                    [fsignore.url],
+                    withApplicationAt: editorApp.fileURL ?? "/Applications/TextEdit.app".fileURL!,
+                    configuration: .init(),
+                    completionHandler: { _, _ in }
+                )
+            }
+        )
+    }
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text("Prefix matching").font(.system(size: 11, weight: .semibold))
-                        Spacer()
-                        Button("Reset to Default") { Defaults.reset(.blockedPrefixes) }
-                            .controlSize(.small)
-                            .help("Restore the built-in prefix blocklist")
-                    }
-                    Text("Blocks paths that start with any of these strings.").font(.system(size: 10)).foregroundStyle(.secondary)
-                    TextEditor(text: $blockedPrefixes)
-                        .font(.system(size: 11, design: .monospaced))
-                        .contentMargins(6)
-                        .frame(height: 100)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text("Contains matching").font(.system(size: 11, weight: .semibold))
-                        Spacer()
-                        Button("Reset to Default") { Defaults.reset(.blockedContains) }
-                            .controlSize(.small)
-                            .help("Restore the built-in contains blocklist")
-                    }
-                    Text("Blocks paths containing any of these strings anywhere. Prefix with `!` for an exception.").font(.system(size: 10)).foregroundStyle(.secondary)
-                    TextEditor(text: $blockedContains)
-                        .font(.system(size: 11, design: .monospaced))
-                        .contentMargins(6)
-                        .frame(height: 120)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
-                }
-
-                Button("Apply & Reindex") {
+    private var blocklistEditors: some View {
+        VStack(spacing: 16) {
+            GroupedIgnoreEditor(
+                title: "Global Blocklist · Prefix matching",
+                subtitle: "Fast matching applied on every scope before the ignore files. Blocks paths that start with any of these strings.",
+                rawText: $blockedPrefixes,
+                rawEditorHeight: 110,
+                applyDisabled: fuzzy.backgroundIndexing,
+                onApply: {
                     PathBlocklist.shared.rebuild()
                     FUZZY.refresh(pauseSearch: false)
-                }
-                .controlSize(.small)
-                .disabled(fuzzy.backgroundIndexing)
-                .help("Rebuild the blocklist and trigger a full reindex")
-            }
+                },
+                defaultText: { Defaults.Keys.blockedPrefixes.defaultValue }
+            )
+            GroupedIgnoreEditor(
+                title: "Global Blocklist · Contains matching",
+                subtitle: "Blocks paths containing any of these strings anywhere. Prefix a rule with `!` for an exception (e.g. block `.app/Contents/` but keep `!.app/Contents/MacOS/`).",
+                rawText: $blockedContains,
+                rawEditorHeight: 130,
+                applyDisabled: fuzzy.backgroundIndexing,
+                onApply: {
+                    PathBlocklist.shared.rebuild()
+                    FUZZY.refresh(pauseSearch: false)
+                },
+                defaultText: { Defaults.Keys.blockedContains.defaultValue }
+            )
         }
-        .groupBoxStyle(SettingsCardGroupBoxStyle())
     }
 
     private var volumeIgnoreSection: some View {
@@ -1019,63 +1024,6 @@ struct VolumeIgnoreEditor: View {
 
     private var fsignorePath: FilePath { volume / ".fsignore" }
 
-}
-
-// MARK: - ScopeIgnoreEditor
-
-struct ScopeIgnoreEditor: View {
-    init(scope: SearchScope) {
-        self.scope = scope
-        _content = State(initialValue: ScopeIgnore.content(for: scope))
-    }
-
-    let scope: SearchScope
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: "folder.badge.gearshape")
-                Text(scope.label).font(.system(size: 12, weight: .semibold))
-                Spacer()
-            }
-
-            TextEditor(text: $content)
-                .font(.system(size: 11, design: .monospaced))
-                .contentMargins(6)
-                .frame(height: 100)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary, lineWidth: 0.5))
-                .onChange(of: content) {
-                    saveTask?.cancel()
-                    saveTask = DispatchWorkItem { [content, scope] in
-                        ScopeIgnore.write(content, for: scope)
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: saveTask!)
-                }
-
-            HStack {
-                Button("Apply & Reindex") {
-                    saveTask?.cancel()
-                    ScopeIgnore.write(content, for: scope)
-                    FUZZY.refresh(pauseSearch: false, scopes: [scope])
-                }
-                .controlSize(.small)
-                .disabled(fuzzy.backgroundIndexing)
-                .help("Save and reindex \(scope.label)")
-                Button("Reset to Default") {
-                    content = ScopeIgnore.bundledTemplate(for: scope) ?? ""
-                }
-                .controlSize(.small)
-                .help("Restore the built-in default rules for \(scope.label)")
-                Spacer()
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    @State private var content: String
-    @State private var saveTask: DispatchWorkItem?
-    @State private var fuzzy = FUZZY
 }
 
 // MARK: - IgnoreHelpText
