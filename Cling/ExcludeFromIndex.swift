@@ -162,6 +162,11 @@ enum ExcludeAnalyzer {
 
         var options: [ExcludeOption] = [exactOption(infos)]
 
+        // Structural options recognize well-known layouts (app/framework bundles, media libraries, build
+        // folders, localizations) and generalize across siblings. They work across mixed stores because each
+        // rule carries its own mechanism, so they're computed before the same-store smart options below.
+        options.append(contentsOf: StructuralPatterns.options(infos))
+
         // Smart options only when every selection lives in the same store (same fsignore root, or all blocklist).
         let sameRoot = Set(infos.map(\.rootKey)).count == 1
         if sameRoot, let mech = infos.first?.mechanism {
