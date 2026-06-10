@@ -658,6 +658,7 @@ private struct ScriptsSettingsPane: View {
 private struct ExclusionsSettingsPane: View {
     @Default(.blockedPrefixes) private var blockedPrefixes
     @Default(.blockedContains) private var blockedContains
+    @Default(.honorGitignore) private var honorGitignore
     @State private var fuzzy = FUZZY
     @State private var showHelp = false
     @State private var fsignoreContent: String = (try? String(contentsOf: fsignore.url, encoding: .utf8)) ?? ""
@@ -668,12 +669,34 @@ private struct ExclusionsSettingsPane: View {
         ScrollView {
             VStack(spacing: 16) {
                 homeIgnoreSection
+                gitignoreSection
                 scopeIgnoreSection
                 blocklistSection
                 volumeIgnoreSection
             }
             .padding()
         }
+    }
+
+    private var gitignoreSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle(isOn: $honorGitignore) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Respect each project's .gitignore").font(.system(size: 12, weight: .semibold))
+                        Text("While indexing your Home folder, apply every project's own `.gitignore` and `.ignore` files, so build output (like `node_modules`, `target`, `dist`) is skipped per project. Some ignored files (`.env`, built sites) will stop appearing in search.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+                .onChange(of: honorGitignore) {
+                    FUZZY.refresh(pauseSearch: false, scopes: [.home])
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .groupBoxStyle(SettingsCardGroupBoxStyle())
     }
 
     private var scopeIgnoreSection: some View {

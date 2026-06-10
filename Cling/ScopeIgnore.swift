@@ -1,6 +1,9 @@
 import Foundation
 import Lowtech
+import OSLog
 import System
+
+private let log = Logger(subsystem: clingSubsystem, category: "ScopeIgnore")
 
 /// Per-scope gitignore files for scopes whose real root is read-only / SIP-protected (Applications, System,
 /// Root), where we can't drop a `.fsignore` at the root. The file lives in our cache dir; its patterns are
@@ -28,6 +31,31 @@ enum ScopeIgnore {
 
     static func ensureDir() {
         try? FileManager.default.createDirectory(at: dir.url, withIntermediateDirectories: true)
+    }
+
+    /// Bundled default rules shipped for a rooted scope, or nil if that scope has no template.
+    static func bundledTemplate(for scope: SearchScope) -> String? {
+        let name: String
+        switch scope {
+        case .applications: name = "applications"
+        case .system: name = "system"
+        default: return nil
+        }
+        guard let url = Bundle.main.url(forResource: name, withExtension: "fsignore") else { return nil }
+        return try? String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// Seed a rooted scope's ignore file with its bundled defaults, but only when the user has no rules there
+    /// yet (file missing or whitespace-only). Never overwrites a non-empty file, so customizations are safe.
+    static func ensureSeeded() {
+        ensureDir()
+        for scope in rootedScopes {
+            let f = file(for: scope)
+            let existing = (try? String(contentsOfFile: f.string, encoding: .utf8)) ?? ""
+            guard existing.allSatisfy(\.isWhitespace), let template = bundledTemplate(for: scope) else { continue }
+            do { try template.write(to: f.url, atomically: true, encoding: .utf8) }
+            catch { log.error("Failed to seed \(scope.rawValue) ignore: \(error.localizedDescription, privacy: .public)") }
+        }
     }
 
     static func write(_ content: String, for scope: SearchScope) {

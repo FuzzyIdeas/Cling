@@ -1,13 +1,25 @@
+# Cling ignore rules for your Home folder. "#" lines are comments.
+# "#:group id=… name=…" headers mark a block of rules so a future settings UI
+# can toggle whole groups. Rules you add yourself land under "#:custom" at the end.
+# Syntax is gitignore: a trailing "/" matches directories, "!" re-includes.
+
+#:group id=macos name=macOS clutter
+.DS_Store
+**/*.sb-*
+
+#:group id=noindex name=Spotlight-hidden folders
+**/*.noindex
+# Keep DEVONthink's imported documents searchable even though they live in a .noindex folder.
+!**/*.dtBase2/Files.noindex/
+
+#:group id=toolchain name=Package & toolchain caches
 .bundler/
 .cargo/git/
 .cargo/registry/
 .cocoapods
 .cpan/
-.dat.nosync*
-.DS_Store
 .gem/
 .gradle/
-.index-build/
 .m2/repository/
 .npm/
 .nuget/
@@ -15,62 +27,108 @@
 .pnpm-store/
 .pub-cache/
 .rustup/toolchains/
-.stversions/
-.terraform/
-.tox/
-.venv/
 .yarn/
-*.com.google.Chrome
+.stack-work/
+dist-newstyle/
+.deno/
+.bun/install/cache/
+go/pkg/mod/
+Packages/
+Pods/
+
+#:group id=python name=Python
 *.egg-info/
 *.pyc
+.venv/
+.tox/
+.mypy_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+
+#:group id=build name=Build & index artifacts
+.index-build/
+.dat.nosync*
+.stversions/
+.terraform/
 *.xcworkspace/xcuserdata
 **/.local/fsindex*
-**/*.noindex
+**/TextIndex/
+**/Sublime Text */Index
+
+#:group id=photos name=Photo & video libraries
 **/*.photoslibrary/database
 **/*.photoslibrary/external
 **/*.photoslibrary/internal
 **/*.photoslibrary/private
 **/*.photoslibrary/resources
 **/*.photoslibrary/scopes
-**/*.sb-*
+**/*.fcpbundle/**/Render Files/
+**/*.fcpbundle/**/Transcoded Media/
+**/*.fcpbundle/**/Analysis Files/
+**/*.lrdata/
+**/Lightroom/**/Backups/
+Library/Application Support/Adobe/Common/Media Cache Files/
+Library/Application Support/Adobe/Common/Media Cache/
+
+#:group id=ml name=Machine learning & data
+**/wandb/
+**/mlruns/
+.dvc/cache/
+.ollama/models/
+
+#:group id=vm name=Virtual machines & disk images
+*.vmdk
+*.vmem
+*.vmsn
+**/*.pvm/**/*.hds
 **/com.docker.docker/Data
-**/Cookies-journal
+
+#:group id=devtools name=Developer app state
 **/IconJar*/Backups
-**/Local Storage/leveldb/
-**/Network Persistent State
-**/sentry/scope*.json
-**/Spotify/Users/*/pending-messages*
-**/Sublime Text */Index
-**/TextIndex/
-**/TransportSecurity
-**/wharf/
-Cache
-Caches
-doc
-io.tailscale.ipn.macos
-Library/**/*-shm
-Library/**/*.chrono-timeline
-Library/**/Data/tmp/
-Library/**/Firefox/Profiles/**/sessionstore-backups
-Library/**/Firefox/Profiles/**/storage/default
-Library/**/Firefox/Profiles/**/storage/permanent
-Library/**/Google/Chrome*/Cache
-Library/**/Google/Chrome*/leveldb
-Library/Application Support/**/.*
 Library/Application Support/Code*/Backups
 Library/Application Support/Code*/CachedData
 Library/Application Support/Code*/User/globalStorage
 Library/Application Support/Code*/User/workspaceStorage
 Library/Application Support/com.hegenberg.bettertouchtool*/com.mentalfaculty.ensembles.eventdata
 Library/Application Support/com.raycast.macos/posthog.queueFolder/
+
+#:group id=browser name=Browser caches & state
+*.com.google.Chrome
+**/Cookies-journal
+**/Local Storage/leveldb/
+**/Network Persistent State
+**/TransportSecurity
+webappsstore.sqlite-wal
+Library/**/Google/Chrome*/Cache
+Library/**/Google/Chrome*/leveldb
+Library/**/Firefox/Profiles/**/sessionstore-backups
+Library/**/Firefox/Profiles/**/storage/default
+Library/**/Firefox/Profiles/**/storage/permanent
 Library/Application Support/Firefox/Profiles/**/datareporting/
 Library/Application Support/Firefox/Profiles/**/saved-telemetry-pings/
+
+#:group id=appstate name=App caches & telemetry
+**/sentry/scope*.json
+**/Spotify/Users/*/pending-messages*
+**/wharf/
+io.tailscale.ipn.macos
 Library/Application Support/Spotify/PersistentCache/Users/*-user/*.tmp
+
+#:group id=library name=User Library caches & data
+Cache
+Caches
+doc
+Library/**/*-shm
+Library/**/*.chrono-timeline
+Library/**/Data/tmp/
+Library/Application Support/**/.*
 Library/Assistant/SiriVocabulary/**/index-*
 Library/Biome/
 Library/DuetExpertCenter/
 Library/HomeKit/metricsCounters/*.counters
 Library/Metadata/CoreSpotlight/*/
-Packages/
-Pods/
-webappsstore.sqlite-wal
+Library/Developer/CoreSimulator/
+Library/Developer/Xcode/iOS DeviceSupport/
+Library/Application Support/MobileSync/Backup/
+
+#:custom name=Your rules

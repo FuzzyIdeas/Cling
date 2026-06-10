@@ -774,6 +774,7 @@ class FuzzyClient {
             do { try FS_IGNORE.copy(to: fsignore) }
             catch { log.error("Failed to copy \(FS_IGNORE.string, privacy: .public) to \(fsignoreString, privacy: .public): \(error.localizedDescription, privacy: .public)") }
         }
+        ScopeIgnore.ensureSeeded()
 
         if !indexExists {
             indexFiles(pauseSearch: true) { [self] in
@@ -1046,6 +1047,8 @@ class FuzzyClient {
                     // Scopes rooted in read-only/SIP locations (Applications, System, Root) get their own
                     // gitignore stored in our cache dir, matched against the real scope dir via a rooted check.
                     let scopeIgnoreFile = ScopeIgnore.rootedScopes.contains(scope) ? ScopeIgnore.activeFile(for: scope) : nil
+                    // Per-project .gitignore discovery is opt-in and limited to the Home scope.
+                    let honorGitignore = scope == .home && Defaults[.honorGitignore]
                     group.addTask {
                         let scopeEngine = SearchEngine()
                         scopeEngine.reserveCapacity(100_000)
@@ -1064,7 +1067,7 @@ class FuzzyClient {
                             let ignore = scopeIgnoreFile ?? (dir.applyIgnore ? ignoreChecker : nil)
                             let ignoreRoot = scopeIgnoreFile != nil ? dir.dir : nil
                             let opKey = "scope:\(scope.rawValue)"
-                            scopeEngine.walkDirectory(dir.dir, ignoreFile: ignore, ignoreRoot: ignoreRoot, skipDir: skipDir, applyBlocklist: true, progress: { count, _ in
+                            scopeEngine.walkDirectory(dir.dir, ignoreFile: ignore, ignoreRoot: ignoreRoot, skipDir: skipDir, applyBlocklist: true, discoverGitignore: honorGitignore, progress: { count, _ in
                                 Task { @MainActor in
                                     self.logActivity("Indexing \(scope.label): \(count.formatted()) files", ongoing: true, operationKey: opKey, count: count)
                                 }

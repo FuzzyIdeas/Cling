@@ -1,0 +1,12 @@
+# Cling ignore rules for the System scope (/System).
+# "#" lines are comments. "#:group id=… name=…" headers let a future settings UI
+# toggle whole groups. gitignore syntax.
+
+#:group id=localizations name=Localizations
+*.lproj/
+
+#:group id=frameworks name=Framework resources
+# Keep framework binaries searchable, drop their bundled resources.
+**/*.framework/Versions/*/Resources/
+
+#:custom name=Your rules

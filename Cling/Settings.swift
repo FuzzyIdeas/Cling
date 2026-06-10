@@ -450,28 +450,76 @@ extension Defaults.Keys {
     static let windowAppearance = Key<WindowAppearance>("windowAppearance", default: WindowAppearance.defaultValue)
     static let migrationVersion = Key<Int>("migrationVersion", default: 0)
     static let onboardingCompleted = Key<Bool>("onboardingCompleted", default: false)
+    /// When on, the indexer applies each project's own `.gitignore`/`.ignore` files while walking the Home
+    /// scope, so build output is excluded per project. Off by default (some gitignored files are worth finding).
+    static let honorGitignore = Key<Bool>("honorGitignore", default: false)
 
+    // Lines starting with "#" are comments. "#:group id=… name=…" headers mark a block of rules so a future
+    // settings UI can toggle whole groups; rules you add yourself land under "#:custom". Both are ignored by
+    // the parser (PathBlocklist.split skips "#" and blank lines). Prefixes match the start of an absolute path.
     static let blockedPrefixes = Key<String>("blockedPrefixes", default: """
+    #:group id=ephemeral name=Temporary & ephemeral
     /tmp/com.apple.
     /var/folders/
-    /usr/share/
+    /private/var/vm/
     /cores/
+
+    #:group id=shared name=System shared data
+    /usr/share/
+
+    #:custom name=Your rules
     """)
+    // Contains rules match anywhere inside an absolute path (directory prune).
     static let blockedContains = Key<String>("blockedContains", default: """
+    #:group id=cling-internal name=Cling internal
     -Users-
-    .app/Contents/
+
+    #:group id=vcs name=Version control
     /.git/
+    /.svn/
+    /.hg/
+
+    #:group id=app-bundles name=App bundle internals
+    .app/Contents/Resources/
+    .app/Contents/PlugIns/
+    .app/Contents/_CodeSignature/
+    .app/Contents/SharedSupport/
+    .lproj/
+
+    #:group id=apple-metadata name=System metadata
+    /.Spotlight-V100/
+    /.fseventsd/
+    /.DocumentRevisions-V100/
+    /.TemporaryItems/
+
+    #:group id=trash name=Trash
+    /.Trash/
+
+    #:group id=caches name=Caches
+    /.cache/
+
+    #:group id=build-output name=Build output
     /build/
-    /.build/
     /target/
+    /.build/
+    /DerivedData/
     /.swiftpm/
     /xcuserdata/
-    /DerivedData/
-    /.Trash/
-    /.cache/
+
+    #:group id=dependencies name=Dependencies & package caches
     /node_modules/
-    /var/postgres/
     /__pycache__/
+    /.venv/
+    /.tox/
+    /Pods/
+    /Carthage/
+    /.gradle/
+    /.terraform/
+
+    #:group id=databases name=Database data
+    /var/postgres/
+
+    #:custom name=Your rules
     """)
 }
 

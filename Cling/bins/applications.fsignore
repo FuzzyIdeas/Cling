@@ -1,0 +1,13 @@
+# Cling ignore rules for the Applications scope (/Applications, /System/Applications).
+# "#" lines are comments. "#:group id=… name=…" headers let a future settings UI
+# toggle whole groups. gitignore syntax; patterns are relative to each app folder.
+
+#:group id=app-internals name=App bundle internals
+# Drop the data and plugin subfolders inside each app's MacOS folder, keep the executable.
+*.app/Contents/MacOS/**/
+
+#:group id=frameworks name=Embedded framework resources
+# Keep framework binaries searchable, drop their bundled resources.
+**/*.framework/Versions/*/Resources/
+
+#:custom name=Your rules

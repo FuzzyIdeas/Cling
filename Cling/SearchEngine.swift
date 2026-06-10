@@ -1045,6 +1045,7 @@ final class SearchEngine: @unchecked Sendable {
         ignoreRoot: String? = nil,
         skipDir: ((String) -> Bool)? = nil,
         applyBlocklist: Bool = false,
+        discoverGitignore: Bool = false,
         progress: ((Int, String) -> Void)? = nil,
         cancelled: (() -> Bool)? = nil
     ) -> Int {
@@ -1085,6 +1086,20 @@ final class SearchEngine: @unchecked Sendable {
             guard dir == parent || dir.hasPrefix(prefix) else { return nil }
             return { $0.isIgnored(in: ignoreFile) }
         }()
+
+        // Per-directory .gitignore/.ignore matchers, discovered as we descend (deepest last). A path is
+        // ignored if any active matcher reports it ignored (checked deepest-first, short-circuit). We pop by
+        // ancestor-prefix at point of use rather than on FTS_DP, because FTS_SKIP'd dirs emit no FTS_DP.
+        var gitignoreStack: [(file: String, ownerDir: String)] = []
+        func gitignored(_ path: String) -> Bool {
+            while let top = gitignoreStack.last, path != top.ownerDir, !path.hasPrefix(top.ownerDir + "/") {
+                gitignoreStack.removeLast()
+            }
+            for entry in gitignoreStack.reversed() where path.isIgnored(in: entry.file, root: entry.ownerDir) {
+                return true
+            }
+            return false
+        }
 
         var added = 0
         var skippedIgnore = 0
@@ -1153,6 +1168,17 @@ final class SearchEngine: @unchecked Sendable {
                     fts_set(ftsp, ent, Int32(FTS_SKIP))
                     continue
                 }
+                if discoverGitignore {
+                    // Test against ancestors' .gitignore files before pushing this dir's own.
+                    if gitignored(fullPath) {
+                        fts_set(ftsp, ent, Int32(FTS_SKIP))
+                        skippedIgnore &+= 1
+                        continue
+                    }
+                    if let gf = Self.gitignoreFile(in: fullPath) {
+                        gitignoreStack.append((gf, fullPath))
+                    }
+                }
 
                 batch.append((fullPath, true))
                 added &+= 1
@@ -1195,6 +1221,10 @@ final class SearchEngine: @unchecked Sendable {
                     skippedIgnore &+= 1
                     continue
                 }
+                if discoverGitignore, gitignored(fullPath) {
+                    skippedIgnore &+= 1
+                    continue
+                }
                 batch.append((fullPath, false))
                 added &+= 1
 
@@ -1217,6 +1247,15 @@ final class SearchEngine: @unchecked Sendable {
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
         slog.info("walkDirectory: \(dir) added=\(added) skippedIgnore=\(skippedIgnore) in \(ms, format: .fixed(precision: 1))ms")
         return added
+    }
+
+    /// Path of a directory's own `.gitignore` (or `.ignore`) if present, for per-directory ignore discovery.
+    static func gitignoreFile(in dir: String) -> String? {
+        for name in [".gitignore", ".ignore"] {
+            let p = dir + "/" + name
+            if access(p, F_OK) == 0 { return p }
+        }
+        return nil
     }
 
     /// Walk using FileManager for network/external volumes (batches directory reads, better for high-latency storage)
