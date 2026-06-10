@@ -71,7 +71,8 @@ struct GroupedIgnoreEditor: View {
                     Text(title).font(.system(size: 12, weight: .semibold))
                 }
                 if !subtitle.isEmpty {
-                    Text(subtitle).font(.callout).foregroundStyle(.secondary)
+                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer()
@@ -86,10 +87,10 @@ struct GroupedIgnoreEditor: View {
     }
 
     private var groupsList: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             if doc.groups.isEmpty {
                 Text("No rule groups yet. Use Edit as text below to add rules.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
             } else {
                 ForEach(doc.groups.indices, id: \.self) { gi in
                     groupView(gi)
@@ -101,60 +102,93 @@ struct GroupedIgnoreEditor: View {
     private func groupView(_ gi: Int) -> some View {
         let group = doc.groups[gi]
         let isExpanded = expanded.contains(group.id)
-        return VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Toggle("", isOn: groupBinding(gi))
                     .labelsHidden()
                     .toggleStyle(.switch)
-                    .controlSize(.small)
+                    .controlSize(.mini)
                     .disabled(group.ruleCount == 0)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(group.name).font(.system(size: 11, weight: .medium))
-                    Text(statusCaption(group)).font(.system(size: 9)).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if group.ruleCount > 0 {
-                    Button(action: { toggleExpanded(group.id) }) {
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 16, height: 16)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(group.rules, id: \.index) { rule in
-                        HStack(spacing: 6) {
-                            Toggle("", isOn: ruleBinding(gi, rule.index))
-                                .labelsHidden()
-                                .toggleStyle(.checkbox)
-                                .controlSize(.mini)
-                            Text(rule.pattern)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundStyle(rule.enabled ? .primary : .secondary)
-                                .strikethrough(!rule.enabled, color: .secondary)
-                                .textSelection(.enabled)
-                            Spacer()
+                    .fixedSize()
+                Button {
+                    if group.ruleCount > 0 { toggleExpanded(group.id) }
+                } label: {
+                    HStack(spacing: 6) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(group.name).font(.system(size: 11, weight: .medium)).foregroundStyle(.primary)
+                            Text(statusCaption(group)).font(.system(size: 9)).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                        if group.ruleCount > 0 {
+                            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 12)
                         }
                     }
+                    .frame(height: 28)
+                    .contentShape(Rectangle())
                 }
-                .padding(.leading, 24)
+                .buttonStyle(.plain)
+            }
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(group.rules, id: \.index) { rule in
+                        Button {
+                            ruleBinding(gi, rule.index).wrappedValue.toggle()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: rule.enabled ? "checkmark.square.fill" : "square")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(rule.enabled ? Color.accentColor : .secondary)
+                                    .frame(width: 14)
+                                Text(rule.pattern)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(rule.enabled ? .primary : .secondary)
+                                    .strikethrough(!rule.enabled, color: .secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer(minLength: 0)
+                            }
+                            .frame(height: 18)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.leading, 22)
+                .padding(.top, 2)
             }
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 4)
         .padding(.horizontal, 7)
         .background(.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
     }
 
     private var rawDisclosure: some View {
-        DisclosureGroup(isExpanded: $showRaw) {
-            VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { showRaw.toggle() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: showRaw ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12)
+                    Text("Edit as text").font(.system(size: 11, weight: .medium))
+                    Spacer(minLength: 0)
+                }
+                .frame(height: 22)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // Only instantiate the TextEditor while expanded; an always-present NSTextView is what made
+            // the surrounding ScrollView lag.
+            if showRaw {
                 TextEditor(text: $rawText)
                     .font(.system(size: 11, design: .monospaced))
                     .contentMargins(6)
                     .frame(height: rawEditorHeight)
+                    .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary, lineWidth: 0.5))
                 if let openExternal {
@@ -166,11 +200,7 @@ struct GroupedIgnoreEditor: View {
                     }
                 }
             }
-            .padding(.top, 6)
-        } label: {
-            Text("Edit as text").font(.system(size: 11, weight: .medium))
         }
-        .disclosureGroupStyle(.automatic)
     }
 
     private var buttonRow: some View {
