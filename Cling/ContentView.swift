@@ -1218,17 +1218,20 @@ struct ContentView: View {
             TableColumn("Name", value: \.name) { row in
                 Text(row.name)
                     .lineLimit(1).truncationMode(.middle)
+                    .help(row.name)
             }.width(min: 100, ideal: 200)
 
             TableColumn("Path", value: \.dir) { row in
                 Text(row.dir)
                     .lineLimit(1).truncationMode(.middle)
                     .foregroundStyle(.secondary)
+                    .help(row.dir)
             }.width(min: 100, ideal: 300)
 
             TableColumn("Last Run", value: \.lastRun) { row in
                 Text(row.lastRun.formatted(.dateTime.month().day().hour().minute()))
                     .font(.system(size: 11, design: .monospaced))
+                    .help(row.lastRun.formatted(date: .abbreviated, time: .standard))
             }.width(min: 100, ideal: 120)
         }
         .contextMenu(forSelectionType: String.self) { ids in
@@ -1250,17 +1253,20 @@ struct ContentView: View {
             TableColumn("Name", value: \.name) { change in
                 Text(change.name)
                     .lineLimit(1).truncationMode(.middle)
+                    .help(change.name)
             }.width(min: 100, ideal: 200)
 
             TableColumn("Path", value: \.dir) { change in
                 Text(change.dir)
                     .lineLimit(1).truncationMode(.middle)
                     .foregroundStyle(.secondary)
+                    .help(change.dir)
             }.width(min: 100, ideal: 300)
 
             TableColumn("Time", value: \.date) { change in
                 Text(change.date.formatted(.dateTime.hour().minute().second()))
                     .font(.system(size: 11, design: .monospaced))
+                    .help(change.date.formatted(date: .abbreviated, time: .standard))
             }.width(min: 70, ideal: 80)
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
@@ -1323,13 +1329,17 @@ struct ContentView: View {
 
     private var nameColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
         TableColumn("Name", value: \.name.string) { path in
-            Text(path.name.string).lineLimit(1).truncationMode(.middle)
+            // .help sets the cell's NSView tooltip (cheap, no layout pass), so the truncated middle is
+            // revealed on hover without the per-row measuring that would slow scrolling.
+            let name = path.name.string
+            Text(name).lineLimit(1).truncationMode(.middle).help(name)
         }.width(min: 100, ideal: 200)
     }
 
     private var pathColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
         TableColumn("Path", value: \.dir.string) { path in
-            Text(path.dir.shellString).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+            let dir = path.dir.shellString
+            Text(dir).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary).help(dir)
         }.width(min: 100, ideal: 300)
     }
 
@@ -1341,7 +1351,8 @@ struct ContentView: View {
 
     private var dateColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
         TableColumn("Date Modified", value: \.memoz.date) { path in
-            Text(path.memoz.formattedModificationDate).monospaced().lineLimit(1)
+            let date = path.memoz.formattedModificationDate
+            Text(date).monospaced().lineLimit(1).help(date)
         }.width(min: 100, ideal: 160)
     }
 
