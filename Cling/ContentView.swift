@@ -242,6 +242,12 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 HStack {
                     Spacer()
+                    Button("Run live index compaction") { fuzzy.compactLiveChangesManually() }
+                        .controlSize(.mini)
+                        .font(.system(size: 10))
+                        .disabled(fuzzy.liveIndexChanges.isEmpty)
+                        .help("Collapse duplicate events, keeping the latest change per file")
+                        .padding(.vertical, 4)
                     Toggle("Indexed only", isOn: $liveChangesIndexedOnly)
                         .toggleStyle(.switch)
                         .controlSize(.mini)
@@ -1166,14 +1172,12 @@ struct ContentView: View {
     @State private var liveChangesIndexedOnly = true
 
     private var sortedLiveChanges: [FuzzyClient.IndexChange] {
-        let changes = fuzzy.liveIndexChanges.suffix(2000)
-        let filtered: [FuzzyClient.IndexChange]
-        if fuzzy.query.trimmingCharacters(in: .whitespaces).isEmpty {
-            filtered = Array(changes)
-        } else {
-            let q = fuzzy.query.lowercased()
-            filtered = changes.filter { $0.path.lowercased().contains(q) }
-        }
+        let q = fuzzy.query.trimmingCharacters(in: .whitespaces).lowercased()
+        // No query: show the most recent slice. With a query: search the whole deduplicated history (bounded,
+        // so a change from a day ago is still findable), then cap the rendered rows.
+        let filtered: [FuzzyClient.IndexChange] = q.isEmpty
+            ? Array(fuzzy.liveIndexChanges.suffix(2000))
+            : fuzzy.liveIndexChanges.filter { $0.path.lowercased().contains(q) }
         let afterBlock: [FuzzyClient.IndexChange] = if liveChangesIndexedOnly {
             filtered.filter { change in
                 !isPathBlocked(change.path) && !(change.path.hasPrefix(HOME.string) && change.path.isIgnored(in: fsignoreString))
@@ -1181,7 +1185,7 @@ struct ContentView: View {
         } else {
             filtered
         }
-        return afterBlock.sorted(using: liveChangeSortOrder)
+        return Array(afterBlock.sorted(using: liveChangeSortOrder).prefix(2000))
     }
 
     private var runHistoryRows: [RunHistoryRow] {

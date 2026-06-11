@@ -99,17 +99,13 @@ private func blocklistMatchLength(_ path: String, prefixes: [[UInt8]], component
         for component in components {
             let cLen = component.count
             guard cLen > best, len >= cLen else { continue }
-            var matched = false
-            let end = len - cLen
-            var i = 0
-            while i <= end {
-                if memcmp(buf.baseAddress! + i, component, cLen) == 0 { matched = true; break }
-                i += 1
-            }
+            // memmem is a SIMD-optimized substring search; far cheaper than a hand-rolled sliding memcmp
+            // once the blocklist has many `contains` patterns (this runs per path during default-result scans).
+            var matched = memmem(buf.baseAddress!, len, component, cLen) != nil
             // Also match when the path ends with the component minus its trailing slash
             // e.g. path "/foo/build" matches component "/build/" because fts_read omits the trailing /
             if !matched, cLen >= 2, component[cLen - 1] == 0x2F, len >= cLen - 1 {
-                if memcmp(buf.baseAddress! + len - (cLen - 1), component, cLen - 1) == 0 { matched = true }
+                matched = memcmp(buf.baseAddress! + len - (cLen - 1), component, cLen - 1) == 0
             }
             if matched { best = cLen }
         }
@@ -179,6 +175,16 @@ private func suffixIsPrefix(of r: String, in s: String) -> Bool {
     }
     return false
 }
+
+/// Bounds on the in-memory live-change history. To stay searchable over a long window (find a change from a
+/// day ago) without growing without limit, the history is deduplicated by (path, kind) keeping only the
+/// latest event per key, with a generous hard cap on distinct entries as the final backstop. Compaction is
+/// lazy: it runs only when the raw array (which may hold superseded duplicates) passes the threshold, so
+/// appends stay amortized O(1).
+private let liveChangesMax = 15000 // distinct (path, kind) entries kept after compaction
+private let liveChangesCompactThreshold = 20000 // compact once the raw array passes this
+/// Max number of newest live changes computeDefaultResults scans looking for 20 fresh results.
+private let liveScanBudget = 4000
 
 let indexFolder: FilePath =
     FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
@@ -1204,7 +1210,7 @@ class FuzzyClient {
                             self.seenPaths.insert(pathStr)
                             if isNew { self.indexedCount &+= 1 }
                             let kind: IndexChange.Kind = isNew ? .added : .modified
-                            self.liveIndexChanges.append(IndexChange(path: pathStr, kind: kind))
+                            self.appendLiveChange(IndexChange(path: pathStr, kind: kind))
                             if self.noQuery { self.updateDefaultResults(debounce: true) }
                         }
                     } else {
@@ -1212,7 +1218,7 @@ class FuzzyClient {
                         mainActor {
                             self.removedFiles.insert(pathStr)
                             self.indexedCount = max(0, self.indexedCount &- 1)
-                            self.liveIndexChanges.append(IndexChange(path: pathStr, kind: .removed))
+                            self.appendLiveChange(IndexChange(path: pathStr, kind: .removed))
                             if self.noQuery { self.updateDefaultResults(debounce: true) }
                             if let index = self.scoredResults.firstIndex(of: path) {
                                 self.scoredResults.remove(at: index)
@@ -1836,9 +1842,13 @@ class FuzzyClient {
         var results = [FilePath]()
         let maxResults = proactive ? Defaults[.maxResultsCount] : min(Defaults[.maxResultsCount], 500)
 
-        // 1. Live index changes (newest first, added/modified only)
+        // 1. Live index changes (newest first, added/modified only). Cap the backward scan: normally the 20
+        //    freshest live results are found right away, but when a burst of transient files keeps failing the
+        //    `exists` check we must not walk an unbounded history calling isPathBlocked on the main thread.
+        //    MDQuery recents backfill anything we stop short of.
         var ci = liveIndexChanges.count - 1
-        while ci >= 0, results.count < 20 {
+        let scanFloor = max(0, ci - liveScanBudget)
+        while ci >= scanFloor, results.count < 20 {
             let change = liveIndexChanges[ci]
             if change.kind != .removed, !seen.contains(change.path),
                isRelevantDefaultPath(change.path),
@@ -1953,6 +1963,46 @@ class FuzzyClient {
             FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
             recentsEngine.addPath(path, isDir: isDirectory.boolValue)
         }
+    }
+
+    /// Append a live change. The history stays searchable for a long window (find a change from a day ago)
+    /// while memory stays bounded by the number of *distinct* changes, not the number of FS events: a
+    /// frequently-touched file keeps only its latest event per kind. Compaction is lazy, so appends are O(1)
+    /// and duplicates are collapsed only when the raw array passes the threshold.
+    func appendLiveChange(_ change: IndexChange) {
+        liveIndexChanges.append(change)
+        if liveIndexChanges.count > liveChangesCompactThreshold {
+            compactLiveChanges()
+        }
+    }
+
+    /// User-triggered compaction (the live-changes "Compact" button). Same dedup as the automatic pass, but
+    /// on demand regardless of the threshold, and it reports how many duplicate events were collapsed.
+    func compactLiveChangesManually() {
+        let before = liveIndexChanges.count
+        compactLiveChanges()
+        let removed = before - liveIndexChanges.count
+        logActivity("Compacted live changes: collapsed \(removed) duplicate event\(removed == 1 ? "" : "s")")
+    }
+
+    /// Collapse the live-change history to the latest event per (path, kind), preserving oldest→newest order,
+    /// and keep at most liveChangesMax distinct entries (dropping the oldest). Walking newest→oldest and
+    /// keeping the first occurrence of each key retains the most recent event, and its date, for that key.
+    private func compactLiveChanges() {
+        struct Key: Hashable {
+            let path: String
+            let kind: IndexChange.Kind
+        }
+        var seen = Set<Key>()
+        var deduped: [IndexChange] = []
+        deduped.reserveCapacity(min(liveIndexChanges.count, liveChangesMax))
+        for change in liveIndexChanges.reversed() {
+            guard seen.insert(Key(path: change.path, kind: change.kind)).inserted else { continue }
+            deduped.append(change)
+            if deduped.count >= liveChangesMax { break } // newest-first, so this drops only the oldest
+        }
+        deduped.reverse() // restore oldest→newest
+        liveIndexChanges = deduped
     }
 
     @ObservationIgnored private var _lastOperationUpdate: CFAbsoluteTime = 0
