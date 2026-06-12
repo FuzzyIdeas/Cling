@@ -11,7 +11,6 @@
 
 import AppKit
 import AVFoundation
-import Defaults
 import ImageIO
 import Lowtech
 import os
@@ -373,7 +372,7 @@ enum FileInfo {
             guard allowContentReads, let size, size <= lineCountSizeCap else { return [] }
             return await runBlocking { lineCountFacts(url) }
         case .archive:
-            return [] // wired up in Task 3 via SevenZip.cachedList
+            return [] // archives are handled earlier in fetch(), before this switch
         case .quicklook:
             return []
         }
