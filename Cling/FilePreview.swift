@@ -95,20 +95,32 @@ struct FilePreviewPanel: View {
     let paths: [FilePath]
 
     var body: some View {
-        VStack(spacing: 0) {
+        ZStack(alignment: .top) {
             if let path = current {
                 let kind = PreviewKind(for: path.url)
-                header(for: path)
-                Divider().opacity(0.5)
                 content(for: path, kind: kind)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                Divider().opacity(0.4)
-                FileInfoBar(path: path, kind: kind)
+                VStack(spacing: 0) {
+                    header(for: path)
+                        .glassBar()
+                        .overlay(alignment: .bottom) { Divider().opacity(0.4) }
+                    Spacer(minLength: 0)
+                    VStack(spacing: 0) {
+                        FileInfoBar(path: path, kind: kind)
+                        hideHint
+                    }
+                    .glassBar()
+                    .overlay(alignment: .top) { Divider().opacity(0.4) }
+                }
             } else {
                 emptyState
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    hideHint
+                        .glassBar()
+                        .overlay(alignment: .top) { Divider().opacity(0.4) }
+                }
             }
-            Divider().opacity(0.4)
-            hideHint
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: selectionKey) {

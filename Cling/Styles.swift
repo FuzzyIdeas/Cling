@@ -229,6 +229,19 @@ extension View {
         }
     }
 
+    /// Full-width translucent bar for floating over preview content: Liquid
+    /// Glass on macOS 26 (when enabled), ultra-thin material otherwise. The
+    /// image or text underneath shows through it. Outer corners are left square
+    /// and clipped to shape by the enclosing panel.
+    @ViewBuilder
+    func glassBar() -> some View {
+        if AM.useGlass, #available(macOS 26, *) {
+            self.glassEffect(.regular, in: Rectangle())
+        } else {
+            background(.ultraThinMaterial)
+        }
+    }
+
     /// Adds a double click handler this view (macOS only)
     ///
     /// Example
