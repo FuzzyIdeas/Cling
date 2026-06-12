@@ -129,6 +129,245 @@ enum FileInfo {
         // volume is no longer in the mounted list.
         return FUZZY.smbMetadataCaches.first { path.starts(with: $0.key) }?.value.get(path.string)
     }
+
+    // MARK: Kind-specific fetchers (all called off the main thread)
+
+    private static func imageFacts(_ url: URL) -> [String] {
+        let opts = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, opts),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, opts) as? [CFString: Any]
+        else { return [] }
+        var facts: [String] = []
+        if let w = props[kCGImagePropertyPixelWidth] as? Int,
+           let h = props[kCGImagePropertyPixelHeight] as? Int
+        {
+            facts.append("\(w)×\(h)")
+        }
+        if let model = props[kCGImagePropertyColorModel] as? String {
+            if let depth = props[kCGImagePropertyDepth] as? Int {
+                facts.append("\(model) \(depth)-bit")
+            } else {
+                facts.append(model)
+            }
+        }
+        if let dpi = props[kCGImagePropertyDPIWidth] as? Double, dpi > 0, Int(dpi) != 72 {
+            facts.append("\(Int(dpi)) dpi")
+        }
+        return facts
+    }
+
+    private static func pdfFacts(_ url: URL) -> [String] {
+        guard let doc = CGPDFDocument(url as CFURL) else { return [] }
+        let pages = doc.numberOfPages
+        var facts = ["\(pages.formatted()) page\(pages == 1 ? "" : "s")"]
+        if doc.isEncrypted { facts.append("encrypted") }
+        return facts
+    }
+
+    private static func mediaFacts(_ url: URL, video: Bool) async -> [String] {
+        let asset = AVURLAsset(url: url)
+        guard let duration = try? await asset.load(.duration), duration.isNumeric else { return [] }
+        var facts = [formatDuration(duration.seconds)]
+        if video,
+           let track = try? await asset.loadTracks(withMediaType: .video).first,
+           let size = try? await track.load(.naturalSize),
+           size.width > 0, size.height > 0
+        {
+            facts.append("\(Int(size.width))×\(Int(size.height))")
+        }
+        return facts
+    }
+
+    private static func folderFacts(_ url: URL) -> [String] {
+        // Lazy shallow enumeration, hidden files included, hard cap so a
+        // directory with millions of entries stays bounded.
+        guard let enumerator = FileManager.default.enumerator(
+            at: url, includingPropertiesForKeys: [],
+            options: [.skipsSubdirectoryDescendants]
+        ) else { return [] }
+        var count = 0
+        for case _ as URL in enumerator {
+            count += 1
+            if count >= 2000 { return ["\(2000.formatted())+ items"] }
+        }
+        return ["\(count.formatted()) item\(count == 1 ? "" : "s")"]
+    }
+
+    /// Counts newlines with memchr over 256 KB chunks. No String decoding,
+    /// constant memory. Caller enforces the size cap and volume policy.
+    private static func lineCountFacts(_ url: URL) -> [String] {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+        defer { try? handle.close() }
+        var count = 0
+        var lastByte: UInt8 = 0x0A
+        while let data = try? handle.read(upToCount: 256 * 1024), !data.isEmpty {
+            data.withUnsafeBytes { (buf: UnsafeRawBufferPointer) in
+                guard var base = buf.baseAddress else { return }
+                var remaining = buf.count
+                while remaining > 0 {
+                    guard let hit = memchr(base, 0x0A, remaining) else { break }
+                    count += 1
+                    let consumed = Int(bitPattern: hit) - Int(bitPattern: base) + 1
+                    base = base.advanced(by: consumed)
+                    remaining -= consumed
+                }
+                lastByte = buf[buf.count - 1]
+            }
+        }
+        if lastByte != 0x0A { count += 1 } // final line without trailing newline
+        return ["\(count.formatted()) line\(count == 1 ? "" : "s")"]
+    }
+
+    // MARK: Fetch pipeline
+
+    private static let lineCountSizeCap = 8 * 1024 * 1024
+    private static let cacheLimit = 64
+
+    // LRU keyed by path string, validated by mtime, so paging back and forth
+    // through a selection never refetches.
+    @MainActor private static var cache: [String: (mtime: Date?, facts: FileFacts)] = [:]
+    @MainActor private static var cacheOrder: [String] = []
+
+    @MainActor
+    private static func cached(_ path: FilePath, mtime: Date?) -> FileFacts? {
+        guard let entry = cache[path.string], entry.mtime == mtime else { return nil }
+        return entry.facts
+    }
+
+    @MainActor
+    private static func store(_ facts: FileFacts, for path: FilePath, mtime: Date?) {
+        if cache[path.string] == nil {
+            cacheOrder.append(path.string)
+            if cacheOrder.count > cacheLimit {
+                cache.removeValue(forKey: cacheOrder.removeFirst())
+            }
+        }
+        cache[path.string] = (mtime, facts)
+    }
+
+    private struct CommonAttrs: Sendable {
+        var size: Int?
+        var created: Date?
+        var modified: Date?
+        var isSymlink = false
+        var symlinkTarget: String?
+        var kindName: String?
+    }
+
+    private static func commonAttrs(_ url: URL) -> CommonAttrs {
+        var common = CommonAttrs()
+        guard let vals = try? url.resourceValues(forKeys: [
+            .fileSizeKey, .creationDateKey, .contentModificationDateKey,
+            .isSymbolicLinkKey, .contentTypeKey,
+        ]) else { return common }
+        common.size = vals.fileSize
+        common.created = vals.creationDate
+        common.modified = vals.contentModificationDate
+        common.isSymlink = vals.isSymbolicLink == true
+        if common.isSymlink {
+            common.symlinkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)
+        }
+        common.kindName = vals.contentType?.localizedDescription
+        return common
+    }
+
+    @MainActor
+    static func fetch(for path: FilePath, kind: PreviewKind) async -> FileFacts {
+        let volumeClass = classify(path)
+        let url = path.url
+
+        // 1. Common facts: size + dates. Never stat offline volumes; prefer
+        //    the SMB index cache on network volumes.
+        var common = CommonAttrs()
+        switch volumeClass {
+        case .offline, .network:
+            if let meta = cachedSMBMeta(path) {
+                common.size = Int(meta.size)
+                common.created = meta.creationDate
+                common.modified = meta.modificationDate
+            }
+        case .internalDisk, .externalLocal:
+            common = await runBlocking { commonAttrs(url) }
+        }
+
+        if case .offline = volumeClass {
+            var facts = FileFacts()
+            if let size = common.size { facts.primary.append(size.humanSize) }
+            facts.primary.append("offline")
+            facts.secondary = datesLine(common)
+            return facts
+        }
+
+        if let hit = cached(path, mtime: common.modified) { return hit }
+
+        // 2. Kind-specific facts, gated per volume so a dead share costs at
+        //    most one parked thread.
+        var kindFacts: [String] = []
+        switch volumeClass {
+        case .internalDisk:
+            kindFacts = await kindSpecificFacts(url, kind: kind, size: common.size, allowContentReads: true)
+        case let .externalLocal(volume), let .network(volume):
+            var allowContentReads = true
+            if case .network = volumeClass { allowContentReads = false }
+            if VolumeFetchGate.tryAcquire(volume.string) {
+                let volumeKey = volume.string
+                kindFacts = await race(timeout: 2) { [size = common.size] in
+                    // The release lives INSIDE the raced operation, in a defer,
+                    // so the slot frees exactly when the (possibly stuck) work
+                    // finishes, never while it is still parked on a dead mount.
+                    defer { Task { @MainActor in VolumeFetchGate.release(volumeKey) } }
+                    return await kindSpecificFacts(url, kind: kind, size: size, allowContentReads: allowContentReads)
+                } ?? []
+            }
+        case .offline:
+            break // handled above
+        }
+
+        var facts = FileFacts()
+        if let size = common.size, kind != .folder { facts.primary.append(size.humanSize) }
+        facts.primary += kindFacts
+        if kind == .quicklook, let kindName = common.kindName { facts.primary.append(kindName) }
+        if common.isSymlink, let target = common.symlinkTarget { facts.primary.append("→ \(target)") }
+        facts.secondary = datesLine(common)
+
+        store(facts, for: path, mtime: common.modified)
+        return facts
+    }
+
+    /// `allowContentReads` is false on network volumes: line counting reads
+    /// full file contents, which is a header-only budget violation over SMB.
+    private static func kindSpecificFacts(_ url: URL, kind: PreviewKind, size: Int?, allowContentReads: Bool) async -> [String] {
+        switch kind {
+        case .image:
+            return await runBlocking { imageFacts(url) }
+        case .pdf:
+            return await runBlocking { pdfFacts(url) }
+        case .video:
+            return await mediaFacts(url, video: true)
+        case .audio:
+            return await mediaFacts(url, video: false)
+        case .folder:
+            return await runBlocking { folderFacts(url) }
+        case .text:
+            guard allowContentReads, let size, size <= lineCountSizeCap else { return [] }
+            return await runBlocking { lineCountFacts(url) }
+        case .archive:
+            return [] // wired up in Task 3 via SevenZip.cachedList
+        case .quicklook:
+            return []
+        }
+    }
+
+    private static func datesLine(_ common: CommonAttrs) -> [String] {
+        var line: [String] = []
+        if let created = common.created {
+            line.append("Created \(created.formatted(date: .abbreviated, time: .omitted))")
+        }
+        if let modified = common.modified {
+            line.append("Modified \(modified.formatted(date: .abbreviated, time: .omitted))")
+        }
+        return line
+    }
 }
 
 // MARK: - Formatting
