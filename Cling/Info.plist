@@ -10,6 +10,8 @@
 	<true/>
 	<key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Cling asks Finder to open the Get Info panel for files.</string>
 	<key>OSLogPreferences</key>
 	<dict>
 		<key>com.lowtechguys.Cling</key>

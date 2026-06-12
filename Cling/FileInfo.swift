@@ -437,3 +437,36 @@ func formatDuration(_ seconds: Double) -> String {
     let s = total % 60
     return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
 }
+
+// MARK: - Finder Get Info
+
+/// Opens Finder's Get Info panel for one file. First use triggers the
+/// one-time "Cling wants to control Finder" Automation prompt.
+func openFinderGetInfo(_ path: FilePath) {
+    // Spawn off-main so the key handler never waits on posix_spawn.
+    Task.detached(priority: .userInitiated) {
+        let script = """
+        on run argv
+            tell application "Finder"
+                open information window of (POSIX file (item 1 of argv) as alias)
+                activate
+            end tell
+        end run
+        """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script, path.string]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { proc in
+            if proc.terminationStatus != 0 {
+                log.error("Finder Get Info failed for \(path.string, privacy: .public) (exit \(proc.terminationStatus))")
+            }
+        }
+        do {
+            try process.run()
+        } catch {
+            log.error("Failed to launch osascript for Get Info: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+}
