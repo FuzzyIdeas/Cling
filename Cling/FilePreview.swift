@@ -97,10 +97,13 @@ struct FilePreviewPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             if let path = current {
+                let kind = PreviewKind(for: path.url)
                 header(for: path)
                 Divider().opacity(0.5)
-                content(for: path)
+                content(for: path, kind: kind)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Divider().opacity(0.4)
+                FileInfoBar(path: path, kind: kind)
             } else {
                 emptyState
             }
@@ -111,13 +114,21 @@ struct FilePreviewPanel: View {
         .onChange(of: selectionKey) {
             // The selected files changed: jump back to the first one.
             index = 0
+            PreviewPanelState.shared.currentPath = current
+        }
+        .onChange(of: index) {
+            PreviewPanelState.shared.currentPath = current
         }
         .onChange(of: paths.count) { _, newValue in pathCount = newValue }
         .onAppear {
             pathCount = paths.count
+            PreviewPanelState.shared.currentPath = current
             installArrowMonitor()
         }
-        .onDisappear { removeArrowMonitor() }
+        .onDisappear {
+            PreviewPanelState.shared.currentPath = nil
+            removeArrowMonitor()
+        }
     }
 
     @State private var index = 0
@@ -218,8 +229,8 @@ struct FilePreviewPanel: View {
     }
 
     @ViewBuilder
-    private func content(for path: FilePath) -> some View {
-        switch PreviewKind(for: path.url) {
+    private func content(for path: FilePath, kind: PreviewKind) -> some View {
+        switch kind {
         case .folder:
             FolderPreview(path: path)
         case .archive:

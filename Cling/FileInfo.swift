@@ -391,6 +391,42 @@ enum FileInfo {
     }
 }
 
+// MARK: - FileInfoBar
+
+/// Two-line metadata footer under the preview content. Reserves its height
+/// while facts load so the layout never jumps; facts that fail or time out
+/// are simply absent.
+struct FileInfoBar: View {
+    let path: FilePath
+    let kind: PreviewKind
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(facts.primary.isEmpty ? " " : facts.primary.joined(separator: " · "))
+            Text(facts.secondary.isEmpty ? " " : facts.secondary.joined(separator: " · "))
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .monospacedDigit()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .task(id: "\(path.string)|\(kind)") {
+            // .task(id:) cancels when the path (or its detected kind, which
+            // can flip once QuickLook support detection finishes) changes;
+            // that is the generation token dropping late results from an
+            // abandoned fetch.
+            facts = FileFacts()
+            let result = await FileInfo.fetch(for: path, kind: kind)
+            if !Task.isCancelled { facts = result }
+        }
+    }
+
+    @State private var facts = FileFacts()
+}
+
 // MARK: - Formatting
 
 func formatDuration(_ seconds: Double) -> String {
