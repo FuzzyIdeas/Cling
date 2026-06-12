@@ -827,6 +827,19 @@ struct ContentView: View {
                 prefillQuickFilter()
                 return nil
             }
+            // ⌘I → Finder Get Info for the previewed file (single selection
+            // only when the preview panel is hidden, so 50 selected files can
+            // never cascade 50 info panels)
+            if mods == .command, chars == "i" {
+                if showFilePreview, isShowingResultsTable, let path = PreviewPanelState.shared.currentPath {
+                    openFinderGetInfo(path)
+                } else if selectedResults.count == 1, let path = selectedResults.first {
+                    openFinderGetInfo(path)
+                } else {
+                    NSSound.beep()
+                }
+                return nil
+            }
             // ⌃0 → sort by score
             if mods == .control, chars == "0" {
                 fuzzy.sortField = .score
@@ -1305,6 +1318,9 @@ struct ContentView: View {
             } else {
                 revealInFinder(existing.map(\.url))
             }
+        }
+        Button("Get Info") {
+            if let path = paths.first { openFinderGetInfo(path) }
         }
         Divider()
         Button("Copy Path\(paths.count > 1 ? "s" : "")") {

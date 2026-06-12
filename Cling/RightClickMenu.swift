@@ -28,6 +28,14 @@ struct RightClickMenu: View {
         Button("Open") { openSelection() }
         Button("Show in Finder") { showInFinder() }
         Button("Quick Look") { quicklookSelection() }
+        Button("Get Info") {
+            let paths = contextPaths.isEmpty ? Array(selectedResults) : contextPaths
+            // One panel only, even when many files are right-clicked.
+            if let path = paths.first { openFinderGetInfo(path) }
+        }
+        // Display hint only: the actual ⌘I keystroke is handled by the
+        // content shortcut monitor in ContentView, which swallows the event.
+        .keyboardShortcut("i", modifiers: .command)
 
         Divider()
 
