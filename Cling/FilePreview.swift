@@ -695,7 +695,7 @@ struct ArchivePreview: View {
 
     private func load() async {
         loading = true
-        listing = await SevenZip.list(path.url)
+        listing = await SevenZip.cachedList(path.url).value
         loading = false
     }
 }
@@ -715,6 +715,7 @@ enum SevenZip {
     struct Listing {
         let entries: [Entry]
         let truncated: Bool
+        var totalUncompressedSize: Int64 = 0
     }
 
     /// Archive, disk-image, and filesystem-image extensions 7-Zip can list.
@@ -773,18 +774,38 @@ enum SevenZip {
                     watchdog.cancel()
                     process.waitUntilExit()
 
-                    let (entries, capped) = parse(String(decoding: data, as: UTF8.self))
+                    let (entries, capped, totalSize) = parse(String(decoding: data, as: UTF8.self))
                     // A clean run with no entries (unsupported/corrupt) → nil so we fall back to QuickLook.
                     if entries.isEmpty, !flooded, process.terminationStatus != 0 {
                         continuation.resume(returning: nil)
                     } else {
-                        continuation.resume(returning: Listing(entries: entries, truncated: flooded || capped))
+                        continuation.resume(returning: Listing(entries: entries, truncated: flooded || capped, totalUncompressedSize: totalSize))
                     }
                 }
             }
         } onCancel: {
             if process.isRunning { process.terminate() }
         }
+    }
+
+    /// Memoized listings keyed by path+mtime so the archive preview and the
+    /// info bar share a single 7z subprocess per archive. Tiny FIFO cache:
+    /// listings of huge archives can hold thousands of entries.
+    @MainActor private static var listTasks: [String: Task<Listing?, Never>] = [:]
+    @MainActor private static var listTaskOrder: [String] = []
+
+    @MainActor
+    static func cachedList(_ url: URL) -> Task<Listing?, Never> {
+        let mtime = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let key = "\(url.path)|\(mtime)"
+        if let task = listTasks[key] { return task }
+        let task = Task { await list(url) }
+        listTasks[key] = task
+        listTaskOrder.append(key)
+        if listTaskOrder.count > 8 {
+            listTasks.removeValue(forKey: listTaskOrder.removeFirst())
+        }
+        return task
     }
 
     // Bounds so a zip bomb or huge archive can never hang the UI or run forever.
@@ -795,11 +816,13 @@ enum SevenZip {
     /// Pairs each `Path =` with the following `Folder =`/`Mode =` marker, which
     /// drops the archive's own header line and tells files from directories.
     /// Stops at `maxEntries` so a bomb with millions of entries stays bounded.
-    private static func parse(_ text: String) -> (entries: [Entry], capped: Bool) {
+    private static func parse(_ text: String) -> (entries: [Entry], capped: Bool, totalSize: Int64) {
         var seen = Set<String>()
         var entries: [Entry] = []
         var path: String?
         var capped = false
+        var pastHeader = false
+        var totalSize: Int64 = 0
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
             if entries.count >= maxEntries { capped = true; break }
             let line = String(rawLine)
@@ -815,10 +838,14 @@ enum SevenZip {
                     entries.append(Entry(name: p, isDir: line.dropFirst("Mode = ".count).first == "d"))
                 }
                 path = nil
+            } else if line == "----------" {
+                pastHeader = true
+            } else if pastHeader, line.hasPrefix("Size = "), let size = Int64(line.dropFirst("Size = ".count)) {
+                totalSize += size
             }
         }
         let sorted = entries.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        return (sorted, capped)
+        return (sorted, capped, totalSize)
     }
 }
 

@@ -300,6 +300,27 @@ enum FileInfo {
 
         if let hit = cached(path, mtime: common.modified) { return hit }
 
+        if kind == .archive {
+            var facts = FileFacts()
+            if let size = common.size { facts.primary.append(size.humanSize) }
+            // cachedList shares the 7z subprocess with ArchivePreview; the
+            // subprocess has its own 6s watchdog, and offline volumes never
+            // reach this point.
+            if let listing = await SevenZip.cachedList(url).value {
+                let n = listing.entries.count
+                facts.primary.append("\(n.formatted())\(listing.truncated ? "+" : "") file\(n == 1 ? "" : "s")")
+                if listing.totalUncompressedSize > 0 {
+                    // Truncated listings carry a partial sum, marked with "+"
+                    // just like the file count.
+                    facts.primary.append("\(Int(listing.totalUncompressedSize).humanSize)\(listing.truncated ? "+" : "") uncompressed")
+                }
+            }
+            if common.isSymlink, let target = common.symlinkTarget { facts.primary.append("→ \(target)") }
+            facts.secondary = datesLine(common)
+            store(facts, for: path, mtime: common.modified)
+            return facts
+        }
+
         // 2. Kind-specific facts, gated per volume so a dead share costs at
         //    most one parked thread.
         var kindFacts: [String] = []
