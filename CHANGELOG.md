@@ -1,3 +1,31 @@
+# 2.5.0
+## Features
+
+- **Group toggles** turn whole sets of exclusion rules on or off without writing any gitignore syntax
+- **Exclude from Index** in the right-click menu allows selecting a smarter ignore rule
+    - Smart suggestions recognize common layouts so one rule can cover many files: clear out an app's `Contents/MacOS` subfolders while keeping the executables, skip every `node_modules` or build folder, skip the contents of a Photos or Final Cut library, drop a hidden config or secrets folder wherever it shows up
+- **Reindex excluded path** appears in the results when a file you searched for is being hidden
+    > It names the ignore rule or blocklist entry hiding the file and offers to lift it or add an exception, with no ignore syntax to write by hand
+- **Per-scope ignore rules** for Applications, System, and the rest of the disk, editable in *Settings*
+- **Respect each project's .gitignore**, an opt-in toggle in *Settings*
+    > While indexing your Home folder, each project's own `.gitignore` and `.ignore` files are applied, so build output like `node_modules`, `target`, or `dist` drops out wherever it appears
+
+## Fixes
+
+- Dropping files into Finder with `⌥⏎` copies them instead of leaving aliases behind
+- Installing the command-line tool checks its symlink and no longer overwrites a symlinked shell config
+
+## Improvements
+
+- **Volumes** settings moved into their own section
+- App binaries are searchable by default
+    > Indexing an app bundle keeps the executable in `Contents/MacOS` and the embedded framework binaries, while skipping the rest of the bundle's clutter
+- Cleaner results out of the box across photo, video, audio, and developer tools
+    > Default exclusions cover more cache and build junk: media caches (Adobe, Lightroom, Final Cut), dependency and build folders, simulator runtimes, device backups, and large machine-learning and virtual-machine files
+- DEVONthink documents are searchable
+    > Files kept inside DEVONthink databases, stored in a folder normally hidden from search, now show up in results
+- **Reset to Default** on every ignore list and the blocklist, plus a single **Reset All to Default** that restores Cling's built-in rules everywhere at once
+
 # 2.4.0
 ## Raycast extension
 
