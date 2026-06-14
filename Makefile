@@ -53,6 +53,7 @@ changelog: Releases/changelog.html
 
 release:
 	gh release create v$(VERSION) -F ReleaseNotes/$(VERSION).md "Releases/$(NAME)-$(VERSION).dmg#$(NAME).dmg"
+	git fetch --tags
 
 sentry:
 	op run -- sentry-cli upload-dif --include-sources -o alin-panaitiu -p cling --wait -- $(DERIVED_DATA_DIR)/Build/Intermediates.noindex/ArchiveIntermediates/$(NAME)/BuildProductsPath/Release/

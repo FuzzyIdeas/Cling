@@ -1907,7 +1907,9 @@ class FuzzyClient {
     func computeOpenWithApps(for urls: [URL]) {
         computeOpenWithTask = mainAsyncAfter(ms: 100) { [self] in
             commonOpenWithApps = commonApplications(for: urls).sorted(by: \.lastPathComponent)
-            openWithAppShortcuts = computeShortcuts(for: commonOpenWithApps)
+            // Keep open-with app hotkeys from stealing letters already bound to
+            // ⌘⌥ actions (see ActionButtons), e.g. ⌘⌥C for Copy to...
+            openWithAppShortcuts = computeShortcuts(for: commonOpenWithApps, reserved: reservedOptionCommandLetters)
             for app in commonOpenWithApps where appIconCache[app.path] == nil {
                 let img = NSWorkspace.shared.icon(forFile: app.path)
                 img.size = NSSize(width: 16, height: 16)
@@ -2090,6 +2092,11 @@ class FuzzyClient {
 }
 
 // MARK: - Helpers
+
+/// Letters bound to ⌘⌥<letter> actions (see ActionButtons), so open-with app
+/// hotkeys never override them. Only plain-letter combos collide; ⌘⌥⏎/⌘⌥⌫ and
+/// ⌘⌥⇧-prefixed combos use other keys and are safe.
+let reservedOptionCommandLetters: Set<Character> = ["c"] // ⌘⌥C Copy to...
 
 func computeShortcuts(for urls: [URL], reserved: Set<Character> = []) -> [URL: Character] {
     var usedShortcuts = reserved
