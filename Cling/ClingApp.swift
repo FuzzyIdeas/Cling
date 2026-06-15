@@ -458,6 +458,10 @@ class AppDelegate: LowtechProAppDelegate {
         cleanup()
     }
 
+    func allowedChannels(for _: SPUUpdater) -> Set<String> {
+        lowtechAllowedChannels()
+    }
+
     private var windowConfigured = false
     private var settingsWindowConfigured = false
     private var mainWindowDelegateProxy: MainWindowDelegateProxy?

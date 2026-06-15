@@ -1,5 +1,5 @@
 {
-  "originHash" : "5e9b80014f38c239fa5caddb65f7f9374cdfd0f76bfaa9eb268a2df8c81f7df6",
+  "originHash" : "209ba8954dade39a207e13e5d0a2583b812da9247801f1450894c340d70ea50e",
   "pins" : [
     {
       "identity" : "appreceiptvalidator",
@@ -33,8 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/sindresorhus/Defaults",
       "state" : {
-        "revision" : "3efef5a28ebdbbe922d4a2049493733ed14475a6",
-        "version" : "7.3.1"
+        "revision" : "5bfac4928f000fabdbef7e4ed0251399bb0841c9",
+        "version" : "9.0.8"
       }
     },
     {
@@ -79,7 +79,7 @@
       "location" : "https://github.com/FuzzyIdeas/Lowtech",
       "state" : {
         "branch" : "ventura",
-        "revision" : "e06378ec90b2ef8bda8f4c4b186e1059cf24d3b2"
+        "revision" : "61e09741aa759004ad5f116d5b902570bce7da6b"
       }
     },
     {
@@ -87,8 +87,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/alin23/Magnet",
       "state" : {
-        "revision" : "45cadc3e5f95d33bddea532886370d09257af45d",
-        "version" : "4.1.2"
+        "revision" : "b39cadbeb201410be333db2373d3be2bd7c27a69",
+        "version" : "4.1.3"
       }
     },
     {
@@ -161,6 +161,15 @@
       "state" : {
         "revision" : "f61bfef7079c0d5c426bb887726bc658628b1049",
         "version" : "1.0.2"
+      }
+    },
+    {
+      "identity" : "swift-syntax",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-syntax",
+      "state" : {
+        "revision" : "79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1",
+        "version" : "603.0.2"
       }
     },
     {

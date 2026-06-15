@@ -28,7 +28,7 @@ let envState = EnvState()
 // MARK: - SettingsCategory
 
 private enum SettingsCategory: String, CaseIterable, Identifiable {
-    case general, interface, shortcuts, apps, search, volumes, filters, scripts, exclusions, about
+    case general, interface, shortcuts, apps, search, volumes, filters, scripts, exclusions, licenseAndUpdates, about
 
     var id: String { rawValue }
 
@@ -43,6 +43,7 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         case .filters: "Filters"
         case .scripts: "Scripts"
         case .exclusions: "Excluded Paths"
+        case .licenseAndUpdates: "License & updates"
         case .about: "About"
         }
     }
@@ -58,6 +59,7 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         case .filters: "line.3.horizontal.decrease.circle"
         case .scripts: "terminal"
         case .exclusions: "eye.slash"
+        case .licenseAndUpdates: "key"
         case .about: "info.circle"
         }
     }
@@ -73,7 +75,8 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         case .filters: .teal
         case .scripts: .indigo
         case .exclusions: .red
-        case .about: .purple
+        case .licenseAndUpdates: .yellow
+        case .about: .pink
         }
     }
 }
@@ -102,7 +105,8 @@ struct SettingsView: View {
                     sidebarRow(.apps)
                     sidebarRow(.scripts)
                 }
-                Section {
+                Section("Support") {
+                    sidebarRow(.licenseAndUpdates)
                     sidebarRow(.about)
                 }
             }
@@ -145,6 +149,7 @@ struct SettingsView: View {
         case .filters: FiltersSettingsPane()
         case .scripts: ScriptsSettingsPane()
         case .exclusions: ExclusionsSettingsPane()
+        case .licenseAndUpdates: LicenseAndUpdatesSettingsPane()
         case .about: AboutSettingsPane()
         }
     }
@@ -1042,90 +1047,83 @@ private struct ExclusionsSettingsPane: View {
     }
 }
 
-// MARK: - AboutSettingsPane
+// MARK: - LicenseAndUpdatesSettingsPane
 
-private struct AboutSettingsPane: View {
+private struct LicenseAndUpdatesSettingsPane: View {
     @ObservedObject var updateManager = UM
-    @Default(.checkForUpdates) private var checkForUpdates
-    @Default(.updateCheckInterval) private var updateCheckInterval
-    @State private var scoringJSON: String = ScoringConfig.load().toJSON()
 
     var body: some View {
-        Form {
-            if let updater = updateManager.updater {
-                Section("Updates") {
-                    SettingRow(
-                        title: "Check interval",
-                        detail: "How often Cling checks for new versions."
-                    ) {
-                        Picker("", selection: $updateCheckInterval) {
-                            Text("Daily").tag(UpdateCheckInterval.daily.rawValue)
-                            Text("Every 3 days").tag(UpdateCheckInterval.everyThreeDays.rawValue)
-                            Text("Weekly").tag(UpdateCheckInterval.weekly.rawValue)
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(width: 220)
-                    }
-
-                    DescriptiveToggle(
-                        title: "Automatically check for updates",
-                        detail: "Download and install updates in the background.",
-                        isOn: $checkForUpdates
-                    )
-
-                    HStack {
-                        Text("v\(Bundle.main.version)")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        GentleUpdateView(updater: updater)
-                    }
+        VStack(spacing: 0) {
+            if let pro = PM.pro, let updater = updateManager.updater {
+                Form {
+                    LicenseAndUpdatesView(pro: pro, updater: updater, appName: "Cling")
                 }
-            }
-
-            if let pro = PM.pro {
-                Section("Pro License") {
-                    LicenseView(pro: pro)
-                    #if DEBUG
-                        HStack {
-                            Button("Reset Trial") { AppDelegate.shared?.resetTrial() }
-                            Button("Expire Trial") { AppDelegate.shared?.expireTrial() }
-                        }
-                    #endif
-                }
+                .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
             }
 
             #if DEBUG
-                Section("Scoring Config (Debug)") {
-                    TextEditor(text: $scoringJSON)
-                        .font(.system(size: 11, design: .monospaced))
-                        .contentMargins(6)
-                        .frame(height: 260)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary, lineWidth: 0.5))
-                    HStack {
-                        Button("Apply") {
-                            if let config = ScoringConfig.fromJSON(scoringJSON) {
-                                config.save()
-                                reloadScoringConfig()
+                HStack {
+                    Button("Reset Trial") { AppDelegate.shared?.resetTrial() }
+                    Button("Expire Trial") { AppDelegate.shared?.expireTrial() }
+                    Spacer()
+                }
+                .padding()
+            #endif
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - AboutSettingsPane
+
+private struct AboutSettingsPane: View {
+    @State private var scoringJSON: String = ScoringConfig.load().toJSON()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            AboutView(
+                appName: "Cling",
+                pro: PM.pro,
+                updater: UM.updater,
+                websiteURL: URL(string: "https://lowtechguys.com/cling"),
+                contactURL: URL(string: "https://lowtechguys.com/contact?app=Cling"),
+                discordURL: URL(string: "https://discord.gg/ERxsH9Ek3q")
+            )
+
+            #if DEBUG
+                Form {
+                    Section("Scoring Config (Debug)") {
+                        TextEditor(text: $scoringJSON)
+                            .font(.system(size: 11, design: .monospaced))
+                            .contentMargins(6)
+                            .frame(height: 260)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary, lineWidth: 0.5))
+                        HStack {
+                            Button("Apply") {
+                                if let config = ScoringConfig.fromJSON(scoringJSON) {
+                                    config.save()
+                                    reloadScoringConfig()
+                                }
                             }
-                        }
-                        Button("Reset to Defaults") {
-                            ScoringConfig.default.save()
-                            reloadScoringConfig()
-                            scoringJSON = ScoringConfig.default.toJSON()
-                        }
-                        Spacer()
-                        if ScoringConfig.fromJSON(scoringJSON) == nil {
-                            Text("Invalid JSON").foregroundColor(.red).font(.system(size: 11))
+                            Button("Reset to Defaults") {
+                                ScoringConfig.default.save()
+                                reloadScoringConfig()
+                                scoringJSON = ScoringConfig.default.toJSON()
+                            }
+                            Spacer()
+                            if ScoringConfig.fromJSON(scoringJSON) == nil {
+                                Text("Invalid JSON").foregroundColor(.red).font(.system(size: 11))
+                            }
                         }
                     }
                 }
+                .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
             #endif
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
