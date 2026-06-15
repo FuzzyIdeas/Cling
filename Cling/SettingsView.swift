@@ -234,7 +234,7 @@ private struct InterfaceSettingsPane: View {
         Form {
             Section("Rows") {
                 DescriptiveToggle(
-                    title: "Action buttons row",
+                    title: "Action Bar row",
                     detail: "The bar of buttons under the results: Open, Copy, Trash, Rename, etc.",
                     isOn: $showActionRow
                 )
@@ -272,7 +272,7 @@ private struct InterfaceSettingsPane: View {
                     .fixedSize()
                 }
 
-                SettingRow(title: "Overflow") {
+                SettingRow(title: "Show Action Menu") {
                     Picker("", selection: $toolbarOverflowMode) {
                         Text("Auto").tag(ToolbarOverflowMode.auto)
                         Text("Always").tag(ToolbarOverflowMode.always)
@@ -282,7 +282,7 @@ private struct InterfaceSettingsPane: View {
                     .fixedSize()
                 }
 
-                SettingRow(title: "Shortcut hint") {
+                SettingRow(title: "Keyboard shortcut hint") {
                     Picker("", selection: $toolbarShortcutHint) {
                         Text("Tooltip").tag(ToolbarShortcutHint.tooltip)
                         Text("Menu + tooltip").tag(ToolbarShortcutHint.menuAndTooltip)

@@ -28,7 +28,7 @@ struct ToolbarAction: Identifiable {
         .init(id: .quickLook,       segment: .open,        title: "Quick Look",         systemImage: "eye",                                       isDestructive: false, defaultVisible: false),
         .init(id: .openWith,        segment: .open,        title: "Open With…",         systemImage: "square.and.arrow.up.on.square",             isDestructive: false, defaultVisible: false),
         .init(id: .openInTerminal,  segment: .open,        title: "Open in Terminal",   systemImage: "terminal",                                  isDestructive: false, defaultVisible: false),
-        .init(id: .openInEditor,    segment: .open,        title: "Open in Editor",     systemImage: "chevron.left.forward.slash.chevron.right",  isDestructive: false, defaultVisible: false),
+        .init(id: .openInEditor,    segment: .open,        title: "Open in Editor",     systemImage: "curlybraces",  isDestructive: false, defaultVisible: false),
         .init(id: .copy,            segment: .fileOps,     title: "Copy",               systemImage: "doc.on.doc",                                isDestructive: false, defaultVisible: true),
         .init(id: .copyPaths,       segment: .fileOps,     title: "Copy paths",         systemImage: "text.alignleft",                            isDestructive: false, defaultVisible: false),
         .init(id: .moveTo,          segment: .fileOps,     title: "Move to…",           systemImage: "arrow.right.doc.on.clipboard",              isDestructive: false, defaultVisible: true),

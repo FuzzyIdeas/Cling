@@ -313,7 +313,7 @@ enum ToolbarShortcutHint: String, Codable, Defaults.Serializable, CaseIterable {
 
 extension ToolbarDensity {
     var fontSize: CGFloat { self == .compact ? 9 : 10 }
-    var spacing: CGFloat { self == .compact ? 4 : 6 }
+    var spacing: CGFloat { self == .compact ? 6 : 8 }
 }
 
 // MARK: - HiddenActionButton
