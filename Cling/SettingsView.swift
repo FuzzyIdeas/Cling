@@ -36,13 +36,13 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .general: "General"
         case .interface: "Interface"
-        case .shortcuts: "Shortcuts"
+        case .shortcuts: "Keyboard Shortcuts"
         case .apps: "Open With"
         case .search: "Search"
-        case .volumes: "Volumes"
+        case .volumes: "Drives & Volumes"
         case .filters: "Filters"
         case .scripts: "Scripts"
-        case .exclusions: "Exclusions"
+        case .exclusions: "Excluded Paths"
         case .about: "About"
         }
     }
