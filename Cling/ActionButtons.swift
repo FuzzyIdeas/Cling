@@ -27,7 +27,7 @@ struct ActionButtons: View {
     @Default(.barActions) var barActions
     @Default(.hiddenActions) var hiddenActions
     @Default(.toolbarShowDividers) var showDividers
-    @Default(.toolbarOverflowMode) var overflowMode
+    @Default(.showActionMenu) var showActionMenu
     @Default(.toolbarLabelStyle) var labelStyle
     @Default(.toolbarDensity) var density
     @ObservedObject var km = KM
@@ -192,18 +192,18 @@ struct ActionButtons: View {
             // Skip actions that have a native .keyboardShortcut on an Action Menu item — those fire
             // via macOS menu key equivalents even when the menu is closed, so dispatching them here
             // too would execute the action twice. An action is "owned by the menu" when:
-            //   overflowMode != .off  AND  action is not hidden  AND  action is not in barActions
+            //   showActionMenu == true  AND  action is not hidden  AND  action is not in barActions
             //   AND  action.segment != .alternate
             if let pressed = KeyboardShortcuts.Shortcut(event: event) {
                 let currentHidden = Defaults[.hiddenActions]
                 let currentBarActions = Defaults[.barActions]
-                let currentOverflowMode = Defaults[.toolbarOverflowMode]
+                let menuEnabled = Defaults[.showActionMenu]
                 let handled = MainActor.assumeIsolated {
                     for action in ToolbarAction.rebindable where !currentHidden.contains(action.id) {
                         if (action.id == .copy || action.id == .trash), focusBinding.wrappedValue != .list { continue }
                         // If this action is rendered as an Action Menu item with a native shortcut,
                         // the menu key equivalent handles dispatch — skip to avoid double-fire.
-                        if currentOverflowMode != .off,
+                        if menuEnabled,
                            !currentHidden.contains(action.id),
                            !currentBarActions.contains(action.id),
                            action.segment != .alternate
@@ -628,7 +628,7 @@ struct ActionButtons: View {
     }
 
     @ViewBuilder var overflowButton: some View {
-        let show = overflowMode == .always || (overflowMode == .auto && !overflowActions.isEmpty)
+        let show = showActionMenu && !overflowActions.isEmpty
         if show {
             Menu {
                 ForEach(ActionSegment.segmentSections, id: \.self) { segment in

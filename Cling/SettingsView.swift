@@ -217,7 +217,7 @@ private struct InterfaceSettingsPane: View {
 
     @Default(.toolbarLabelStyle) private var toolbarLabelStyle
     @Default(.toolbarDensity) private var toolbarDensity
-    @Default(.toolbarOverflowMode) private var toolbarOverflowMode
+    @Default(.showActionMenu) private var showActionMenu
     @Default(.toolbarShowDividers) private var toolbarShowDividers
     @Default(.toolbarRowBackground) private var toolbarRowBackground
     @Default(.defaultLinkExpiration) private var defaultLinkExpiration
@@ -274,15 +274,11 @@ private struct InterfaceSettingsPane: View {
             .disabled(!showActionRow)
 
             Section {
-                SettingRow(title: "Show Action Menu", detail: "The \u{22EF} menu holds actions you keep out of the bar. Auto shows it only when something's there.") {
-                    Picker("", selection: $toolbarOverflowMode) {
-                        Text("Auto").tag(ToolbarOverflowMode.auto)
-                        Text("Always").tag(ToolbarOverflowMode.always)
-                        Text("Off").tag(ToolbarOverflowMode.off)
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                }
+                DescriptiveToggle(
+                    title: "Show Action Menu",
+                    detail: "The \u{22EF} menu holds actions you keep out of the bar. Shows only when there are overflow actions.",
+                    isOn: $showActionMenu
+                )
 
                 DescriptiveToggle(
                     title: "Show segment dividers",

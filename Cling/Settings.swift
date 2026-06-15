@@ -308,7 +308,6 @@ let DEFAULT_QUICK_FILTERS = [
 
 enum ToolbarLabelStyle: String, Codable, Defaults.Serializable, CaseIterable { case iconAndText, textOnly, iconOnly }
 enum ToolbarDensity: String, Codable, Defaults.Serializable, CaseIterable { case regular, compact }
-enum ToolbarOverflowMode: String, Codable, Defaults.Serializable, CaseIterable { case auto, always, off }
 
 extension ToolbarDensity {
     var fontSize: CGFloat { self == .compact ? 9 : 10 }
@@ -537,7 +536,7 @@ extension Defaults.Keys {
     static let toolbarLabelStyle       = Key<ToolbarLabelStyle>("toolbarLabelStyle", default: .iconAndText)
     static let toolbarDensity          = Key<ToolbarDensity>("toolbarDensity", default: .regular)
     static let toolbarShowDividers     = Key<Bool>("toolbarShowDividers", default: true)
-    static let toolbarOverflowMode     = Key<ToolbarOverflowMode>("toolbarOverflowMode", default: .auto)
+    static let showActionMenu          = Key<Bool>("showActionMenu", default: true)
     static let toolbarRowBackground    = Key<Bool>("toolbarRowBackground", default: true)
     static let barActions              = Key<[ActionID]>("barActions", default: ToolbarAction.defaultBar)
     static let hiddenActions           = Key<Set<ActionID>>("hiddenActions", default: [])
