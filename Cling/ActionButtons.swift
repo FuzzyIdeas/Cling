@@ -30,6 +30,7 @@ struct ActionButtons: View {
     @Default(.toolbarOverflowMode) var overflowMode
     @Default(.toolbarLabelStyle) var labelStyle
     @Default(.toolbarDensity) var density
+    @Default(.toolbarShortcutHint) var shortcutHint
     @ObservedObject var km = KM
 
     var body: some View {
@@ -486,6 +487,8 @@ struct ActionButtons: View {
         }
     }
 
+    var showingShortcutBadges: Bool { (km.rcmd || km.lcmd) && !isAnySheetOpen }
+
     var visibleBarActions: [ToolbarAction] {
         barActions.compactMap { ToolbarAction.byID[$0] }
             .filter { !hiddenActions.contains($0.id) && isConfigured($0.id) && $0.segment != .alternate }
@@ -510,9 +513,20 @@ struct ActionButtons: View {
         .help(tooltip(for: action))
         .buttonStyle(.text(color: color))
         .disabled(!isAvailable(action.id))
+        .shortcutBadge(shortcutString(action.id), visible: showingShortcutBadges)
     }
 
-    func tooltip(for action: ToolbarAction) -> String { action.title }
+    @MainActor func shortcutString(_ id: ActionID) -> String {
+        guard ToolbarAction.rebindable.contains(where: { $0.id == id }),
+              let sc = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: id)) else { return "" }
+        return sc.description
+    }
+
+    @MainActor func tooltip(for action: ToolbarAction) -> String {
+        guard shortcutHint != .never else { return action.title }
+        let s = shortcutString(action.id)
+        return s.isEmpty ? action.title : "\(action.title)  \(s)"
+    }
 
     @ViewBuilder var overflowButton: some View {
         let show = overflowMode == .always || (overflowMode == .auto && !overflowActions.isEmpty)
@@ -523,7 +537,9 @@ struct ActionButtons: View {
                     if !items.isEmpty {
                         Section(segment.title) {
                             ForEach(items) { a in
-                                Button { execute(a.id) } label: { Label(a.title, systemImage: a.systemImage) }
+                                let sc = shortcutHint == .menuAndTooltip ? shortcutString(a.id) : ""
+                                let title = sc.isEmpty ? a.title : "\(a.title)  \(sc)"
+                                Button { execute(a.id) } label: { Label(title, systemImage: a.systemImage) }
                                     .disabled(!isAvailable(a.id))
                             }
                         }
