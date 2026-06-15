@@ -362,50 +362,34 @@ struct ActionButtons: View {
 
     private var showInFinderButton: some View {
         Button("⌘⏎ Show in Finder") {
-            RH.trackRun(selectedResults)
-            revealInFinder(selectedResults.map(\.url))
+            showInFinder()
         }
         .help("Show the selected files in Finder")
     }
 
     @ViewBuilder
     private var openInTerminalButton: some View {
-        if let terminal = terminalApp.existingFilePath?.url {
+        if terminalApp.existingFilePath != nil {
             Button("⌘T Open in \(terminalApp.filePath?.stem ?? "Terminal")") {
-                RH.trackRun(selectedResults)
-                let dirs = selectedResults.map { $0.isDir ? $0.url : $0.dir.url }.uniqued
-                NSWorkspace.shared.open(
-                    dirs, withApplicationAt: terminal, configuration: .init(),
-                    completionHandler: { _, _ in }
-                )
+                openInTerminal()
             }
             .help("Open the selected files in Terminal")
         }
     }
     @ViewBuilder
     private var openInEditorButton: some View {
-        if let editor = editorApp.existingFilePath?.url {
+        if editorApp.existingFilePath != nil {
             Button("⌘E Edit") {
-                RH.trackRun(selectedResults)
-                NSWorkspace.shared.open(
-                    selectedResults.map(\.url), withApplicationAt: editor, configuration: .init(),
-                    completionHandler: { _, _ in }
-                )
+                openInEditor()
             }
             .help("Open the selected files in the configured editor (\(editorApp.filePath?.stem ?? "TextEdit"))")
         }
     }
     @ViewBuilder
     private var shelveButton: some View {
-        if let shelf = shelfApp.existingFilePath?.url {
+        if shelfApp.existingFilePath != nil {
             Button("⌘S Shelve in \(shelfApp.filePath?.stem ?? "shelf app")") {
-                RH.trackRun(selectedResults)
-                let config = NSWorkspace.OpenConfiguration()
-                config.activates = false
-                NSWorkspace.shared.open(
-                    selectedResults.map(\.url), withApplicationAt: shelf, configuration: config,
-                    completionHandler: { _, _ in }
-                )
+                shelve()
             }
             .help("Shelve the selected files in \(shelfApp.filePath?.stem ?? "shelf app")")
         }
@@ -455,8 +439,7 @@ struct ActionButtons: View {
 
     private var openWithPickerButton: some View {
         Button("") {
-            focused.wrappedValue = .openWith
-            isPresentingOpenWithPicker = true
+            openWithPicker()
         }
         .buttonStyle(.plain)
         .opacity(0)
@@ -479,11 +462,7 @@ struct ActionButtons: View {
             .disabled(selectedResults.contains(where: \.isOnReadOnlyVolume))
         } else {
             Button("⌘⌫ Trash", role: .destructive) {
-                if suppressTrashConfirm {
-                    moveToTrash()
-                } else {
-                    isPresentingConfirm = true
-                }
+                trashSelected()
             }
             .help("Move the selected files to the trash")
             .disabled(selectedResults.contains(where: \.isOnReadOnlyVolume))
@@ -531,7 +510,7 @@ struct ActionButtons: View {
 
     private var renameButton: some View {
         Button("⌘R Rename") {
-            isPresentingRenameView = true
+            renameSelected()
         }
         .sheet(isPresented: $isPresentingRenameView) {
             RenameView(originalPaths: selectedResults.arr, submission: $renameSubmission)
@@ -555,8 +534,7 @@ struct ActionButtons: View {
            let target = appManager.axDropTarget(for: app)
         {
             Button("⌥⏎ Drop into \(target.name)") {
-                RH.trackRun(selectedResults)
-                appManager.dropToFocusedElement(paths: selectedResults.arr)
+                dropToFocusedElement()
             }
             .help("Drop into \(target.name) using a real drag-drop event")
             .disabled(selectedResults.isEmpty)
@@ -566,8 +544,7 @@ struct ActionButtons: View {
     @ViewBuilder
     private var dropToZoneButton: some View {
         Button("⌥⇧⏎ Drag and drop to zone") {
-            RH.trackRun(selectedResults)
-            appManager.dropToZone(paths: selectedResults.arr)
+            dropToZone()
         }
         .help("Pick a screen zone with the keyboard, then drop the files there")
         .disabled(selectedResults.isEmpty)
@@ -580,11 +557,7 @@ struct ActionButtons: View {
            !isConfiguredHelperApp(appURL)
         {
             Button("⌘⌥⏎ Open with \(app.name ?? "frontmost app")") {
-                RH.trackRun(selectedResults)
-                NSWorkspace.shared.open(
-                    selectedResults.map(\.url), withApplicationAt: appURL, configuration: .init(),
-                    completionHandler: { _, _ in }
-                )
+                openWithFrontmostApp()
             }
             .help("Open the selected files with \(app.name ?? "the frontmost app")")
             .disabled(selectedResults.isEmpty)
@@ -598,6 +571,118 @@ struct ActionButtons: View {
         }
         return helpers.contains(target)
     }
+
+    // MARK: - Action dispatch
+
+    func execute(_ id: ActionID) {
+        switch id {
+        case .open:                 openSelectedResults()
+        case .showInFinder:         showInFinder()
+        case .quickLook:            quicklook()
+        case .openWith:             openWithPicker()
+        case .openInTerminal:       openInTerminal()
+        case .openInEditor:         openInEditor()
+        case .copy:                 copyFiles()
+        case .copyPaths:            copyPaths()
+        case .moveTo:               moveTo()
+        case .rename:               renameSelected()
+        case .shelve:               shelve()
+        case .sendSecurely:         startSecureSend()
+        case .pasteToFrontmost:     pasteToFrontmostApp(inTerminal: appManager.frontmostAppIsTerminal)
+        case .trash:                trashSelected()
+        case .dropToFocusedElement: dropToFocusedElement()
+        case .dropToZone:           dropToZone()
+        case .openWithFrontmost:    openWithFrontmostApp()
+        }
+    }
+
+    func isAvailable(_ id: ActionID) -> Bool {
+        switch id {
+        case .openInTerminal:  return terminalApp.existingFilePath != nil
+        case .openInEditor:    return editorApp.existingFilePath != nil
+        case .copy, .trash:    return !selectedResults.isEmpty
+        default:               return true
+        }
+    }
+
+    // Extractions of button-inline action bodies into callable private methods
+
+    private func showInFinder() {
+        RH.trackRun(selectedResults)
+        revealInFinder(selectedResults.map(\.url))
+    }
+
+    private func openWithPicker() {
+        focused.wrappedValue = .openWith
+        isPresentingOpenWithPicker = true
+    }
+
+    private func openInTerminal() {
+        guard let terminal = terminalApp.existingFilePath?.url else { return }
+        RH.trackRun(selectedResults)
+        let dirs = selectedResults.map { $0.isDir ? $0.url : $0.dir.url }.uniqued
+        NSWorkspace.shared.open(
+            dirs, withApplicationAt: terminal, configuration: .init(),
+            completionHandler: { _, _ in }
+        )
+    }
+
+    private func openInEditor() {
+        guard let editor = editorApp.existingFilePath?.url else { return }
+        RH.trackRun(selectedResults)
+        NSWorkspace.shared.open(
+            selectedResults.map(\.url), withApplicationAt: editor, configuration: .init(),
+            completionHandler: { _, _ in }
+        )
+    }
+
+    private func shelve() {
+        guard let shelf = shelfApp.existingFilePath?.url else { return }
+        RH.trackRun(selectedResults)
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = false
+        NSWorkspace.shared.open(
+            selectedResults.map(\.url), withApplicationAt: shelf, configuration: config,
+            completionHandler: { _, _ in }
+        )
+    }
+
+    private func moveTo() {
+        isPresentingMoveToSheet = true
+    }
+
+    private func renameSelected() {
+        isPresentingRenameView = true
+    }
+
+    private func trashSelected() {
+        if suppressTrashConfirm {
+            moveToTrash()
+        } else {
+            isPresentingConfirm = true
+        }
+    }
+
+    private func dropToFocusedElement() {
+        RH.trackRun(selectedResults)
+        appManager.dropToFocusedElement(paths: selectedResults.arr)
+    }
+
+    private func dropToZone() {
+        RH.trackRun(selectedResults)
+        appManager.dropToZone(paths: selectedResults.arr)
+    }
+
+    private func openWithFrontmostApp() {
+        guard let app = appManager.lastFrontmostApp, let appURL = app.bundleURL else { return }
+        RH.trackRun(selectedResults)
+        NSWorkspace.shared.open(
+            selectedResults.map(\.url), withApplicationAt: appURL, configuration: .init(),
+            completionHandler: { _, _ in }
+        )
+    }
+
+    private func startSecureSend() { /* implemented in Phase D */ }
 
     private func pasteToFrontmostAppButton(inTerminal: Bool) -> some View {
         Button(action: { pasteToFrontmostApp(inTerminal: inTerminal) }) {
@@ -695,7 +780,7 @@ struct ActionButtons: View {
 
     private var moveToButton: some View {
         Button("⌘M Move to...") {
-            isPresentingMoveToSheet = true
+            moveTo()
         }
         .help("Move the selected files to a folder")
     }
