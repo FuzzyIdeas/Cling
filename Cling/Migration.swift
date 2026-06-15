@@ -6,6 +6,8 @@ import System
 
 private let log = Logger(subsystem: clingSubsystem, category: "Migration")
 
+// MARK: - Migration
+
 enum Migration {
     static let CURRENT_VERSION = 3
 
@@ -25,6 +27,44 @@ enum Migration {
 
         Defaults[.migrationVersion] = CURRENT_VERSION
     }
+
+    // New default blocklist groups added in this version. Existing users get these appended (deduped); they
+    // were never shipped before, so appending won't override a deliberate choice. Group header comments ride
+    // along so a future toggle UI sees the grouping too.
+    private static let NEW_BLOCKED_CONTAINS = """
+    #:group id=vcs name=Version control
+    /.svn/
+    /.hg/
+
+    #:group id=apple-metadata name=System metadata
+    /.Spotlight-V100/
+    /.fseventsd/
+    /.DocumentRevisions-V100/
+    /.TemporaryItems/
+
+    #:group id=dependencies name=Dependencies & package caches
+    /.venv/
+    /.tox/
+    /Pods/
+    /Carthage/
+    /.gradle/
+    /.terraform/
+    """
+
+    private static let NEW_BLOCKED_PREFIXES = """
+    #:group id=ephemeral name=Temporary & ephemeral
+    /private/var/vm/
+    """
+
+    /// The granular app-bundle sections that replace the blunt `.app/Contents/` block (keeps `Contents/MacOS`
+    /// binaries and embedded framework dylibs searchable).
+    private static let APP_CONTENTS_GRANULAR = [
+        ".app/Contents/Resources/",
+        ".app/Contents/PlugIns/",
+        ".app/Contents/_CodeSignature/",
+        ".app/Contents/SharedSupport/",
+        ".lproj/",
+    ]
 
     /// v1: Update fsignore, delete old scripts, reinstall defaults
     private static func migrateV1() {
@@ -69,44 +109,6 @@ enum Migration {
             log.error("Migration v2: failed to patch fsignore: \(error.localizedDescription)")
         }
     }
-
-    // New default blocklist groups added in this version. Existing users get these appended (deduped); they
-    // were never shipped before, so appending won't override a deliberate choice. Group header comments ride
-    // along so a future toggle UI sees the grouping too.
-    private static let NEW_BLOCKED_CONTAINS = """
-    #:group id=vcs name=Version control
-    /.svn/
-    /.hg/
-
-    #:group id=apple-metadata name=System metadata
-    /.Spotlight-V100/
-    /.fseventsd/
-    /.DocumentRevisions-V100/
-    /.TemporaryItems/
-
-    #:group id=dependencies name=Dependencies & package caches
-    /.venv/
-    /.tox/
-    /Pods/
-    /Carthage/
-    /.gradle/
-    /.terraform/
-    """
-
-    private static let NEW_BLOCKED_PREFIXES = """
-    #:group id=ephemeral name=Temporary & ephemeral
-    /private/var/vm/
-    """
-
-    /// The granular app-bundle sections that replace the blunt `.app/Contents/` block (keeps `Contents/MacOS`
-    /// binaries and embedded framework dylibs searchable).
-    private static let APP_CONTENTS_GRANULAR = [
-        ".app/Contents/Resources/",
-        ".app/Contents/PlugIns/",
-        ".app/Contents/_CodeSignature/",
-        ".app/Contents/SharedSupport/",
-        ".lproj/",
-    ]
 
     /// v3: Regroup + tighten the global blocklist and refresh the home ignore file, without clobbering any of
     /// the user's own customizations (surgical: replace a shipped default line only if it's still present

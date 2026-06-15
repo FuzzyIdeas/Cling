@@ -5,6 +5,8 @@ import System
 
 private let log = Logger(subsystem: clingSubsystem, category: "ScopeIgnore")
 
+// MARK: - ScopeIgnore
+
 /// Per-scope gitignore files for scopes whose real root is read-only / SIP-protected (Applications, System,
 /// Root), where we can't drop a `.fsignore` at the root. The file lives in our cache dir; its patterns are
 /// anchored to the real scope directory at match time via the rooted ignore API (`isIgnored(in:root:)`).

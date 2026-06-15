@@ -401,6 +401,15 @@ final class SearchEngine: @unchecked Sendable {
         return exts
     }
 
+    /// Path of a directory's own `.gitignore` (or `.ignore`) if present, for per-directory ignore discovery.
+    static func gitignoreFile(in dir: String) -> String? {
+        for name in [".gitignore", ".ignore"] {
+            let p = dir + "/" + name
+            if access(p, F_OK) == 0 { return p }
+        }
+        return nil
+    }
+
     // MARK: - Capacity
 
     func reserveCapacity(_ n: Int, avgPathLen: Int = 50) {
@@ -1247,15 +1256,6 @@ final class SearchEngine: @unchecked Sendable {
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
         slog.info("walkDirectory: \(dir) added=\(added) skippedIgnore=\(skippedIgnore) in \(ms, format: .fixed(precision: 1))ms")
         return added
-    }
-
-    /// Path of a directory's own `.gitignore` (or `.ignore`) if present, for per-directory ignore discovery.
-    static func gitignoreFile(in dir: String) -> String? {
-        for name in [".gitignore", ".ignore"] {
-            let p = dir + "/" + name
-            if access(p, F_OK) == 0 { return p }
-        }
-        return nil
     }
 
     /// Walk using FileManager for network/external volumes (batches directory reads, better for high-latency storage)

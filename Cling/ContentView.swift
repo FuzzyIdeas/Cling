@@ -1118,76 +1118,76 @@ struct ContentView: View {
     @ViewBuilder
     private var resultsList: some View {
         VStack(spacing: 0) {
-        ZStack(alignment: .topTrailing) {
-            Table(of: FilePath.self, selection: $selectedResultIDs, sortOrder: $sortOrder) {
-                iconColumn
-                nameColumn
-                pathColumn
-                sizeColumn
-                dateColumn
-            } rows: {
-                ForEach(results, id: \.string) { path in
-                    TableRow(path)
-                        .draggable(path.url)
+            ZStack(alignment: .topTrailing) {
+                Table(of: FilePath.self, selection: $selectedResultIDs, sortOrder: $sortOrder) {
+                    iconColumn
+                    nameColumn
+                    pathColumn
+                    sizeColumn
+                    dateColumn
+                } rows: {
+                    ForEach(results, id: \.string) { path in
+                        TableRow(path)
+                            .draggable(path.url)
+                    }
                 }
-            }
-            .scrollContentBackground(.hidden)
-            .alternatingRowBackgrounds(.disabled)
-            .onChange(of: sortOrder) { _, newOrder in
-                applySortOrder(newOrder)
-            }
-            .onChange(of: results) {
-                // Auto-select the top row only when the query actually changed (a real
-                // new search). Background updates to the list (file watching, reindexing,
-                // recents refresh) keep the user's current selection put.
-                if lastSelectionQuery != fuzzy.query {
-                    lastSelectionQuery = fuzzy.query
-                    selectFirstResult()
-                } else {
-                    preserveSelectionAcrossResultsUpdate()
+                .scrollContentBackground(.hidden)
+                .alternatingRowBackgrounds(.disabled)
+                .onChange(of: sortOrder) { _, newOrder in
+                    applySortOrder(newOrder)
                 }
-            }
-            .onChange(of: selectedResultIDs) {
-                selectedResults = Set(results.filter { selectedResultIDs.contains($0.string) })
-                fuzzy.computeOpenWithApps(for: selectedResults.map(\.url))
-                // Commit to history only on user-initiated selection (not auto-select from query change)
-                if focused == .list, !selectedResults.isEmpty, !fuzzy.query.isEmpty {
-                    SearchHistory.shared.commit(fuzzy.query)
+                .onChange(of: results) {
+                    // Auto-select the top row only when the query actually changed (a real
+                    // new search). Background updates to the list (file watching, reindexing,
+                    // recents refresh) keep the user's current selection put.
+                    if lastSelectionQuery != fuzzy.query {
+                        lastSelectionQuery = fuzzy.query
+                        selectFirstResult()
+                    } else {
+                        preserveSelectionAcrossResultsUpdate()
+                    }
                 }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .clingDidCreateFiles)) { notif in
-                guard let paths = notif.object as? [FilePath], !paths.isEmpty else { return }
-                let newSet = Set(paths)
-                fuzzy.results = paths + fuzzy.results.filter { !newSet.contains($0) }
-                fuzzy.recents = paths + fuzzy.recents.filter { !newSet.contains($0) }
-                fuzzy.sortedRecents = paths + fuzzy.sortedRecents.filter { !newSet.contains($0) }
-                DispatchQueue.main.async {
-                    selectedResultIDs = Set(paths.map(\.string))
-                    scrollResultsTableToTop()
+                .onChange(of: selectedResultIDs) {
+                    selectedResults = Set(results.filter { selectedResultIDs.contains($0.string) })
+                    fuzzy.computeOpenWithApps(for: selectedResults.map(\.url))
+                    // Commit to history only on user-initiated selection (not auto-select from query change)
+                    if focused == .list, !selectedResults.isEmpty, !fuzzy.query.isEmpty {
+                        SearchHistory.shared.commit(fuzzy.query)
+                    }
                 }
-            }
-            .onKeyPress(.tab) {
-                focused = .search
-                return .handled
-            }
-            .focused($focused, equals: .list)
-            .transparentTableBackground()
-            .padding(6)
+                .onReceive(NotificationCenter.default.publisher(for: .clingDidCreateFiles)) { notif in
+                    guard let paths = notif.object as? [FilePath], !paths.isEmpty else { return }
+                    let newSet = Set(paths)
+                    fuzzy.results = paths + fuzzy.results.filter { !newSet.contains($0) }
+                    fuzzy.recents = paths + fuzzy.recents.filter { !newSet.contains($0) }
+                    fuzzy.sortedRecents = paths + fuzzy.sortedRecents.filter { !newSet.contains($0) }
+                    DispatchQueue.main.async {
+                        selectedResultIDs = Set(paths.map(\.string))
+                        scrollResultsTableToTop()
+                    }
+                }
+                .onKeyPress(.tab) {
+                    focused = .search
+                    return .handled
+                }
+                .focused($focused, equals: .list)
+                .transparentTableBackground()
+                .padding(6)
 
-            Button(action: {
-                fuzzy.sortField = .score
-                fuzzy.reverseSort = true
-            }) {
-                Image(systemName: "flag.pattern.checkered.circle" + (fuzzy.sortField == .score ? ".fill" : ""))
-                    .font(.system(size: 14))
-                    .opacity(fuzzy.sortField == .score ? 1 : 0.5)
+                Button(action: {
+                    fuzzy.sortField = .score
+                    fuzzy.reverseSort = true
+                }) {
+                    Image(systemName: "flag.pattern.checkered.circle" + (fuzzy.sortField == .score ? ".fill" : ""))
+                        .font(.system(size: 14))
+                        .opacity(fuzzy.sortField == .score ? 1 : 0.5)
+                }
+                .buttonStyle(BorderlessButtonStyle())
+                .help("Sort by score (Control-0)")
+                .padding(.trailing, 12)
+                .padding(.top, 9)
             }
-            .buttonStyle(BorderlessButtonStyle())
-            .help("Sort by score (Control-0)")
-            .padding(.trailing, 12)
-            .padding(.top, 9)
-        }
-        .background(.background.opacity(0.3))
+            .background(.background.opacity(0.3))
 
             if !fuzzy.noQuery {
                 MissingPathResultsBar(query: fuzzy.query)

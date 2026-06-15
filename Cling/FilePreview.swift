@@ -811,12 +811,6 @@ enum SevenZip {
         }
     }
 
-    /// Memoized listings keyed by path+mtime so the archive preview and the
-    /// info bar share a single 7z subprocess per archive. Tiny FIFO cache:
-    /// listings of huge archives can hold thousands of entries.
-    @MainActor private static var listTasks: [String: Task<Listing?, Never>] = [:]
-    @MainActor private static var listTaskOrder: [String] = []
-
     @MainActor
     static func cachedList(_ url: URL) -> Task<Listing?, Never> {
         let mtime = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
@@ -830,6 +824,12 @@ enum SevenZip {
         }
         return task
     }
+
+    /// Memoized listings keyed by path+mtime so the archive preview and the
+    /// info bar share a single 7z subprocess per archive. Tiny FIFO cache:
+    /// listings of huge archives can hold thousands of entries.
+    @MainActor private static var listTasks: [String: Task<Listing?, Never>] = [:]
+    @MainActor private static var listTaskOrder: [String] = []
 
     // Bounds so a zip bomb or huge archive can never hang the UI or run forever.
     private static let timeout: TimeInterval = 6

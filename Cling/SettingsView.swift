@@ -214,24 +214,6 @@ private struct DescriptiveToggle: View {
 // MARK: - InterfaceSettingsPane
 
 private struct InterfaceSettingsPane: View {
-    // MARK: Part A — knob state
-
-    @Default(.showActionRow) private var showActionRow
-    @Default(.showOpenWithRow) private var showOpenWithRow
-    @Default(.showScriptRow) private var showScriptRow
-
-    @Default(.toolbarLabelStyle) private var toolbarLabelStyle
-    @Default(.toolbarDensity) private var toolbarDensity
-    @Default(.showActionMenu) private var showActionMenu
-    @Default(.toolbarShowDividers) private var toolbarShowDividers
-    @Default(.toolbarRowBackground) private var toolbarRowBackground
-    @Default(.defaultLinkExpiration) private var defaultLinkExpiration
-
-    // MARK: Part B — placement state
-
-    @Default(.barActions) private var barActions
-    @Default(.hiddenActions) private var hiddenActions
-
     // MARK: Body
 
     var body: some View {
@@ -355,6 +337,24 @@ private struct InterfaceSettingsPane: View {
         .scrollContentBackground(.hidden)
     }
 
+    // MARK: Part A — knob state
+
+    @Default(.showActionRow) private var showActionRow
+    @Default(.showOpenWithRow) private var showOpenWithRow
+    @Default(.showScriptRow) private var showScriptRow
+
+    @Default(.toolbarLabelStyle) private var toolbarLabelStyle
+    @Default(.toolbarDensity) private var toolbarDensity
+    @Default(.showActionMenu) private var showActionMenu
+    @Default(.toolbarShowDividers) private var toolbarShowDividers
+    @Default(.toolbarRowBackground) private var toolbarRowBackground
+    @Default(.defaultLinkExpiration) private var defaultLinkExpiration
+
+    // MARK: Part B — placement state
+
+    @Default(.barActions) private var barActions
+    @Default(.hiddenActions) private var hiddenActions
+
     // MARK: Helpers
 
     private func placementRow(_ action: ToolbarAction) -> some View {
@@ -384,8 +384,8 @@ private struct InterfaceSettingsPane: View {
                 bar.removeAll { $0 == id }
                 hidden.remove(id)
                 switch newValue {
-                case .bar:    bar.append(id)
-                case .more:   break
+                case .bar: bar.append(id)
+                case .more: break
                 case .hidden: hidden.insert(id)
                 }
                 barActions = bar
@@ -929,9 +929,11 @@ private struct ExclusionsSettingsPane: View {
                 Toggle(isOn: $honorGitignore) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Respect each project's .gitignore").font(.system(size: 12, weight: .semibold))
-                        Text("While indexing your Home folder, apply every project's own `.gitignore` and `.ignore` files, so build output (like `node_modules`, `target`, `dist`) is skipped per project. Some ignored files (`.env`, built sites) will stop appearing in search.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                        Text(
+                            "While indexing your Home folder, apply every project's own `.gitignore` and `.ignore` files, so build output (like `node_modules`, `target`, `dist`) is skipped per project. Some ignored files (`.env`, built sites) will stop appearing in search."
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                     }
                 }
                 .toggleStyle(.switch)
@@ -1078,8 +1080,6 @@ private struct LicenseAndUpdatesSettingsPane: View {
 // MARK: - AboutSettingsPane
 
 private struct AboutSettingsPane: View {
-    @State private var scoringJSON: String = ScoringConfig.load().toJSON()
-
     var body: some View {
         VStack(spacing: 0) {
             AboutView(
@@ -1125,6 +1125,9 @@ private struct AboutSettingsPane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    @State private var scoringJSON: String = ScoringConfig.load().toJSON()
+
 }
 
 // MARK: - VolumeIgnoreEditor

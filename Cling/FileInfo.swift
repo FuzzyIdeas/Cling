@@ -129,6 +129,109 @@ enum FileInfo {
         return FUZZY.smbMetadataCaches.first { path.starts(with: $0.key) }?.value.get(path.string)
     }
 
+    @MainActor
+    static func fetch(for path: FilePath, kind: PreviewKind) async -> FileFacts {
+        let volumeClass = classify(path)
+        let url = path.url
+
+        // 1. Common facts: size + dates. Never stat offline volumes; prefer
+        //    the SMB index cache on network volumes.
+        var common = CommonAttrs()
+        switch volumeClass {
+        case .offline, .network:
+            if let meta = cachedSMBMeta(path) {
+                common.size = Int(meta.size)
+                common.created = meta.creationDate
+                common.modified = meta.modificationDate
+            }
+        case .internalDisk, .externalLocal:
+            common = await runBlocking { commonAttrs(url) }
+        }
+
+        if case .offline = volumeClass {
+            var facts = FileFacts()
+            if let size = common.size { facts.primary.append(size.humanSize) }
+            facts.primary.append("offline")
+            facts.secondary = datesLine(common)
+            return facts
+        }
+
+        if let hit = cached(path, mtime: common.modified) { return hit }
+
+        if kind == .archive {
+            var facts = FileFacts()
+            if let size = common.size { facts.primary.append(size.humanSize) }
+            // cachedList shares the 7z subprocess with ArchivePreview; the
+            // subprocess has its own 6s watchdog, and offline volumes never
+            // reach this point.
+            if let listing = await SevenZip.cachedList(url).value {
+                let n = listing.entries.count
+                facts.primary.append("\(n.formatted())\(listing.truncated ? "+" : "") file\(n == 1 ? "" : "s")")
+                if listing.totalUncompressedSize > 0 {
+                    // Truncated listings carry a partial sum, marked with "+"
+                    // just like the file count.
+                    facts.primary.append("\(Int(listing.totalUncompressedSize).humanSize)\(listing.truncated ? "+" : "") uncompressed")
+                }
+            }
+            if common.isSymlink, let target = common.symlinkTarget { facts.primary.append("→ \(target)") }
+            facts.secondary = datesLine(common)
+            store(facts, for: path, mtime: common.modified)
+            return facts
+        }
+
+        // 2. Kind-specific facts, gated per volume so a dead share costs at
+        //    most one parked thread.
+        var kindFacts: [String] = []
+        switch volumeClass {
+        case .internalDisk:
+            kindFacts = await kindSpecificFacts(url, kind: kind, size: common.size, allowContentReads: true)
+        case let .externalLocal(volume), let .network(volume):
+            var allowContentReads = true
+            if case .network = volumeClass { allowContentReads = false }
+            if VolumeFetchGate.tryAcquire(volume.string) {
+                let volumeKey = volume.string
+                kindFacts = await race(timeout: 2) { [size = common.size] in
+                    // The release lives INSIDE the raced operation, in a defer,
+                    // so the slot frees exactly when the (possibly stuck) work
+                    // finishes, never while it is still parked on a dead mount.
+                    defer { Task { @MainActor in VolumeFetchGate.release(volumeKey) } }
+                    return await kindSpecificFacts(url, kind: kind, size: size, allowContentReads: allowContentReads)
+                } ?? []
+            }
+        case .offline:
+            break // handled above
+        }
+
+        var facts = FileFacts()
+        if let size = common.size, kind != .folder { facts.primary.append(size.humanSize) }
+        facts.primary += kindFacts
+        if kind == .quicklook, let kindName = common.kindName { facts.primary.append(kindName) }
+        if common.isSymlink, let target = common.symlinkTarget { facts.primary.append("→ \(target)") }
+        facts.secondary = datesLine(common)
+
+        store(facts, for: path, mtime: common.modified)
+        return facts
+    }
+
+    private struct CommonAttrs: Sendable {
+        var size: Int?
+        var created: Date?
+        var modified: Date?
+        var isSymlink = false
+        var symlinkTarget: String?
+        var kindName: String?
+    }
+
+    // MARK: Fetch pipeline
+
+    private static let lineCountSizeCap = 8 * 1024 * 1024
+    private static let cacheLimit = 64
+
+    // LRU keyed by path string, validated by mtime, so paging back and forth
+    // through a selection never refetches.
+    @MainActor private static var cache: [String: (mtime: Date?, facts: FileFacts)] = [:]
+    @MainActor private static var cacheOrder: [String] = []
+
     // MARK: Kind-specific fetchers (all called off the main thread)
 
     private static func imageFacts(_ url: URL) -> [String] {
@@ -217,16 +320,6 @@ enum FileInfo {
         return ["\(count.formatted()) line\(count == 1 ? "" : "s")"]
     }
 
-    // MARK: Fetch pipeline
-
-    private static let lineCountSizeCap = 8 * 1024 * 1024
-    private static let cacheLimit = 64
-
-    // LRU keyed by path string, validated by mtime, so paging back and forth
-    // through a selection never refetches.
-    @MainActor private static var cache: [String: (mtime: Date?, facts: FileFacts)] = [:]
-    @MainActor private static var cacheOrder: [String] = []
-
     @MainActor
     private static func cached(_ path: FilePath, mtime: Date?) -> FileFacts? {
         guard let entry = cache[path.string], entry.mtime == mtime else { return nil }
@@ -244,15 +337,6 @@ enum FileInfo {
         cache[path.string] = (mtime, facts)
     }
 
-    private struct CommonAttrs: Sendable {
-        var size: Int?
-        var created: Date?
-        var modified: Date?
-        var isSymlink = false
-        var symlinkTarget: String?
-        var kindName: String?
-    }
-
     private static func commonAttrs(_ url: URL) -> CommonAttrs {
         var common = CommonAttrs()
         guard let vals = try? url.resourceValues(forKeys: [
@@ -268,90 +352,6 @@ enum FileInfo {
         }
         common.kindName = vals.contentType?.localizedDescription
         return common
-    }
-
-    @MainActor
-    static func fetch(for path: FilePath, kind: PreviewKind) async -> FileFacts {
-        let volumeClass = classify(path)
-        let url = path.url
-
-        // 1. Common facts: size + dates. Never stat offline volumes; prefer
-        //    the SMB index cache on network volumes.
-        var common = CommonAttrs()
-        switch volumeClass {
-        case .offline, .network:
-            if let meta = cachedSMBMeta(path) {
-                common.size = Int(meta.size)
-                common.created = meta.creationDate
-                common.modified = meta.modificationDate
-            }
-        case .internalDisk, .externalLocal:
-            common = await runBlocking { commonAttrs(url) }
-        }
-
-        if case .offline = volumeClass {
-            var facts = FileFacts()
-            if let size = common.size { facts.primary.append(size.humanSize) }
-            facts.primary.append("offline")
-            facts.secondary = datesLine(common)
-            return facts
-        }
-
-        if let hit = cached(path, mtime: common.modified) { return hit }
-
-        if kind == .archive {
-            var facts = FileFacts()
-            if let size = common.size { facts.primary.append(size.humanSize) }
-            // cachedList shares the 7z subprocess with ArchivePreview; the
-            // subprocess has its own 6s watchdog, and offline volumes never
-            // reach this point.
-            if let listing = await SevenZip.cachedList(url).value {
-                let n = listing.entries.count
-                facts.primary.append("\(n.formatted())\(listing.truncated ? "+" : "") file\(n == 1 ? "" : "s")")
-                if listing.totalUncompressedSize > 0 {
-                    // Truncated listings carry a partial sum, marked with "+"
-                    // just like the file count.
-                    facts.primary.append("\(Int(listing.totalUncompressedSize).humanSize)\(listing.truncated ? "+" : "") uncompressed")
-                }
-            }
-            if common.isSymlink, let target = common.symlinkTarget { facts.primary.append("→ \(target)") }
-            facts.secondary = datesLine(common)
-            store(facts, for: path, mtime: common.modified)
-            return facts
-        }
-
-        // 2. Kind-specific facts, gated per volume so a dead share costs at
-        //    most one parked thread.
-        var kindFacts: [String] = []
-        switch volumeClass {
-        case .internalDisk:
-            kindFacts = await kindSpecificFacts(url, kind: kind, size: common.size, allowContentReads: true)
-        case let .externalLocal(volume), let .network(volume):
-            var allowContentReads = true
-            if case .network = volumeClass { allowContentReads = false }
-            if VolumeFetchGate.tryAcquire(volume.string) {
-                let volumeKey = volume.string
-                kindFacts = await race(timeout: 2) { [size = common.size] in
-                    // The release lives INSIDE the raced operation, in a defer,
-                    // so the slot frees exactly when the (possibly stuck) work
-                    // finishes, never while it is still parked on a dead mount.
-                    defer { Task { @MainActor in VolumeFetchGate.release(volumeKey) } }
-                    return await kindSpecificFacts(url, kind: kind, size: size, allowContentReads: allowContentReads)
-                } ?? []
-            }
-        case .offline:
-            break // handled above
-        }
-
-        var facts = FileFacts()
-        if let size = common.size, kind != .folder { facts.primary.append(size.humanSize) }
-        facts.primary += kindFacts
-        if kind == .quicklook, let kindName = common.kindName { facts.primary.append(kindName) }
-        if common.isSymlink, let target = common.symlinkTarget { facts.primary.append("→ \(target)") }
-        facts.secondary = datesLine(common)
-
-        store(facts, for: path, mtime: common.modified)
-        return facts
     }
 
     /// `allowContentReads` is false on network volumes: line counting reads

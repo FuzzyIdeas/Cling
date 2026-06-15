@@ -304,9 +304,12 @@ let DEFAULT_QUICK_FILTERS = [
     QuickFilter(id: "Xcode Projects", extensions: ".xcodeproj .xcworkspace", preQuery: nil, dirsOnly: true, folders: [HOME], key: "x"),
 ]
 
-// MARK: - Toolbar knob enums
+// MARK: - ToolbarLabelStyle
 
 enum ToolbarLabelStyle: String, Codable, Defaults.Serializable, CaseIterable { case iconAndText, textOnly, iconOnly }
+
+// MARK: - ToolbarDensity
+
 enum ToolbarDensity: String, Codable, Defaults.Serializable, CaseIterable { case regular, compact }
 
 extension ToolbarDensity {
@@ -533,18 +536,18 @@ extension Defaults.Keys {
     #:custom name=Your rules
     """)
 
-    static let toolbarLabelStyle       = Key<ToolbarLabelStyle>("toolbarLabelStyle", default: .iconAndText)
-    static let toolbarDensity          = Key<ToolbarDensity>("toolbarDensity", default: .regular)
-    static let toolbarShowDividers     = Key<Bool>("toolbarShowDividers", default: true)
-    static let showActionMenu          = Key<Bool>("showActionMenu", default: true)
-    static let toolbarRowBackground    = Key<Bool>("toolbarRowBackground", default: false)
-    static let barActions              = Key<[ActionID]>("barActions", default: ToolbarAction.defaultBar)
-    static let hiddenActions           = Key<Set<ActionID>>("hiddenActions", default: [])
+    static let toolbarLabelStyle = Key<ToolbarLabelStyle>("toolbarLabelStyle", default: .iconAndText)
+    static let toolbarDensity = Key<ToolbarDensity>("toolbarDensity", default: .regular)
+    static let toolbarShowDividers = Key<Bool>("toolbarShowDividers", default: true)
+    static let showActionMenu = Key<Bool>("showActionMenu", default: true)
+    static let toolbarRowBackground = Key<Bool>("toolbarRowBackground", default: false)
+    static let barActions = Key<[ActionID]>("barActions", default: ToolbarAction.defaultBar)
+    static let hiddenActions = Key<Set<ActionID>>("hiddenActions", default: [])
     static let didMigrateHiddenActions = Key<Bool>("didMigrateHiddenActions", default: false)
-    static let defaultLinkExpiration   = Key<TimeInterval>("defaultLinkExpiration", default: 3600)
+    static let defaultLinkExpiration = Key<TimeInterval>("defaultLinkExpiration", default: 3600)
     static let shortcutsCoachmarkShown = Key<Bool>("shortcutsCoachmarkShown", default: false)
     static let shortcutBadgesRevealedOnce = Key<Bool>("shortcutBadgesRevealedOnce", default: false)
-    static let sendSecurelyIntroShown  = Key<Bool>("sendSecurelyIntroShown", default: false)
+    static let sendSecurelyIntroShown = Key<Bool>("sendSecurelyIntroShown", default: false)
 }
 
 // MARK: - hiddenActionButtons → hiddenActions migration

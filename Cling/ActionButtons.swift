@@ -250,7 +250,7 @@ struct ActionButtons: View {
                 let menuEnabled = Defaults[.showActionMenu]
                 let handled = MainActor.assumeIsolated {
                     for action in ToolbarAction.rebindable where !currentHidden.contains(action.id) {
-                        if (action.id == .copy || action.id == .trash), focusBinding.wrappedValue != .list { continue }
+                        if action.id == .copy || action.id == .trash, focusBinding.wrappedValue != .list { continue }
                         // If this action is rendered as an Action Menu item with a native shortcut,
                         // the menu key equivalent handles dispatch — skip to avoid double-fire.
                         if menuEnabled,
@@ -566,10 +566,10 @@ struct ActionButtons: View {
     /// Selection-dependent actions (copy, trash) return true here so they remain visible but disabled.
     private func isConfigured(_ id: ActionID) -> Bool {
         switch id {
-        case .openInTerminal: return terminalApp.existingFilePath != nil
-        case .openInEditor:   return editorApp.existingFilePath != nil
-        case .shelve:         return shelfApp.existingFilePath != nil
-        default:              return true
+        case .openInTerminal: terminalApp.existingFilePath != nil
+        case .openInEditor: editorApp.existingFilePath != nil
+        case .shelve: shelfApp.existingFilePath != nil
+        default: true
         }
     }
 
@@ -629,8 +629,8 @@ struct ActionButtons: View {
             } else {
                 switch labelStyle {
                 case .iconAndText: Label(action.title, systemImage: action.systemImage)
-                case .textOnly:    Text(action.title)
-                case .iconOnly:    Image(systemName: action.systemImage)
+                case .textOnly: Text(action.title)
+                case .iconOnly: Image(systemName: action.systemImage)
                 }
             }
         }
@@ -660,9 +660,9 @@ struct ActionButtons: View {
               let keyStr = sc.nsMenuItemKeyEquivalent, let ch = keyStr.first else { return nil }
         var mods: SwiftUI.EventModifiers = []
         if sc.modifiers.contains(.command) { mods.insert(.command) }
-        if sc.modifiers.contains(.option)  { mods.insert(.option) }
+        if sc.modifiers.contains(.option) { mods.insert(.option) }
         if sc.modifiers.contains(.control) { mods.insert(.control) }
-        if sc.modifiers.contains(.shift)   { mods.insert(.shift) }
+        if sc.modifiers.contains(.shift) { mods.insert(.shift) }
         return (KeyEquivalent(ch), mods)
     }
 
@@ -687,8 +687,8 @@ struct ActionButtons: View {
                     }
                 }
             } label: { Image(systemName: "ellipsis") }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
+                .menuStyle(.borderlessButton)
+                .fixedSize()
         }
     }
 
@@ -696,23 +696,23 @@ struct ActionButtons: View {
 
     func execute(_ id: ActionID) {
         switch id {
-        case .open:                 openSelectedResults()
-        case .showInFinder:         showInFinder()
-        case .quickLook:            quicklook()
-        case .openWith:             openWithPicker()
-        case .openInTerminal:       openInTerminal()
-        case .openInEditor:         openInEditor()
-        case .copy:                 copyFiles(); flashCopied(.copy)
-        case .copyPaths:            copyPaths()
-        case .moveTo:               moveTo()
-        case .rename:               renameSelected()
-        case .shelve:               shelve()
-        case .sendSecurely:         startSecureSend()
-        case .pasteToFrontmost:     pasteToFrontmostApp(inTerminal: appManager.frontmostAppIsTerminal)
-        case .trash:                trashSelected()
+        case .open: openSelectedResults()
+        case .showInFinder: showInFinder()
+        case .quickLook: quicklook()
+        case .openWith: openWithPicker()
+        case .openInTerminal: openInTerminal()
+        case .openInEditor: openInEditor()
+        case .copy: copyFiles(); flashCopied(.copy)
+        case .copyPaths: copyPaths()
+        case .moveTo: moveTo()
+        case .rename: renameSelected()
+        case .shelve: shelve()
+        case .sendSecurely: startSecureSend()
+        case .pasteToFrontmost: pasteToFrontmostApp(inTerminal: appManager.frontmostAppIsTerminal)
+        case .trash: trashSelected()
         case .dropToFocusedElement: dropToFocusedElement()
-        case .dropToZone:           dropToZone()
-        case .openWithFrontmost:    openWithFrontmostApp()
+        case .dropToZone: dropToZone()
+        case .openWithFrontmost: openWithFrontmostApp()
         }
     }
 
@@ -723,13 +723,13 @@ struct ActionButtons: View {
     // buttons must stay enabled regardless of which field is focused.
     func isAvailable(_ id: ActionID) -> Bool {
         switch id {
-        case .openInTerminal:  return terminalApp.existingFilePath != nil
-        case .openInEditor:    return editorApp.existingFilePath != nil
-        case .copy:            return !selectedResults.isEmpty
-        case .trash:           return !selectedResults.isEmpty && !selectedResults.contains(where: \.isOnReadOnlyVolume)
-        case .openWith:        return !selectedResults.isEmpty && !fuzzy.openWithAppShortcuts.isEmpty
-        case .sendSecurely:    return !selectedResults.isEmpty
-        default:               return true
+        case .openInTerminal: terminalApp.existingFilePath != nil
+        case .openInEditor: editorApp.existingFilePath != nil
+        case .copy: !selectedResults.isEmpty
+        case .trash: !selectedResults.isEmpty && !selectedResults.contains(where: \.isOnReadOnlyVolume)
+        case .openWith: !selectedResults.isEmpty && !fuzzy.openWithAppShortcuts.isEmpty
+        case .sendSecurely: !selectedResults.isEmpty
+        default: true
         }
     }
 
@@ -936,7 +936,7 @@ struct ActionButtons: View {
     @Default(.sendSecurelyIntroShown) private var sendSecurelyIntroShown
 
     @State private var copiedFeedbackAction: ActionID?
-    @State private var copiedFeedbackText: String = "Copied"
+    @State private var copiedFeedbackText = "Copied"
     @State private var copiedClearTask: Task<Void, Never>?
 
     func flashCopied(_ id: ActionID, text: String = "Copied") {

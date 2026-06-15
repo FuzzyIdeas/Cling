@@ -1,11 +1,11 @@
-import Foundation
 import AppKit
+import Foundation
 import WarpDrop
 
 let LINK_EXPIRATION_PRESETS: [TimeInterval] = [
     60, 120, 180, 300, 600, 900, 1200, 1800, 2700,
     3600, 7200, 10800, 14400, 21600, 28800, 43200, 64800,
-    86400, 172800, 259200,
+    86400, 172_800, 259_200,
 ]
 let LINK_EXPIRATION_NEVER: TimeInterval = 0
 
@@ -18,9 +18,9 @@ func expirationDurationLabel(_ seconds: TimeInterval) -> String {
     guard seconds > 0 else { return "never" }
     let s = Int(seconds.rounded())
     switch s {
-    case ..<3600:  let m = s / 60;    return "\(m) minute\(m == 1 ? "" : "s")"
-    case ..<86400: let h = s / 3600;  return "\(h) hour\(h == 1 ? "" : "s")"
-    default:       let d = s / 86400; return "\(d) day\(d == 1 ? "" : "s")"
+    case ..<3600: let m = s / 60; return "\(m) minute\(m == 1 ? "" : "s")"
+    case ..<86400: let h = s / 3600; return "\(h) hour\(h == 1 ? "" : "s")"
+    default: let d = s / 86400; return "\(d) day\(d == 1 ? "" : "s")"
     }
 }
 
@@ -28,9 +28,9 @@ func expirationShortLabel(_ seconds: TimeInterval) -> String {
     guard seconds > 0 else { return "∞" }
     let s = Int(seconds.rounded())
     switch s {
-    case ..<3600:  return "\(s / 60)m"
+    case ..<3600: return "\(s / 60)m"
     case ..<86400: return "\(s / 3600)h"
-    default:       return "\(s / 86400)d"
+    default: return "\(s / 86400)d"
     }
 }
 
@@ -49,7 +49,13 @@ func expirationCountdownLabel(_ seconds: TimeInterval) -> String {
     }
 }
 
+// MARK: - SendSession
+
 @MainActor final class SendSession: ObservableObject, Identifiable {
+    init(id: String, files: [URL], task: Task<String, Error>, expiresAt: Date?, tempArchives: [URL] = []) {
+        self.id = id; self.files = files; self.task = task; self.expiresAt = expiresAt; self.tempArchives = tempArchives
+    }
+
     let id: String
     let files: [URL]
     let task: Task<String, Error>
@@ -57,10 +63,6 @@ func expirationCountdownLabel(_ seconds: TimeInterval) -> String {
     @Published var downloadCount = 0
     @Published var expiresAt: Date?
     @Published var stopped = false
-
-    init(id: String, files: [URL], task: Task<String, Error>, expiresAt: Date?, tempArchives: [URL] = []) {
-        self.id = id; self.files = files; self.task = task; self.expiresAt = expiresAt; self.tempArchives = tempArchives
-    }
 
     var directURL: String { "https://drop.lowtechguys.com/d/\(id)" }
     var roomURL: String { "https://drop.lowtechguys.com/r/\(id)" }
@@ -71,12 +73,13 @@ func expirationCountdownLabel(_ seconds: TimeInterval) -> String {
     var fileSummary: String {
         let names = files.map(\.lastPathComponent)
         switch names.count {
-        case 0:    return ""
-        case 1:    return names[0]
+        case 0: return ""
+        case 1: return names[0]
         case 2, 3: return names.joined(separator: ", ")
-        default:   return "\(names[0]) + \(names.count - 1) more files"
+        default: return "\(names[0]) + \(names.count - 1) more files"
         }
     }
+
     /// Live "Expires in …" label relative to `now`, so the Transfers panel can tick it down.
     func expiresLabel(asOf now: Date) -> String? {
         guard let expiresAt else { return nil }
@@ -89,26 +92,35 @@ func expirationCountdownLabel(_ seconds: TimeInterval) -> String {
     }
 }
 
+// MARK: - Box
+
 final class Box<T>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _value: T
     init(_ v: T) { _value = v }
+
     var value: T {
         get { lock.lock(); defer { lock.unlock() }; return _value }
         set { lock.lock(); defer { lock.unlock() }; _value = newValue }
     }
+
+    private let lock = NSLock()
+    private var _value: T
 }
+
+// MARK: - PendingSend
 
 struct PendingSend: Equatable { let files: [URL]; let expiration: TimeInterval }
 
+// MARK: - SendManager
+
 @MainActor final class SendManager: ObservableObject {
     static let shared = SendManager()
-    @Published var sessions: [SendSession] = []          // active transfers
-    @Published var recentSessions: [SendSession] = []    // session-only history (kept after stop/expiry, cleared on quit)
-    @Published var connectingPaths: Set<String> = []     // in-flight guard against duplicate sends
-    @Published var linkCopiedTick = 0                    // incremented each time a new link is auto-copied
-    @Published var pendingFolderConfirm: PendingSend?    // deferred send awaiting folder-archive confirmation
-    var expiryTimers: [String: Task<Void, Never>] = [:]  // auto-stop timers
+
+    @Published var sessions: [SendSession] = [] // active transfers
+    @Published var recentSessions: [SendSession] = [] // session-only history (kept after stop/expiry, cleared on quit)
+    @Published var connectingPaths: Set<String> = [] // in-flight guard against duplicate sends
+    @Published var linkCopiedTick = 0 // incremented each time a new link is auto-copied
+    @Published var pendingFolderConfirm: PendingSend? // deferred send awaiting folder-archive confirmation
+    var expiryTimers: [String: Task<Void, Never>] = [:] // auto-stop timers
     var pendingTasks: [String: Task<String, Error>] = [:]
 }
 

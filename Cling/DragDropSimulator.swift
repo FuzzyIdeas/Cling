@@ -140,7 +140,7 @@ final class DragDropSimulator {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard let self else { return }
             if !dragSessionStarted {
-                let mouseDownReceived = self.mouseDownReceived
+                let mouseDownReceived = mouseDownReceived
                 log.error("\(DD) WATCHDOG: drag session never started after 1s (mouseDown received=\(mouseDownReceived))")
                 cleanup()
             }

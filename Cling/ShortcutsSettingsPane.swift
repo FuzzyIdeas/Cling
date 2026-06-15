@@ -4,10 +4,6 @@ import SwiftUI
 // MARK: - ShortcutsSettingsPane
 
 struct ShortcutsSettingsPane: View {
-    @State private var conflict: String?
-
-    private let displaySegments: [ActionSegment] = [.open, .fileOps, .share, .destructive, .alternate]
-
     var body: some View {
         Form {
             ForEach(displaySegments, id: \.self) { segment in
@@ -42,9 +38,14 @@ struct ShortcutsSettingsPane: View {
         .scrollContentBackground(.hidden)
     }
 
+    @State private var conflict: String?
+
+    private let displaySegments: [ActionSegment] = [.open, .fileOps, .share, .destructive, .alternate]
+
     private func validate(_ id: ActionID) {
         guard let new = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: id)),
-              let owner = ClingShortcuts.duplicateOwner(of: new, excluding: id) else {
+              let owner = ClingShortcuts.duplicateOwner(of: new, excluding: id)
+        else {
             conflict = nil; return
         }
         // Reject the duplicate: clear it and tell the user.

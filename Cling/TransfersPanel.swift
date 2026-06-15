@@ -1,32 +1,9 @@
 import SwiftUI
 
+// MARK: - TransfersPanel
+
 struct TransfersPanel: View {
     @ObservedObject var manager = SendManager.shared
-    @State private var now = Date()
-    @State private var ticker: Task<Void, Never>?
-
-    private var activeCount: Int { manager.sessions.count }
-
-    /// Tick `now` only while the popover is on screen, and only as often as needed: every second
-    /// when the soonest expiry is under an hour out, every minute otherwise. Cancelled on disappear
-    /// so no clock work happens while the popover is hidden.
-    private func startTicking() {
-        ticker?.cancel()
-        now = Date()
-        ticker = Task { @MainActor in
-            while !Task.isCancelled {
-                let soonest = manager.recentSessions
-                    .filter { !$0.stopped }
-                    .compactMap { $0.expiresAt?.timeIntervalSince(now) }
-                    .filter { $0 > 0 }
-                    .min()
-                let delay: Double = soonest.map { $0 > 3600 ? 60 : 1 } ?? 60
-                try? await Task.sleep(for: .seconds(delay))
-                if Task.isCancelled { break }
-                now = Date()
-            }
-        }
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -40,7 +17,7 @@ struct TransfersPanel: View {
                         .padding(.horizontal, 7).padding(.vertical, 2)
                         .background(Color.accentColor.opacity(0.12), in: Capsule())
                 }
-                if manager.recentSessions.contains(where: { $0.stopped }) {
+                if manager.recentSessions.contains(where: \.stopped) {
                     Button("Clear") { withAnimation { manager.clearFinished() } }
                         .buttonStyle(.borderless)
                         .controlSize(.small)
@@ -69,14 +46,42 @@ struct TransfersPanel: View {
         .onAppear { startTicking() }
         .onDisappear { ticker?.cancel(); ticker = nil }
     }
+
+    @State private var now = Date()
+    @State private var ticker: Task<Void, Never>?
+
+    private var activeCount: Int { manager.sessions.count }
+
+    /// Tick `now` only while the popover is on screen, and only as often as needed: every second
+    /// when the soonest expiry is under an hour out, every minute otherwise. Cancelled on disappear
+    /// so no clock work happens while the popover is hidden.
+    private func startTicking() {
+        ticker?.cancel()
+        now = Date()
+        ticker = Task { @MainActor in
+            while !Task.isCancelled {
+                let soonest = manager.recentSessions
+                    .filter { !$0.stopped }
+                    .compactMap { $0.expiresAt?.timeIntervalSince(now) }
+                    .filter { $0 > 0 }
+                    .min()
+                let delay: Double = soonest.map { $0 > 3600 ? 60 : 1 } ?? 60
+                try? await Task.sleep(for: .seconds(delay))
+                if Task.isCancelled { break }
+                now = Date()
+            }
+        }
+    }
+
 }
+
+// MARK: - TransferRow
 
 private struct TransferRow: View {
     @ObservedObject var session: SendSession
     @ObservedObject var manager = SendManager.shared
-    let now: Date
 
-    private var accent: Color { session.stopped ? .secondary : .accentColor }
+    let now: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -135,6 +140,8 @@ private struct TransferRow: View {
         .padding(12)
         .opacity(session.stopped ? 0.65 : 1)
     }
+
+    private var accent: Color { session.stopped ? .secondary : .accentColor }
 
     @ViewBuilder private var statusPill: some View {
         if session.stopped {

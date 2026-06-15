@@ -11,6 +11,23 @@ import System
 /// matches (the `**` semantics were checked against `git check-ignore`), so the toy preview matcher in
 /// `ExcludeAnalyzer.matches` never has to understand `**`.
 enum StructuralPatterns {
+    // MARK: Candidate
+
+    struct Candidate {
+        let rules: [ExcludeRule]
+        let title: String
+        let summary: String
+        let breadth: Breadth
+        var needsReindex = true
+        /// 0 = broad / cross-container, 1 = container-local. Used only to order ties.
+        let rank: Int
+
+        var key: String {
+            rules.map { "\(StructuralPatterns.mechKey($0.mechanism))\u{1}\($0.line)\u{1}\($0.blocklistPrefix)" }
+                .joined(separator: "\u{2}")
+        }
+    }
+
     /// Build-artifact / VCS / dependency directories that are noise at any depth. These go to the global
     /// blocklist (fast prune, no globs needed) rather than a per-store ignore file.
     static let noiseDirs: Set<String> = [
@@ -31,23 +48,6 @@ enum StructuralPatterns {
         "Resources", "Frameworks", "PlugIns", "_CodeSignature", "SharedSupport", "Helpers",
         "Library", "XPCServices", "Frameworks", "CodeResources",
     ]
-
-    // MARK: Candidate
-
-    struct Candidate {
-        let rules: [ExcludeRule]
-        let title: String
-        let summary: String
-        let breadth: Breadth
-        var needsReindex = true
-        /// 0 = broad / cross-container, 1 = container-local. Used only to order ties.
-        let rank: Int
-
-        var key: String {
-            rules.map { "\(StructuralPatterns.mechKey($0.mechanism))\u{1}\($0.line)\u{1}\($0.blocklistPrefix)" }
-                .joined(separator: "\u{2}")
-        }
-    }
 
     static func mechKey(_ m: ExcludeMechanism) -> String {
         switch m {

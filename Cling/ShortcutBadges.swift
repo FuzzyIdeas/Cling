@@ -5,9 +5,6 @@ import SwiftUI
 
 struct ShortcutCoachmark: View {
     @Default(.shortcutsCoachmarkShown) var shown
-    @Environment(\.colorScheme) private var scheme
-
-    private var accent: Color { .accentColor }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -47,6 +44,11 @@ struct ShortcutCoachmark: View {
         .padding(.horizontal, 12).padding(.bottom, 8)
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
+
+    @Environment(\.colorScheme) private var scheme
+
+    private var accent: Color { .accentColor }
+
 }
 
 // MARK: - ShortcutBadge
@@ -54,9 +56,6 @@ struct ShortcutCoachmark: View {
 struct ShortcutBadge: ViewModifier {
     let text: String
     let visible: Bool
-    @Environment(\.colorScheme) private var scheme
-
-    private var accent: Color { .accentColor }
 
     func body(content: Content) -> some View {
         content.overlay(alignment: .topTrailing) {
@@ -68,6 +67,10 @@ struct ShortcutBadge: ViewModifier {
             }
         }
     }
+
+    @Environment(\.colorScheme) private var scheme
+
+    private var accent: Color { .accentColor }
 
     @ViewBuilder
     private var pill: some View {

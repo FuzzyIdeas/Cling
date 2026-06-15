@@ -93,39 +93,16 @@ struct IgnoreDocument {
         return IgnoreDocument(preamble: preamble, groups: groups)
     }
 
-    /// Pull `id=` and `name=` out of a header line. `name=` captures the rest of the line so group
-    /// names may contain spaces; `id=` is a single whitespace-delimited token.
-    private static func parseHeader(_ line: String, keyword: String) -> (id: String?, name: String?) {
-        let body = line.dropFirst(keyword.count)
-        var id: String?
-        var name: String?
-
-        if let nameRange = body.range(of: "name=") {
-            name = body[nameRange.upperBound...].trimmingCharacters(in: .whitespaces)
-            let beforeName = body[..<nameRange.lowerBound]
-            if let idRange = beforeName.range(of: "id=") {
-                id = beforeName[idRange.upperBound...]
-                    .trimmingCharacters(in: .whitespaces)
-                    .prefix { !$0.isWhitespace }
-                    .description
-            }
-        } else if let idRange = body.range(of: "id=") {
-            id = body[idRange.upperBound...]
-                .trimmingCharacters(in: .whitespaces)
-                .prefix { !$0.isWhitespace }
-                .description
-        }
-        return (id, name)
-    }
-
     // MARK: - Serializing
 
     func serialize() -> String {
         var lines: [String] = preamble
         for group in groups {
-            lines.append(group.isCustom
-                ? "#:custom name=\(group.name)"
-                : "#:group id=\(group.id) name=\(group.name)")
+            lines.append(
+                group.isCustom
+                    ? "#:custom name=\(group.name)"
+                    : "#:group id=\(group.id) name=\(group.name)"
+            )
             for item in group.items {
                 switch item {
                 case let .rule(pattern, enabled):
@@ -159,6 +136,34 @@ struct IgnoreDocument {
     }
 
     mutating func setAll(enabled: Bool) {
-        for gi in groups.indices { setGroup(gi, enabled: enabled) }
+        for gi in groups.indices {
+            setGroup(gi, enabled: enabled)
+        }
     }
+
+    /// Pull `id=` and `name=` out of a header line. `name=` captures the rest of the line so group
+    /// names may contain spaces; `id=` is a single whitespace-delimited token.
+    private static func parseHeader(_ line: String, keyword: String) -> (id: String?, name: String?) {
+        let body = line.dropFirst(keyword.count)
+        var id: String?
+        var name: String?
+
+        if let nameRange = body.range(of: "name=") {
+            name = body[nameRange.upperBound...].trimmingCharacters(in: .whitespaces)
+            let beforeName = body[..<nameRange.lowerBound]
+            if let idRange = beforeName.range(of: "id=") {
+                id = beforeName[idRange.upperBound...]
+                    .trimmingCharacters(in: .whitespaces)
+                    .prefix { !$0.isWhitespace }
+                    .description
+            }
+        } else if let idRange = body.range(of: "id=") {
+            id = body[idRange.upperBound...]
+                .trimmingCharacters(in: .whitespaces)
+                .prefix { !$0.isWhitespace }
+                .description
+        }
+        return (id, name)
+    }
+
 }

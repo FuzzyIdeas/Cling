@@ -1685,54 +1685,6 @@ class FuzzyClient {
         }
     }
 
-    private static func removingLines(_ remove: [String], from content: String) -> String {
-        let toRemove = Set(remove.map { $0.trimmingCharacters(in: .whitespaces) })
-        return content
-            .components(separatedBy: .newlines)
-            .filter { !toRemove.contains($0.trimmingCharacters(in: .whitespaces)) }
-            .joined(separator: "\n")
-    }
-
-    private static func appendingLines(_ add: [String], to content: String) -> String {
-        let existing = Set(content.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) })
-        let newLines = add.filter { !existing.contains($0.trimmingCharacters(in: .whitespaces)) }
-        guard !newLines.isEmpty else { return content }
-        var updated = content
-        if !updated.isEmpty, !updated.hasSuffix("\n") { updated += "\n" }
-        updated += newLines.joined(separator: "\n")
-        return updated
-    }
-
-    private func appendIgnoreLines(_ lines: [String], to file: FilePath, suppressWatcher: Bool) {
-        let existing = Set((try? String(contentsOfFile: file.string, encoding: .utf8))?.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) } ?? [])
-        let newLines = lines.filter { !existing.contains($0.trimmingCharacters(in: .whitespaces)) }
-        guard !newLines.isEmpty else { return }
-
-        if suppressWatcher {
-            fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 10
-            fsignoreReindexTask?.cancel()
-        }
-
-        do {
-            if !file.exists {
-                FileManager.default.createFile(atPath: file.string, contents: nil)
-            }
-            let handle = try FileHandle(forUpdating: file.url)
-            handle.seekToEndOfFile()
-            if let data = "\n\(newLines.joined(separator: "\n"))".data(using: .utf8) {
-                handle.write(data)
-            }
-            handle.closeFile()
-        } catch {
-            log.error("Failed to append to \(file.string): \(error.localizedDescription)")
-        }
-
-        bust_gitignore_cache()
-        if suppressWatcher {
-            fsignoreContentHashes[file.string] = contentHash(of: file.string)
-        }
-    }
-
     /// Apply a set of exclusion rules chosen in the Exclude-from-index sheet: append ignore-file lines and/or
     /// blocklist lines, drop the selected paths from the live index immediately, then reindex if the rules are
     /// broad enough to also match other indexed paths.
@@ -1780,8 +1732,12 @@ class FuzzyClient {
         // Drop the selected paths from the live index immediately for instant feedback.
         excludedPaths.formUnion(paths.map(\.string))
         for path in paths {
-            for eng in scopeEngines.values { eng.removePath(path.string) }
-            for eng in volumeEngines.values { eng.removePath(path.string) }
+            for eng in scopeEngines.values {
+                eng.removePath(path.string)
+            }
+            for eng in volumeEngines.values {
+                eng.removePath(path.string)
+            }
             recentsEngine.removePath(path.string)
         }
         removedFiles.formUnion(paths.map(\.string))
@@ -1793,7 +1749,9 @@ class FuzzyClient {
         if reindex {
             let scopes = Set(paths.flatMap { IndexInclusionAnalyzer.scopesForPath($0.string, home: HOME.string) })
             let volumes = Set(paths.compactMap { p in enabledVolumes.first { p.starts(with: $0) } })
-            for volume in volumes { indexVolume(volume) }
+            for volume in volumes {
+                indexVolume(volume)
+            }
             if !scopes.isEmpty {
                 refresh(pauseSearch: false, scopes: Array(scopes))
             } else if volumes.isEmpty {
@@ -1987,26 +1945,6 @@ class FuzzyClient {
         logActivity("Compacted live changes: collapsed \(removed) duplicate event\(removed == 1 ? "" : "s")")
     }
 
-    /// Collapse the live-change history to the latest event per (path, kind), preserving oldest→newest order,
-    /// and keep at most liveChangesMax distinct entries (dropping the oldest). Walking newest→oldest and
-    /// keeping the first occurrence of each key retains the most recent event, and its date, for that key.
-    private func compactLiveChanges() {
-        struct Key: Hashable {
-            let path: String
-            let kind: IndexChange.Kind
-        }
-        var seen = Set<Key>()
-        var deduped: [IndexChange] = []
-        deduped.reserveCapacity(min(liveIndexChanges.count, liveChangesMax))
-        for change in liveIndexChanges.reversed() {
-            guard seen.insert(Key(path: change.path, kind: change.kind)).inserted else { continue }
-            deduped.append(change)
-            if deduped.count >= liveChangesMax { break } // newest-first, so this drops only the oldest
-        }
-        deduped.reverse() // restore oldest→newest
-        liveIndexChanges = deduped
-    }
-
     @ObservationIgnored private var _lastOperationUpdate: CFAbsoluteTime = 0
     @ObservationIgnored private var _operationThrottle: Task<Void, Never>?
 
@@ -2029,6 +1967,74 @@ class FuzzyClient {
     @ObservationIgnored private var fsignoreWatchSources: [DispatchSourceFileSystemObject] = []
     @ObservationIgnored private var fsignoreContentHashes: [String: Int] = [:]
     @ObservationIgnored private var fsignoreReindexTask: DispatchWorkItem?
+
+    private static func removingLines(_ remove: [String], from content: String) -> String {
+        let toRemove = Set(remove.map { $0.trimmingCharacters(in: .whitespaces) })
+        return content
+            .components(separatedBy: .newlines)
+            .filter { !toRemove.contains($0.trimmingCharacters(in: .whitespaces)) }
+            .joined(separator: "\n")
+    }
+
+    private static func appendingLines(_ add: [String], to content: String) -> String {
+        let existing = Set(content.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) })
+        let newLines = add.filter { !existing.contains($0.trimmingCharacters(in: .whitespaces)) }
+        guard !newLines.isEmpty else { return content }
+        var updated = content
+        if !updated.isEmpty, !updated.hasSuffix("\n") { updated += "\n" }
+        updated += newLines.joined(separator: "\n")
+        return updated
+    }
+
+    private func appendIgnoreLines(_ lines: [String], to file: FilePath, suppressWatcher: Bool) {
+        let existing = Set((try? String(contentsOfFile: file.string, encoding: .utf8))?.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) } ?? [])
+        let newLines = lines.filter { !existing.contains($0.trimmingCharacters(in: .whitespaces)) }
+        guard !newLines.isEmpty else { return }
+
+        if suppressWatcher {
+            fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 10
+            fsignoreReindexTask?.cancel()
+        }
+
+        do {
+            if !file.exists {
+                FileManager.default.createFile(atPath: file.string, contents: nil)
+            }
+            let handle = try FileHandle(forUpdating: file.url)
+            handle.seekToEndOfFile()
+            if let data = "\n\(newLines.joined(separator: "\n"))".data(using: .utf8) {
+                handle.write(data)
+            }
+            handle.closeFile()
+        } catch {
+            log.error("Failed to append to \(file.string): \(error.localizedDescription)")
+        }
+
+        bust_gitignore_cache()
+        if suppressWatcher {
+            fsignoreContentHashes[file.string] = contentHash(of: file.string)
+        }
+    }
+
+    /// Collapse the live-change history to the latest event per (path, kind), preserving oldest→newest order,
+    /// and keep at most liveChangesMax distinct entries (dropping the oldest). Walking newest→oldest and
+    /// keeping the first occurrence of each key retains the most recent event, and its date, for that key.
+    private func compactLiveChanges() {
+        struct Key: Hashable {
+            let path: String
+            let kind: IndexChange.Kind
+        }
+        var seen = Set<Key>()
+        var deduped: [IndexChange] = []
+        deduped.reserveCapacity(min(liveIndexChanges.count, liveChangesMax))
+        for change in liveIndexChanges.reversed() {
+            guard seen.insert(Key(path: change.path, kind: change.kind)).inserted else { continue }
+            deduped.append(change)
+            if deduped.count >= liveChangesMax { break } // newest-first, so this drops only the oldest
+        }
+        deduped.reverse() // restore oldest→newest
+        liveIndexChanges = deduped
+    }
 
     private func compactOperationSummary() -> String {
         let ops = Array(ongoingOperations.values)

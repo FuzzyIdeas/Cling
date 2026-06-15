@@ -34,9 +34,10 @@ struct GroupedIgnoreEditor: View {
         _doc = State(initialValue: IgnoreDocument.parse(rawText.wrappedValue))
     }
 
+    @Binding var rawText: String
+
     let title: String
     let subtitle: String
-    @Binding var rawText: String
     let rawEditorHeight: CGFloat
     let applyDisabled: Bool
     let showHelpButton: Bool
@@ -61,6 +62,13 @@ struct GroupedIgnoreEditor: View {
             if parsed.serialize() != doc.serialize() { doc = parsed }
         }
     }
+
+    // MARK: - Bindings & state
+
+    @State private var doc: IgnoreDocument
+    @State private var expanded: Set<String> = []
+    @State private var showRaw = false
+    @State private var showHelpSheet = false
 
     // MARK: - Sections
 
@@ -97,72 +105,6 @@ struct GroupedIgnoreEditor: View {
                 }
             }
         }
-    }
-
-    private func groupView(_ gi: Int) -> some View {
-        let group = doc.groups[gi]
-        let isExpanded = expanded.contains(group.id)
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Toggle("", isOn: groupBinding(gi))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .disabled(group.ruleCount == 0)
-                    .fixedSize()
-                Button {
-                    if group.ruleCount > 0 { toggleExpanded(group.id) }
-                } label: {
-                    HStack(spacing: 6) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(group.name).font(.system(size: 11, weight: .medium)).foregroundStyle(.primary)
-                            Text(statusCaption(group)).font(.system(size: 9)).foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 0)
-                        if group.ruleCount > 0 {
-                            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 12)
-                        }
-                    }
-                    .frame(height: 28)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(group.rules, id: \.index) { rule in
-                        Button {
-                            ruleBinding(gi, rule.index).wrappedValue.toggle()
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: rule.enabled ? "checkmark.square.fill" : "square")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(rule.enabled ? Color.accentColor : .secondary)
-                                    .frame(width: 14)
-                                Text(rule.pattern)
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(rule.enabled ? .primary : .secondary)
-                                    .strikethrough(!rule.enabled, color: .secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Spacer(minLength: 0)
-                            }
-                            .frame(height: 18)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.leading, 22)
-                .padding(.top, 2)
-            }
-        }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 7)
-        .background(.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
     }
 
     private var rawDisclosure: some View {
@@ -233,12 +175,71 @@ struct GroupedIgnoreEditor: View {
         .frame(width: 500)
     }
 
-    // MARK: - Bindings & state
-
-    @State private var doc: IgnoreDocument
-    @State private var expanded: Set<String> = []
-    @State private var showRaw = false
-    @State private var showHelpSheet = false
+    private func groupView(_ gi: Int) -> some View {
+        let group = doc.groups[gi]
+        let isExpanded = expanded.contains(group.id)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Toggle("", isOn: groupBinding(gi))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .disabled(group.ruleCount == 0)
+                    .fixedSize()
+                Button {
+                    if group.ruleCount > 0 { toggleExpanded(group.id) }
+                } label: {
+                    HStack(spacing: 6) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(group.name).font(.system(size: 11, weight: .medium)).foregroundStyle(.primary)
+                            Text(statusCaption(group)).font(.system(size: 9)).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                        if group.ruleCount > 0 {
+                            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 12)
+                        }
+                    }
+                    .frame(height: 28)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(group.rules, id: \.index) { rule in
+                        Button {
+                            ruleBinding(gi, rule.index).wrappedValue.toggle()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: rule.enabled ? "checkmark.square.fill" : "square")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(rule.enabled ? Color.accentColor : .secondary)
+                                    .frame(width: 14)
+                                Text(rule.pattern)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(rule.enabled ? .primary : .secondary)
+                                    .strikethrough(!rule.enabled, color: .secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer(minLength: 0)
+                            }
+                            .frame(height: 18)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.leading, 22)
+                .padding(.top, 2)
+            }
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 7)
+        .background(.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
+    }
 
     private func toggleExpanded(_ id: String) {
         if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }

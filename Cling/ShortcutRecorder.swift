@@ -2,7 +2,7 @@ import AppKit
 import KeyboardShortcuts
 import SwiftUI
 
-// MARK: - ShortcutRecorder (click-to-record fix)
+// MARK: - ShortcutRecorder
 
 /// Drop-in replacement for `KeyboardShortcuts.Recorder` that makes any click inside the field
 /// reliably enter recording mode. Use this instead of the package's `Recorder` everywhere.
@@ -114,8 +114,6 @@ final class ClickToRecordRecorder: NSView {
     override func mouseDown(with _: NSEvent) {
         startRecording()
     }
-
-    // MARK: - Private
 
     private static let recorderActiveStatusDidChange = Notification.Name("KeyboardShortcuts_recorderActiveStatusDidChange")
 

@@ -42,13 +42,15 @@ struct ExcludeRule: Hashable {
     }
 }
 
-// MARK: - ExcludeOption
+// MARK: - FolderSegment
 
 /// One selectable folder level in the "parent folder" option's breadcrumb (root to deepest).
 struct FolderSegment: Hashable {
     let name: String
     let rule: ExcludeRule
 }
+
+// MARK: - ExcludeOption
 
 struct ExcludeOption: Identifiable, Equatable {
     let id = UUID()
@@ -68,15 +70,6 @@ struct ExcludeOption: Identifiable, Equatable {
 // MARK: - ExcludePathInfo
 
 struct ExcludePathInfo {
-    let path: FilePath
-    let abs: String
-    let mechanism: ExcludeMechanism
-    let root: String? // HOME or volume root; nil for blocklist paths
-    let rel: String // path relative to root (fsignore); the absolute path for blocklist
-
-    /// Lazily stat'd so huge selections (exact-only bulk mode) never touch the filesystem.
-    var isDir: Bool { path.isDir }
-
     init(path: FilePath, home: String, volumes: [FilePath]) {
         self.path = path
         let p = path.string
@@ -99,6 +92,15 @@ struct ExcludePathInfo {
             rel = p
         }
     }
+
+    let path: FilePath
+    let abs: String
+    let mechanism: ExcludeMechanism
+    let root: String? // HOME or volume root; nil for blocklist paths
+    let rel: String // path relative to root (fsignore); the absolute path for blocklist
+
+    /// Lazily stat'd so huge selections (exact-only bulk mode) never touch the filesystem.
+    var isDir: Bool { path.isDir }
 
     var leaf: String { (abs as NSString).lastPathComponent }
     var ext: String? { IndexInclusionAnalyzer.fileExtension(of: leaf) }
@@ -300,7 +302,9 @@ enum ExcludeAnalyzer {
         var common = first
         for p in parents.dropFirst() {
             var i = 0
-            while i < common.count, i < p.count, common[i] == p[i] { i += 1 }
+            while i < common.count, i < p.count, common[i] == p[i] {
+                i += 1
+            }
             common = Array(common.prefix(i))
         }
         return common.isEmpty ? nil : common.joined(separator: "/")
@@ -318,26 +322,10 @@ enum ExcludeAnalyzer {
             rules.append(best.rule)
             remaining = remaining.filter { !matches(best.rule, $0) }
         }
-        for info in remaining { rules.append(exactRule(info)) }
+        for info in remaining {
+            rules.append(exactRule(info))
+        }
         return rules.isEmpty ? nil : rules
-    }
-
-    private static func bestCandidate(_ infos: [ExcludePathInfo], mechanism: ExcludeMechanism) -> (rule: ExcludeRule, covered: [ExcludePathInfo])? {
-        var candidates: [ExcludeRule] = []
-        if mechanism.supportsGlobs {
-            for e in Set(infos.compactMap { $0.isDir ? nil : $0.ext }) {
-                candidates.append(ExcludeRule(mechanism: mechanism, line: "*.\(e)"))
-            }
-        }
-        for name in Set(infos.map(\.leaf)) {
-            let dirs = infos.filter { $0.leaf == name }
-            if let r = nameRule(name: name, isDir: dirs.allSatisfy(\.isDir), mechanism: mechanism) { candidates.append(r) }
-        }
-        for parent in Set(infos.map(\.parentPattern)) where !parent.isEmpty {
-            candidates.append(folderRule(parent, mechanism: mechanism))
-        }
-        let scored = candidates.map { rule in (rule: rule, covered: infos.filter { matches(rule, $0) }) }
-        return scored.max { $0.covered.count < $1.covered.count }
     }
 
     static func matches(_ rule: ExcludeRule, _ info: ExcludePathInfo) -> Bool {
@@ -365,9 +353,28 @@ enum ExcludeAnalyzer {
         // Bare name: matches that name as any path component, at any depth.
         return info.leaf == body || info.rel.split(separator: "/").contains(Substring(body))
     }
+
+    private static func bestCandidate(_ infos: [ExcludePathInfo], mechanism: ExcludeMechanism) -> (rule: ExcludeRule, covered: [ExcludePathInfo])? {
+        var candidates: [ExcludeRule] = []
+        if mechanism.supportsGlobs {
+            for e in Set(infos.compactMap { $0.isDir ? nil : $0.ext }) {
+                candidates.append(ExcludeRule(mechanism: mechanism, line: "*.\(e)"))
+            }
+        }
+        for name in Set(infos.map(\.leaf)) {
+            let dirs = infos.filter { $0.leaf == name }
+            if let r = nameRule(name: name, isDir: dirs.allSatisfy(\.isDir), mechanism: mechanism) { candidates.append(r) }
+        }
+        for parent in Set(infos.map(\.parentPattern)) where !parent.isEmpty {
+            candidates.append(folderRule(parent, mechanism: mechanism))
+        }
+        let scored = candidates.map { rule in (rule: rule, covered: infos.filter { matches(rule, $0) }) }
+        return scored.max { $0.covered.count < $1.covered.count }
+    }
+
 }
 
-// MARK: - ExcludeFromIndexSheet
+// MARK: - ExcludeSheetRequest
 
 /// Identifiable wrapper so the sheet is presented with `.sheet(item:)`, which passes the paths atomically
 /// (avoids the stale-state race where `.sheet(isPresented:)` could open with an old/empty selection).
@@ -376,13 +383,10 @@ struct ExcludeSheetRequest: Identifiable {
     let paths: [FilePath]
 }
 
+// MARK: - ExcludeFromIndexSheet
+
 struct ExcludeFromIndexSheet: View {
     let paths: [FilePath]
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var analysis: ExcludeAnalysis?
-    @State private var selectedID: UUID?
-    @State private var folderSegmentIndex = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -408,6 +412,11 @@ struct ExcludeFromIndexSheet: View {
             }
         }
     }
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var analysis: ExcludeAnalysis?
+    @State private var selectedID: UUID?
+    @State private var folderSegmentIndex = 0
 
     private var header: some View {
         HStack {
@@ -528,21 +537,6 @@ struct ExcludeFromIndexSheet: View {
         .padding(.top, 4)
     }
 
-    // MARK: Actions
-
-    private func rulesFor(_ option: ExcludeOption) -> [ExcludeRule] {
-        if let segments = option.folderSegments, !segments.isEmpty {
-            return [segments[min(folderSegmentIndex, segments.count - 1)].rule]
-        }
-        return option.rules
-    }
-
-    private func apply(_ analysis: ExcludeAnalysis) {
-        guard let id = selectedID, let option = analysis.options.first(where: { $0.id == id }) else { return }
-        FUZZY.excludeFromIndex(rules: rulesFor(option), paths: Set(paths), reindex: option.needsReindex)
-        dismiss()
-    }
-
     /// Clickable breadcrumb of the ancestor folders, root to deepest. Clicking a segment excludes the folder
     /// up to and including it; deeper segments are shown dimmed since they fall inside the excluded folder.
     private func folderBreadcrumb(_ segments: [FolderSegment]) -> some View {
@@ -565,4 +559,18 @@ struct ExcludeFromIndexSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    private func rulesFor(_ option: ExcludeOption) -> [ExcludeRule] {
+        if let segments = option.folderSegments, !segments.isEmpty {
+            return [segments[min(folderSegmentIndex, segments.count - 1)].rule]
+        }
+        return option.rules
+    }
+
+    private func apply(_ analysis: ExcludeAnalysis) {
+        guard let id = selectedID, let option = analysis.options.first(where: { $0.id == id }) else { return }
+        FUZZY.excludeFromIndex(rules: rulesFor(option), paths: Set(paths), reindex: option.needsReindex)
+        dismiss()
+    }
+
 }

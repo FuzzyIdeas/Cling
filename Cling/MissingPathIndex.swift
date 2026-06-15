@@ -13,8 +13,8 @@ private let log = Logger(subsystem: clingSubsystem, category: "MissingPathIndex"
 
 /// Concrete set of changes to force a path back into the index. Consumed by `FuzzyClient.includeInIndex`.
 struct IndexInclusionPlan {
-    var addBlockedPrefixes: [String] = []  // `!` exception lines for the prefix blocklist
-    var addBlockedContains: [String] = []  // `!` exception lines for the contains blocklist
+    var addBlockedPrefixes: [String] = [] // `!` exception lines for the prefix blocklist
+    var addBlockedContains: [String] = [] // `!` exception lines for the contains blocklist
     var removeBlockedPrefixes: [String] = []
     var removeBlockedContains: [String] = []
     var addHomeFsignoreLines: [String] = []
@@ -27,8 +27,8 @@ struct IndexInclusionPlan {
     var isEmpty: Bool {
         addBlockedPrefixes.isEmpty && addBlockedContains.isEmpty &&
             removeBlockedPrefixes.isEmpty && removeBlockedContains.isEmpty &&
-            addHomeFsignoreLines.isEmpty && volumeFsignoreLines.allSatisfy { $0.value.isEmpty } &&
-            scopeFsignoreLines.allSatisfy { $0.value.isEmpty }
+            addHomeFsignoreLines.isEmpty && volumeFsignoreLines.allSatisfy(\.value.isEmpty) &&
+            scopeFsignoreLines.allSatisfy(\.value.isEmpty)
     }
 }
 
@@ -118,7 +118,7 @@ enum PathStatus: Equatable {
     case alreadyIndexable
 }
 
-// MARK: - InclusionOption
+// MARK: - Breadth
 
 enum Breadth: Int, Comparable {
     case exact = 0
@@ -129,12 +129,16 @@ enum Breadth: Int, Comparable {
     static func < (lhs: Breadth, rhs: Breadth) -> Bool { lhs.rawValue < rhs.rawValue }
 }
 
+// MARK: - ReindexTarget
+
 /// Reindex scope after applying a plan, precomputed from the path during diagnosis.
 enum ReindexTarget: Equatable {
     case scopes([SearchScope])
     case volume(FilePath)
     case full
 }
+
+// MARK: - InclusionOption
 
 /// One user-selectable way to re-include the path. May add blocklist `!` exceptions (preferred, keeps the
 /// fast byte-matched rule in place), remove a blocklist rule outright (broad fallback), and/or add fsignore
@@ -144,8 +148,8 @@ struct InclusionOption: Identifiable, Equatable {
     let title: String
     let summary: String
     let breadth: Breadth
-    var addBlocklistPrefixes: [String] = []   // `!`-prefixed exception lines
-    var addBlocklistContains: [String] = []   // `!`-prefixed exception lines
+    var addBlocklistPrefixes: [String] = [] // `!`-prefixed exception lines
+    var addBlocklistContains: [String] = [] // `!`-prefixed exception lines
     var removeBlocklist: [IgnoreHit] = []
     var reExcludeFsignore: [String] = []
     var reIncludeFsignore: [String] = []
@@ -154,14 +158,15 @@ struct InclusionOption: Identifiable, Equatable {
     /// Lines, in apply order: re-exclusions first, then `!` re-inclusions (so negation wins as the last match).
     var fsignoreLines: [String] { reExcludeFsignore + reIncludeFsignore }
 
-    static func == (lhs: InclusionOption, rhs: InclusionOption) -> Bool { lhs.id == rhs.id }
-
     /// Signature used to dedupe options that would produce identical changes.
     var signature: String {
         let add = (addBlocklistPrefixes + addBlocklistContains).sorted().joined(separator: ",")
         let rm = removeBlocklist.map(\.rule).sorted().joined(separator: ",")
         return "\(add)|\(rm)|\(ignoreDest)|\(fsignoreLines.joined(separator: ","))"
     }
+
+    static func == (lhs: InclusionOption, rhs: InclusionOption) -> Bool { lhs.id == rhs.id }
+
 }
 
 // MARK: - PathDiagnosis
@@ -246,6 +251,12 @@ struct IndexSnapshot {
 // MARK: - IndexInclusionAnalyzer
 
 enum IndexInclusionAnalyzer {
+    /// Directory extensions that macOS treats as opaque bundles; we index the bundle entry but not its guts.
+    nonisolated static let bundleExtensions: Set<String> = [
+        "app", "framework", "bundle", "appex", "xpc", "plugin", "kext", "qlgenerator",
+        "mdimporter", "prefpane", "photoslibrary", "rtfd", "pkg", "component", "wdgt",
+    ]
+
     /// Analyze whether `rawPath` is excluded from the index, by which rules, and how to force it back in.
     nonisolated static func diagnose(rawPath: String, snapshot: IndexSnapshot) -> PathDiagnosis {
         let path = normalize(rawPath)
@@ -550,12 +561,6 @@ enum IndexInclusionAnalyzer {
         return parent.isEmpty ? nil : parent
     }
 
-    /// Directory extensions that macOS treats as opaque bundles; we index the bundle entry but not its guts.
-    nonisolated static let bundleExtensions: Set<String> = [
-        "app", "framework", "bundle", "appex", "xpc", "plugin", "kext", "qlgenerator",
-        "mdimporter", "prefpane", "photoslibrary", "rtfd", "pkg", "component", "wdgt",
-    ]
-
     /// fsignore lines to re-include a single target.
     /// - file: `!rel`
     /// - bundle dir: `!rel` plus `rel/**` re-exclusion (whitelisting a dir otherwise drags in every internal file)
@@ -595,14 +600,6 @@ enum IndexInclusionAnalyzer {
 struct MissingPathResultsBar: View {
     let query: String
 
-    @State private var showSheet = false
-    @State private var hovering = false
-
-    private var candidatePath: String {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        return (q.contains("/") || q.hasPrefix("~")) ? q : ""
-    }
-
     var body: some View {
         Button(action: { showSheet = true }) {
             HStack(spacing: 6) {
@@ -630,18 +627,21 @@ struct MissingPathResultsBar: View {
                 .frame(width: 600, height: 560)
         }
     }
+
+    @State private var showSheet = false
+    @State private var hovering = false
+
+    private var candidatePath: String {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        return (q.contains("/") || q.hasPrefix("~")) ? q : ""
+    }
+
 }
 
 // MARK: - MissingPathSheet
 
 struct MissingPathSheet: View {
-    var initialPath: String = ""
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var pathText = ""
-    @State private var diagnosis: PathDiagnosis?
-    @State private var selectedID: UUID?
-    @State private var dropTargeted = false
+    var initialPath = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -681,6 +681,12 @@ struct MissingPathSheet: View {
         }
     }
 
+    @Environment(\.dismiss) private var dismiss
+    @State private var pathText = ""
+    @State private var diagnosis: PathDiagnosis?
+    @State private var selectedID: UUID?
+    @State private var dropTargeted = false
+
     /// Faint drop affordance shown before a path has been checked. The icon brightens and swaps while a
     /// file is dragged over the sheet.
     private var dropZone: some View {
@@ -707,13 +713,6 @@ struct MissingPathSheet: View {
                 )
         )
         .padding(.top, 4)
-    }
-
-    private func handleDrop(_ urls: [URL]) -> Bool {
-        guard let url = urls.first(where: \.isFileURL) else { return false }
-        pathText = url.path
-        analyze()
-        return true
     }
 
     private var header: some View {
@@ -759,18 +758,27 @@ struct MissingPathSheet: View {
     private func resultSection(_ d: PathDiagnosis) -> some View {
         switch d.status {
         case .notFound:
-            statusCard(icon: "exclamationmark.triangle.fill", tint: .orange,
-                       title: "Nothing exists at that path",
-                       detail: "Double-check the path. The file or folder must exist on disk to be indexed.")
+            statusCard(
+                icon: "exclamationmark.triangle.fill",
+                tint: .orange,
+                title: "Nothing exists at that path",
+                detail: "Double-check the path. The file or folder must exist on disk to be indexed."
+            )
         case .notInAnyScope:
-            statusCard(icon: "mappin.slash", tint: .orange,
-                       title: "Not inside any indexed location",
-                       detail: "This path isn't under an enabled search scope or an indexed volume, so Cling never walks it. Enable the matching scope (or volume) in Search settings first.")
+            statusCard(
+                icon: "mappin.slash",
+                tint: .orange,
+                title: "Not inside any indexed location",
+                detail: "This path isn't under an enabled search scope or an indexed volume, so Cling never walks it. Enable the matching scope (or volume) in Search settings first."
+            )
         case .alreadyIndexable:
             VStack(alignment: .leading, spacing: 10) {
-                statusCard(icon: "checkmark.seal.fill", tint: .green,
-                           title: "Not excluded by any rule",
-                           detail: "No ignore rule or blocklist entry matches this path. It should already be in the index. If it's missing, a reindex will pick it up.")
+                statusCard(
+                    icon: "checkmark.seal.fill",
+                    tint: .green,
+                    title: "Not excluded by any rule",
+                    detail: "No ignore rule or blocklist entry matches this path. It should already be in the index. If it's missing, a reindex will pick it up."
+                )
                 Button("Reindex now") {
                     reindex(for: d)
                     dismiss()
@@ -872,7 +880,7 @@ struct MissingPathSheet: View {
     }
 
     private func changeList(_ option: InclusionOption, diagnosis d: PathDiagnosis) -> some View {
-        let ignoreLabel: String = switch option.ignoreDest {
+        let ignoreLabel = switch option.ignoreDest {
         case .home: "~/.fsignore"
         case let .volume(v): "\(v.name.string)/.fsignore"
         case let .scope(s): "\(s.label) ignore"
@@ -919,7 +927,12 @@ struct MissingPathSheet: View {
         .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    // MARK: Actions
+    private func handleDrop(_ urls: [URL]) -> Bool {
+        guard let url = urls.first(where: \.isFileURL) else { return false }
+        pathText = url.path
+        analyze()
+        return true
+    }
 
     private func analyze() {
         let raw = pathText.trimmingCharacters(in: .whitespaces)
