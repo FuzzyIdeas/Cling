@@ -280,6 +280,7 @@ class AppDelegate: LowtechProAppDelegate {
     /// Activating another app while Settings is open would wrongly defocus Cling.
     func handBackFocusAfterMainDismiss() {
         if let settings = settingsWindow, settings.isVisible {
+            NSApp.activate(ignoringOtherApps: true)
             settings.makeKeyAndOrderFront(nil)
         } else {
             APP_MANAGER.lastFrontmostApp?.activate()
@@ -615,6 +616,9 @@ struct ClingApp: App {
 
             openWindow(id: window)
             focus()
+            if window == "settings" {
+                AppDelegate.shared?.settingsWindow?.makeKeyAndOrderFront(nil)
+            }
             NSApp.keyWindow?.orderFrontRegardless()
             wm.windowToOpen = nil
         }
