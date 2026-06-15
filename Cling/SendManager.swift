@@ -34,6 +34,21 @@ func expirationShortLabel(_ seconds: TimeInterval) -> String {
     }
 }
 
+/// Compact live-countdown label. Over an hour it stays at minute resolution ("2h 34m", "1d 5h");
+/// under an hour it shows seconds ("23m 05s", "45s") so a ticking display reads naturally.
+func expirationCountdownLabel(_ seconds: TimeInterval) -> String {
+    let s = max(0, Int(seconds.rounded(.up)))
+    if s >= 86400 {
+        return "\(s / 86400)d \((s % 86400) / 3600)h"
+    } else if s >= 3600 {
+        return "\(s / 3600)h \((s % 3600) / 60)m"
+    } else if s >= 60 {
+        return "\(s / 60)m \(String(format: "%02d", s % 60))s"
+    } else {
+        return "\(s)s"
+    }
+}
+
 @MainActor final class SendSession: ObservableObject, Identifiable {
     let id: String
     let files: [URL]
@@ -62,10 +77,11 @@ func expirationShortLabel(_ seconds: TimeInterval) -> String {
         default:   return "\(names[0]) + \(names.count - 1) more files"
         }
     }
-    var expiresInLabel: String? {
+    /// Live "Expires in …" label relative to `now`, so the Transfers panel can tick it down.
+    func expiresLabel(asOf now: Date) -> String? {
         guard let expiresAt else { return nil }
-        let r = expiresAt.timeIntervalSinceNow
-        return r > 0 ? "Expires in \(expirationDurationLabel(r))" : "Expiring now"
+        let r = expiresAt.timeIntervalSince(now)
+        return r > 0 ? "Expires in \(expirationCountdownLabel(r))" : "Expiring now"
     }
 
     func copyLink() {

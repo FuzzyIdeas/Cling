@@ -2,8 +2,31 @@ import SwiftUI
 
 struct TransfersPanel: View {
     @ObservedObject var manager = SendManager.shared
+    @State private var now = Date()
+    @State private var ticker: Task<Void, Never>?
 
     private var activeCount: Int { manager.sessions.count }
+
+    /// Tick `now` only while the popover is on screen, and only as often as needed: every second
+    /// when the soonest expiry is under an hour out, every minute otherwise. Cancelled on disappear
+    /// so no clock work happens while the popover is hidden.
+    private func startTicking() {
+        ticker?.cancel()
+        now = Date()
+        ticker = Task { @MainActor in
+            while !Task.isCancelled {
+                let soonest = manager.recentSessions
+                    .filter { !$0.stopped }
+                    .compactMap { $0.expiresAt?.timeIntervalSince(now) }
+                    .filter { $0 > 0 }
+                    .min()
+                let delay: Double = soonest.map { $0 > 3600 ? 60 : 1 } ?? 60
+                try? await Task.sleep(for: .seconds(delay))
+                if Task.isCancelled { break }
+                now = Date()
+            }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -35,7 +58,7 @@ struct TransfersPanel: View {
             } else {
                 Divider()
                 ForEach(manager.recentSessions) { session in
-                    TransferRow(session: session)
+                    TransferRow(session: session, now: now)
                     if session.id != manager.recentSessions.last?.id {
                         Divider().padding(.leading, 12)
                     }
@@ -43,12 +66,15 @@ struct TransfersPanel: View {
             }
         }
         .frame(width: 340)
+        .onAppear { startTicking() }
+        .onDisappear { ticker?.cancel(); ticker = nil }
     }
 }
 
 private struct TransferRow: View {
     @ObservedObject var session: SendSession
     @ObservedObject var manager = SendManager.shared
+    let now: Date
 
     private var accent: Color { session.stopped ? .secondary : .accentColor }
 
@@ -113,7 +139,7 @@ private struct TransferRow: View {
     @ViewBuilder private var statusPill: some View {
         if session.stopped {
             pill("Stopped", color: .secondary)
-        } else if let label = session.expiresInLabel {
+        } else if let label = session.expiresLabel(asOf: now) {
             pill(label, color: .accentColor)
         }
     }
