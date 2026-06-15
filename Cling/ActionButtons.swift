@@ -44,19 +44,23 @@ struct ActionButtons: View {
         HStack {
             if showActionRow {
                 if showingAlternates {
-                    dropToFocusedElementButton
-                    dropToZoneButton
-                    openWithFrontmostAppButton
-                    Spacer()
-                    if !hidden.contains(.copy) {
-                        copyFilesButton.disabled(focused.wrappedValue != .list)
+                    HStack(spacing: density.spacing) {
+                        dropToFocusedElementButton
+                        dropToZoneButton
+                        openWithFrontmostAppButton
+                        Spacer()
+                        if !hidden.contains(.copy) {
+                            copyFilesButton.disabled(focused.wrappedValue != .list)
+                        }
+                        if !hidden.contains(.copyPaths) {
+                            copyPathsButton
+                        }
+                        if !hidden.contains(.trash) {
+                            trashButton.disabled(focused.wrappedValue != .list)
+                        }
                     }
-                    if !hidden.contains(.copyPaths) {
-                        copyPathsButton
-                    }
-                    if !hidden.contains(.trash) {
-                        trashButton.disabled(focused.wrappedValue != .list)
-                    }
+                    .font(.system(size: density.fontSize))
+                    .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
                 } else {
                     HStack(spacing: density.spacing) {
                         ForEach(ToolbarAction.segmentOrder, id: \.self) { segment in
@@ -112,21 +116,21 @@ struct ActionButtons: View {
         .onChange(of: sendManager.linkCopiedTick) { _, _ in
             flashCopied(.sendSecurely, text: "Link copied")
         }
-        .onChange(of: cmdHeld) { _, held in
+        .onChange(of: badgeModifierHeld) { _, held in
             badgeRevealTask?.cancel()
             guard held else {
                 withAnimation(.easeOut(duration: 0.12)) { badgesVisible = false }
                 return
             }
             // First reveal after the coachmark is instant, to reward the discovery.
-            // Afterwards the badges only show if ⌘ is held a beat, so plain ⌘ hotkeys don't flash them.
+            // Afterwards the badges only show if ⌘/⌥ is held a beat, so quick hotkeys don't flash them.
             if !badgesRevealedOnce {
                 badgesRevealedOnce = true
                 withAnimation(.easeOut(duration: 0.12)) { badgesVisible = true }
             } else {
                 badgeRevealTask = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(500))
-                    guard !Task.isCancelled, cmdHeld else { return }
+                    guard !Task.isCancelled, badgeModifierHeld else { return }
                     withAnimation(.easeOut(duration: 0.12)) { badgesVisible = true }
                 }
             }
@@ -383,43 +387,41 @@ struct ActionButtons: View {
         }
     }
 
+    /// Renders an Option-held alternate action with the icon/text style from settings, plus a
+    /// shortcut hint badge that follows the same reveal timing as the main row.
     @ViewBuilder
+    private func alternateButton(
+        _ title: String,
+        systemImage: String,
+        shortcut: String,
+        help: String? = nil,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(role: role, action: action) {
+            switch labelStyle {
+            case .iconAndText: Label(title, systemImage: systemImage)
+            case .textOnly:    Text(title)
+            case .iconOnly:    Image(systemName: systemImage)
+            }
+        }
+        .help(help ?? title)
+        .shortcutBadge(shortcut, visible: badgesVisible)
+    }
+
     private var copyFilesButton: some View {
-        if km.ralt || km.lalt {
-            Button("⌘⌥C Copy to...") {
-                isPresentingCopyToSheet = true
-            }
-            .help("Copy the selected files to a folder")
-        } else {
-            Button(action: copyFiles) {
-                Text("⌘C Copy")
-            }
-            .help("Copy the selected files")
-            .background(Color.inverted.opacity(copiedFiles ? 1.0 : 0.0))
-            .shadow(color: Color.black.opacity(copiedFiles ? 0.1 : 0.0), radius: 3)
-            .scaleEffect(copiedFiles ? 1.1 : 1)
+        alternateButton("Copy to…", systemImage: "doc.on.doc", shortcut: "⌘⌥C", help: "Copy the selected files to a folder") {
+            isPresentingCopyToSheet = true
         }
     }
 
-    @ViewBuilder
     private var copyPathsButton: some View {
-        if km.ralt || km.lalt {
-            Button(action: copyFilenames) {
-                Text("⌘⌥⇧C Copy filenames")
-            }
-            .help("Copy the filenames of the selected files")
-            .background(Color.inverted.opacity(copiedPaths ? 1.0 : 0.0))
-            .shadow(color: Color.black.opacity(copiedPaths ? 0.1 : 0.0), radius: 3)
-            .scaleEffect(copiedPaths ? 1.1 : 1)
-        } else {
-            Button(action: copyPaths) {
-                Text("⌘⇧C Copy paths")
-            }
-            .help("Copy the paths of the selected files")
-            .background(Color.inverted.opacity(copiedPaths ? 1.0 : 0.0))
-            .shadow(color: Color.black.opacity(copiedPaths ? 0.1 : 0.0), radius: 3)
-            .scaleEffect(copiedPaths ? 1.1 : 1)
+        alternateButton("Copy filenames", systemImage: "text.alignleft", shortcut: "⌘⌥⇧C", help: "Copy the filenames of the selected files") {
+            copyFilenames()
         }
+        .background(Color.inverted.opacity(copiedPaths ? 1.0 : 0.0))
+        .shadow(color: Color.black.opacity(copiedPaths ? 0.1 : 0.0), radius: 3)
+        .scaleEffect(copiedPaths ? 1.1 : 1)
     }
 
     @State private var copiedPaths = false
@@ -440,31 +442,11 @@ struct ActionButtons: View {
         .disabled(selectedResults.isEmpty || fuzzy.openWithAppShortcuts.isEmpty)
     }
 
-    @ViewBuilder
     private var trashButton: some View {
-        if km.ralt || km.lalt {
-            Button("⌘⌥⌫ Delete", role: .destructive) {
-                permanentlyDelete()
-            }
-            .help("Permanently delete the selected files")
-            .disabled(selectedResults.contains(where: \.isOnReadOnlyVolume))
-        } else {
-            Button("⌘⌫ Trash", role: .destructive) {
-                trashSelected()
-            }
-            .help("Move the selected files to the trash")
-            .disabled(selectedResults.contains(where: \.isOnReadOnlyVolume))
-            .confirmationDialog(
-                "Are you sure?",
-                isPresented: $isPresentingConfirm
-            ) {
-                Button("Move to trash") {
-                    moveToTrash()
-                }.keyboardShortcut(.defaultAction)
-            }
-            .dialogIcon(Image(systemName: "trash.circle.fill"))
-            .dialogSuppressionToggle(isSuppressed: $suppressTrashConfirm)
+        alternateButton("Delete", systemImage: "trash.slash", shortcut: "⌘⌥⌫", help: "Permanently delete the selected files", role: .destructive) {
+            permanentlyDelete()
         }
+        .disabled(selectedResults.contains(where: \.isOnReadOnlyVolume))
     }
 
     private func permanentlyDelete() {
@@ -521,20 +503,17 @@ struct ActionButtons: View {
         if let app = appManager.lastFrontmostApp,
            let target = appManager.axDropTarget(for: app)
         {
-            Button("⌥⏎ Drop into \(target.name)") {
+            alternateButton("Drop into \(target.name)", systemImage: "arrow.down.to.line", shortcut: "⌥⏎", help: "Drop into \(target.name) using a real drag-drop event") {
                 dropToFocusedElement()
             }
-            .help("Drop into \(target.name) using a real drag-drop event")
             .disabled(selectedResults.isEmpty)
         }
     }
 
-    @ViewBuilder
     private var dropToZoneButton: some View {
-        Button("⌥⇧⏎ Drag and drop to zone") {
+        alternateButton("Drag and drop to zone", systemImage: "rectangle.dashed", shortcut: "⌥⇧⏎", help: "Pick a screen zone with the keyboard, then drop the files there") {
             dropToZone()
         }
-        .help("Pick a screen zone with the keyboard, then drop the files there")
         .disabled(selectedResults.isEmpty)
     }
 
@@ -544,10 +523,9 @@ struct ActionButtons: View {
            let appURL = app.bundleURL,
            !isConfiguredHelperApp(appURL)
         {
-            Button("⌘⌥⏎ Open with \(app.name ?? "frontmost app")") {
+            alternateButton("Open with \(app.name ?? "frontmost app")", systemImage: "app.badge", shortcut: "⌘⌥⏎", help: "Open the selected files with \(app.name ?? "the frontmost app")") {
                 openWithFrontmostApp()
             }
-            .help("Open the selected files with \(app.name ?? "the frontmost app")")
             .disabled(selectedResults.isEmpty)
         }
     }
@@ -573,7 +551,9 @@ struct ActionButtons: View {
         }
     }
 
-    var cmdHeld: Bool { (km.rcmd || km.lcmd) && !isAnySheetOpen }
+    /// Held state of the modifiers that reveal shortcut hints: ⌘ for the main row, ⌥ for the
+    /// Option-held alternate row (only one row is on screen at a time, so one flag drives both).
+    var badgeModifierHeld: Bool { (km.rcmd || km.lcmd || km.ralt || km.lalt) && !isAnySheetOpen }
 
     var visibleBarActions: [ToolbarAction] {
         barActions.compactMap { ToolbarAction.byID[$0] }
