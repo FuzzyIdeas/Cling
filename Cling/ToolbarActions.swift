@@ -50,3 +50,18 @@ struct ToolbarAction: Identifiable {
     /// Segment display order, left to right (alternate handled separately by the Option-held set).
     static let segmentOrder: [ActionSegment] = [.open, .fileOps, .share, .destructive]
 }
+
+extension ActionSegment {
+    var title: String {
+        switch self {
+        case .open: "Open"
+        case .fileOps: "File ops"
+        case .share: "Share"
+        case .destructive: "Destructive"
+        case .alternate: "More actions"
+        }
+    }
+
+    /// Segments shown in the overflow menu (alternate + destructive are not listed there).
+    static let segmentSections: [ActionSegment] = [.open, .fileOps, .share]
+}

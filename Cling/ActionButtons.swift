@@ -23,6 +23,12 @@ struct ActionButtons: View {
     @Default(.copyPathsWithTilde) var copyPathsWithTilde
     @Default(.showActionRow) var showActionRow
     @Default(.hiddenActionButtons) var hiddenActionButtons
+    @Default(.barActions) var barActions
+    @Default(.hiddenActions) var hiddenActions
+    @Default(.toolbarShowDividers) var showDividers
+    @Default(.toolbarOverflowMode) var overflowMode
+    @Default(.toolbarLabelStyle) var labelStyle
+    @Default(.toolbarDensity) var density
     @ObservedObject var km = KM
 
     var body: some View {
@@ -32,45 +38,44 @@ struct ActionButtons: View {
 
         HStack {
             if showActionRow {
-                if !showingAlternates {
-                    if !hidden.contains(.open) { openButton(inTerminal: inTerminal) }
-                    if !hidden.contains(.showInFinder) { showInFinderButton }
-                    if !hidden.contains(.pasteToFrontmost) { pasteToFrontmostAppButton(inTerminal: inTerminal) }
-                    if !hidden.contains(.openInTerminal) { openInTerminalButton }
-                    if !hidden.contains(.openInEditor) { openInEditorButton }
-                    if !hidden.contains(.shelve) { shelveButton }
-                    Spacer()
-                    openWithPickerButton
-                    Spacer()
-                } else {
+                if showingAlternates {
                     dropToFocusedElementButton
                     dropToZoneButton
                     openWithFrontmostAppButton
                     Spacer()
+                    if !hidden.contains(.copy) {
+                        copyFilesButton.disabled(focused.wrappedValue != .list)
+                    }
+                    if !hidden.contains(.copyPaths) {
+                        copyPathsButton
+                    }
+                    if !hidden.contains(.trash) {
+                        trashButton.disabled(focused.wrappedValue != .list)
+                    }
+                } else {
+                    HStack(spacing: density.spacing) {
+                        ForEach(ToolbarAction.segmentOrder, id: \.self) { segment in
+                            let items = visibleBarActions.filter { $0.segment == segment }
+                            if !items.isEmpty {
+                                if segment == .destructive {
+                                    Spacer(minLength: 8)
+                                } else if showDividers, segment != ToolbarAction.segmentOrder.first {
+                                    Divider().frame(height: 16)
+                                }
+                                ForEach(items) { action in actionButton(action) }
+                            }
+                        }
+                        overflowButton
+                    }
+                    .font(.system(size: density.fontSize))
+                    .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
                 }
-                if !hidden.contains(.copy) {
-                    copyFilesButton.disabled(focused.wrappedValue != .list)
-                }
-                if !hidden.contains(.copyPaths) {
-                    copyPathsButton
-                }
-                if !showingAlternates, !hidden.contains(.moveTo) {
-                    moveToButton
-                }
-                if !hidden.contains(.trash) {
-                    trashButton.disabled(focused.wrappedValue != .list)
-                }
-                if !showingAlternates {
-                    if !hidden.contains(.quicklook) { quicklookButton }
-                    if !hidden.contains(.rename) { renameButton }
-                }
-            } else {
-                openWithPickerButton
             }
         }
         .font(.system(size: 10))
         .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
         .lineLimit(1)
+        .background(openWithPickerButton)
         .sheet(isPresented: $isPresentingCopyToSheet) {
             FileOperationSheet(operation: .copy, files: selectedResults.arr)
         }
@@ -570,6 +575,68 @@ struct ActionButtons: View {
             $0.existingFilePath?.url.resolvingSymlinksInPath().path
         }
         return helpers.contains(target)
+    }
+
+    // MARK: - Registry-driven toolbar
+
+    /// Returns false only when a required external resource (terminal, editor) is not configured.
+    /// Selection-dependent actions (copy, trash) return true here so they remain visible but disabled.
+    private func isConfigured(_ id: ActionID) -> Bool {
+        switch id {
+        case .openInTerminal: return terminalApp.existingFilePath != nil
+        case .openInEditor:   return editorApp.existingFilePath != nil
+        case .shelve:         return shelfApp.existingFilePath != nil
+        default:              return true
+        }
+    }
+
+    var visibleBarActions: [ToolbarAction] {
+        barActions.compactMap { ToolbarAction.byID[$0] }
+            .filter { !hiddenActions.contains($0.id) && isConfigured($0.id) && $0.segment != .alternate }
+    }
+
+    var overflowActions: [ToolbarAction] {
+        ToolbarAction.all.filter {
+            $0.segment != .alternate && !hiddenActions.contains($0.id) && !barActions.contains($0.id)
+                && isConfigured($0.id)
+        }
+    }
+
+    @ViewBuilder func actionButton(_ action: ToolbarAction) -> some View {
+        let color: Color = action.isDestructive ? .red.opacity(0.9) : .fg.warm.opacity(0.9)
+        Button { execute(action.id) } label: {
+            switch labelStyle {
+            case .iconAndText: Label(action.title, systemImage: action.systemImage)
+            case .textOnly:    Text(action.title)
+            case .iconOnly:    Image(systemName: action.systemImage)
+            }
+        }
+        .help(tooltip(for: action))
+        .buttonStyle(.text(color: color))
+        .disabled(!isAvailable(action.id))
+    }
+
+    func tooltip(for action: ToolbarAction) -> String { action.title }
+
+    @ViewBuilder var overflowButton: some View {
+        let show = overflowMode == .always || (overflowMode == .auto && !overflowActions.isEmpty)
+        if show {
+            Menu {
+                ForEach(ActionSegment.segmentSections, id: \.self) { segment in
+                    let items = overflowActions.filter { $0.segment == segment }
+                    if !items.isEmpty {
+                        Section(segment.title) {
+                            ForEach(items) { a in
+                                Button { execute(a.id) } label: { Label(a.title, systemImage: a.systemImage) }
+                                    .disabled(!isAvailable(a.id))
+                            }
+                        }
+                    }
+                }
+            } label: { Image(systemName: "ellipsis") }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        }
     }
 
     // MARK: - Action dispatch
