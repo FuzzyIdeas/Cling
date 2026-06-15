@@ -537,7 +537,7 @@ extension Defaults.Keys {
     static let toolbarDensity          = Key<ToolbarDensity>("toolbarDensity", default: .regular)
     static let toolbarShowDividers     = Key<Bool>("toolbarShowDividers", default: true)
     static let showActionMenu          = Key<Bool>("showActionMenu", default: true)
-    static let toolbarRowBackground    = Key<Bool>("toolbarRowBackground", default: true)
+    static let toolbarRowBackground    = Key<Bool>("toolbarRowBackground", default: false)
     static let barActions              = Key<[ActionID]>("barActions", default: ToolbarAction.defaultBar)
     static let hiddenActions           = Key<Set<ActionID>>("hiddenActions", default: [])
     static let didMigrateHiddenActions = Key<Bool>("didMigrateHiddenActions", default: false)
