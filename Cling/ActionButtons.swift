@@ -502,6 +502,7 @@ struct ActionButtons: View {
 
     @ViewBuilder func actionButton(_ action: ToolbarAction) -> some View {
         let color: Color = action.isDestructive ? .red.opacity(0.9) : .fg.warm.opacity(0.9)
+        let isSend = action.id == .sendSecurely
         Button { execute(action.id) } label: {
             switch labelStyle {
             case .iconAndText: Label(action.title, systemImage: action.systemImage)
@@ -513,6 +514,11 @@ struct ActionButtons: View {
         .buttonStyle(.text(color: color))
         .disabled(!isAvailable(action.id))
         .shortcutBadge(shortcutString(action.id), visible: showingShortcutBadges)
+        .popover(isPresented: isSend ? $showingSendPopover : .constant(false), arrowEdge: .bottom) {
+            if isSend {
+                SendExpirationPopover(files: selectedResults.map(\.url)) { showingSendPopover = false }
+            }
+        }
     }
 
     @MainActor func shortcutString(_ id: ActionID) -> String {
@@ -667,7 +673,7 @@ struct ActionButtons: View {
         )
     }
 
-    private func startSecureSend() { /* implemented in Phase D */ }
+    private func startSecureSend() { showingSendPopover = true }
 
     private func pasteToFrontmostAppButton(inTerminal: Bool) -> some View {
         Button(action: { pasteToFrontmostApp(inTerminal: inTerminal) }) {
@@ -776,10 +782,11 @@ struct ActionButtons: View {
     @State private var isPresentingConfirm = false
     @State private var isPresentingCopyToSheet = false
     @State private var isPresentingMoveToSheet = false
+    @State private var showingSendPopover = false
 
     private var isAnySheetOpen: Bool {
         isPresentingRenameView || isPresentingOpenWithPicker || isPresentingConfirm
-            || isPresentingCopyToSheet || isPresentingMoveToSheet
+            || isPresentingCopyToSheet || isPresentingMoveToSheet || showingSendPopover
     }
 }
 
