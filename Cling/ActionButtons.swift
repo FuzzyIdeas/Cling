@@ -90,6 +90,19 @@ struct ActionButtons: View {
                 fuzzy.results = fuzzy.results.filter { !movedPaths.contains($0) }
             }
         }
+        .sheet(isPresented: $showingSendIntro, onDismiss: {
+            if introWantsSend {
+                introWantsSend = false
+                sendExpiration = Defaults[.defaultLinkExpiration]
+                showingSendPopover = true
+            }
+        }) {
+            SendSecurelyIntroView {
+                sendSecurelyIntroShown = true
+                introWantsSend = true
+                showingSendIntro = false
+            }
+        }
         .onAppear { installShortcutMonitor() }
         .onDisappear { removeShortcutMonitor() }
         .onReceive(NotificationCenter.default.publisher(for: .clingRequestRename)) { _ in
@@ -148,6 +161,8 @@ struct ActionButtons: View {
         let copiedPathsB = $copiedPaths
         let focusBinding = focused
         let enterPastesB = $enterPastesToFrontmostTerminal
+        let sendPopoverB = $showingSendPopover
+        let sendExpirationB = $sendExpiration
 
         shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             // Only act on key events delivered to the main Cling window — never to Settings,
@@ -176,6 +191,19 @@ struct ActionButtons: View {
             let enterPastesToTerminal = inTerminal && enterPastesB.wrappedValue
 
             if sel.isEmpty { return event }
+
+            // While the Send expiration popover is open, ⏎ runs its primary action (copy link
+            // & share). The popover doesn't reliably take key focus, so its default-action button
+            // can't catch ⏎ itself — handle it here so the whole flow works from the keyboard.
+            if isReturn, mods.isEmpty, sendPopoverB.wrappedValue {
+                let files = sel.map(\.url)
+                let exp = sendExpirationB.wrappedValue
+                MainActor.assumeIsolated {
+                    SendManager.shared.requestSend(files: files, expiration: exp)
+                }
+                sendPopoverB.wrappedValue = false
+                return nil
+            }
 
             // ⏎ Open (default app, non-terminal context) — context-dependent, not rebindable
             if isReturn, mods.isEmpty, !enterPastesToTerminal {
@@ -609,21 +637,10 @@ struct ActionButtons: View {
         .buttonStyle(.text(color: sendActive ? Color.accentColor : color))
         .disabled(!isAvailable(action.id))
         .shortcutBadge(shortcutString(action.id), visible: badgesVisible)
-        .overlay {
-            if copiedFeedbackAction == action.id {
-                Text(copiedFeedbackText)
-                    .font(.system(size: density.fontSize, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Color.accentColor, in: Capsule())
-                    .fixedSize()
-                    .allowsHitTesting(false)
-                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
-            }
-        }
+        .buttonFlash(copiedFeedbackText, visible: copiedFeedbackAction == action.id, fontSize: density.fontSize)
         .popover(isPresented: isSend ? $showingSendPopover : .constant(false), arrowEdge: .bottom) {
             if isSend {
-                SendExpirationPopover(files: selectedResults.map(\.url)) { showingSendPopover = false }
+                SendExpirationPopover(files: selectedResults.map(\.url), expiration: $sendExpiration) { showingSendPopover = false }
             }
         }
         .popover(isPresented: isSend ? $showingTransfers : .constant(false), arrowEdge: .bottom) {
@@ -794,7 +811,14 @@ struct ActionButtons: View {
     }
 
     private func startSecureSend() {
-        if sendManager.sessions.isEmpty { showingSendPopover = true } else { showingTransfers = true }
+        if !sendManager.sessions.isEmpty {
+            showingTransfers = true
+        } else if !sendSecurelyIntroShown {
+            showingSendIntro = true
+        } else {
+            sendExpiration = Defaults[.defaultLinkExpiration]
+            showingSendPopover = true
+        }
     }
 
     private func pasteToFrontmostAppButton(inTerminal: Bool) -> some View {
@@ -906,6 +930,10 @@ struct ActionButtons: View {
     @State private var isPresentingMoveToSheet = false
     @State private var showingSendPopover = false
     @State private var showingTransfers = false
+    @State private var showingSendIntro = false
+    @State private var introWantsSend = false
+    @State private var sendExpiration: TimeInterval = Defaults[.defaultLinkExpiration]
+    @Default(.sendSecurelyIntroShown) private var sendSecurelyIntroShown
 
     @State private var copiedFeedbackAction: ActionID?
     @State private var copiedFeedbackText: String = "Copied"
@@ -926,7 +954,7 @@ struct ActionButtons: View {
     private var isAnySheetOpen: Bool {
         isPresentingRenameView || isPresentingOpenWithPicker || isPresentingConfirm
             || isPresentingCopyToSheet || isPresentingMoveToSheet || showingSendPopover || showingTransfers
-            || sendManager.pendingFolderConfirm != nil
+            || showingSendIntro || sendManager.pendingFolderConfirm != nil
     }
 }
 

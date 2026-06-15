@@ -178,6 +178,41 @@ struct BorderlessTextButton: ButtonStyle {
 
 }
 
+// MARK: - ButtonFlash
+
+/// Transient confirmation message ("Copied", "Link copied", …) that overlays a button.
+/// Fills the button's footprint so it shares the button's width and capsule radius; longer
+/// text scales down to fit rather than spilling past the button.
+struct ButtonFlash: ViewModifier {
+    let text: String
+    let visible: Bool
+    var fontSize: CGFloat = 10
+    var tint: Color = .accentColor
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if visible {
+                Text(text)
+                    .font(.system(size: fontSize, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .padding(.horizontal, 6)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(tint, in: Capsule())
+                    .allowsHitTesting(false)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
+        }
+    }
+}
+
+extension View {
+    func buttonFlash(_ text: String, visible: Bool, fontSize: CGFloat = 10, tint: Color = .accentColor) -> some View {
+        modifier(ButtonFlash(text: text, visible: visible, fontSize: fontSize, tint: tint))
+    }
+}
+
 extension View {
     func transparentTableBackground() -> some View {
         onAppear {
