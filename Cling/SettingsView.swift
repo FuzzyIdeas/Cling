@@ -319,11 +319,14 @@ private struct InterfaceSettingsPane: View {
                     .fixedSize()
                 }
             } header: {
-                Text("Sharing")
-            } footer: {
-                Text("Send Securely shares the selected files over a private link that expires on its own. This sets how long new links last by default.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Send Securely")
+                    Text("Share the selected files over a private link that's copied to your clipboard. Files transfer straight from your Mac, so a link works only while you're sharing it and stops when it expires.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textCase(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             // MARK: Part B — per-action visibility editor
