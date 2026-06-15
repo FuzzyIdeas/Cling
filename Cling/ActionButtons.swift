@@ -31,6 +31,7 @@ struct ActionButtons: View {
     @Default(.toolbarDensity) var density
     @Default(.toolbarShortcutHint) var shortcutHint
     @ObservedObject var km = KM
+    @ObservedObject private var sendManager = SendManager.shared
 
     var body: some View {
         let inTerminal = appManager.frontmostAppIsTerminal
@@ -503,21 +504,61 @@ struct ActionButtons: View {
     @ViewBuilder func actionButton(_ action: ToolbarAction) -> some View {
         let color: Color = action.isDestructive ? .red.opacity(0.9) : .fg.warm.opacity(0.9)
         let isSend = action.id == .sendSecurely
+        let sendActive = isSend && !sendManager.sessions.isEmpty
+        let activeCount = sendManager.sessions.count
         Button { execute(action.id) } label: {
-            switch labelStyle {
-            case .iconAndText: Label(action.title, systemImage: action.systemImage)
-            case .textOnly:    Text(action.title)
-            case .iconOnly:    Image(systemName: action.systemImage)
+            if sendActive {
+                switch labelStyle {
+                case .iconAndText:
+                    Label {
+                        Text(action.title)
+                    } icon: {
+                        Image(systemName: "paperplane.fill")
+                            .overlay(alignment: .topTrailing) {
+                                if activeCount > 1 {
+                                    Text("\(activeCount)")
+                                        .font(.system(size: 7, weight: .bold))
+                                        .padding(1.5)
+                                        .background(Color.accentColor, in: Circle())
+                                        .foregroundStyle(.white)
+                                        .offset(x: 5, y: -5)
+                                }
+                            }
+                    }
+                case .textOnly:
+                    Text(action.title)
+                case .iconOnly:
+                    Image(systemName: "paperplane.fill")
+                        .overlay(alignment: .topTrailing) {
+                            if activeCount > 1 {
+                                Text("\(activeCount)")
+                                    .font(.system(size: 7, weight: .bold))
+                                    .padding(1.5)
+                                    .background(Color.accentColor, in: Circle())
+                                    .foregroundStyle(.white)
+                                    .offset(x: 5, y: -5)
+                            }
+                        }
+                }
+            } else {
+                switch labelStyle {
+                case .iconAndText: Label(action.title, systemImage: action.systemImage)
+                case .textOnly:    Text(action.title)
+                case .iconOnly:    Image(systemName: action.systemImage)
+                }
             }
         }
         .help(tooltip(for: action))
-        .buttonStyle(.text(color: color))
+        .buttonStyle(.text(color: sendActive ? Color.accentColor : color))
         .disabled(!isAvailable(action.id))
         .shortcutBadge(shortcutString(action.id), visible: showingShortcutBadges)
         .popover(isPresented: isSend ? $showingSendPopover : .constant(false), arrowEdge: .bottom) {
             if isSend {
                 SendExpirationPopover(files: selectedResults.map(\.url)) { showingSendPopover = false }
             }
+        }
+        .popover(isPresented: isSend ? $showingTransfers : .constant(false), arrowEdge: .bottom) {
+            if isSend { TransfersPanel() }
         }
     }
 
@@ -673,7 +714,9 @@ struct ActionButtons: View {
         )
     }
 
-    private func startSecureSend() { showingSendPopover = true }
+    private func startSecureSend() {
+        if sendManager.sessions.isEmpty { showingSendPopover = true } else { showingTransfers = true }
+    }
 
     private func pasteToFrontmostAppButton(inTerminal: Bool) -> some View {
         Button(action: { pasteToFrontmostApp(inTerminal: inTerminal) }) {
@@ -783,10 +826,11 @@ struct ActionButtons: View {
     @State private var isPresentingCopyToSheet = false
     @State private var isPresentingMoveToSheet = false
     @State private var showingSendPopover = false
+    @State private var showingTransfers = false
 
     private var isAnySheetOpen: Bool {
         isPresentingRenameView || isPresentingOpenWithPicker || isPresentingConfirm
-            || isPresentingCopyToSheet || isPresentingMoveToSheet || showingSendPopover
+            || isPresentingCopyToSheet || isPresentingMoveToSheet || showingSendPopover || showingTransfers
     }
 }
 
