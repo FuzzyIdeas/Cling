@@ -633,6 +633,7 @@ struct ActionButtons: View {
         case .copy:            return !selectedResults.isEmpty
         case .trash:           return !selectedResults.isEmpty && !selectedResults.contains(where: \.isOnReadOnlyVolume)
         case .openWith:        return !selectedResults.isEmpty && !fuzzy.openWithAppShortcuts.isEmpty
+        case .sendSecurely:    return !selectedResults.isEmpty
         default:               return true
         }
     }
