@@ -39,15 +39,27 @@ struct ShortcutBadge: ViewModifier {
     func body(content: Content) -> some View {
         content.overlay(alignment: .topTrailing) {
             if visible, !text.isEmpty {
-                Text(text)
-                    .font(.system(size: 8, weight: .semibold))
-                    .padding(.horizontal, 3).padding(.vertical, 1)
-                    .background(.thinMaterial, in: Capsule())
-                    .overlay(Capsule().strokeBorder(.white.opacity(0.15)))
+                pill
                     .offset(x: 4, y: -6)
                     .allowsHitTesting(false)
                     .transition(.opacity)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var pill: some View {
+        let label = Text(text)
+            .font(.system(size: 8, weight: .semibold))
+            .padding(.horizontal, 3).padding(.vertical, 1)
+        if AM.useGlass, #available(macOS 26, *) {
+            label
+                .glassEffect(.regular, in: .capsule)
+                .overlay(Capsule().strokeBorder(.white.opacity(0.15)))
+        } else {
+            label
+                .background(.thinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(.white.opacity(0.15)))
         }
     }
 }
