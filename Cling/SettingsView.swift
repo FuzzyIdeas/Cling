@@ -37,7 +37,7 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         case .general: "General"
         case .interface: "Interface"
         case .shortcuts: "Shortcuts"
-        case .apps: "Apps"
+        case .apps: "Open With"
         case .search: "Search"
         case .volumes: "Volumes"
         case .filters: "Filters"
@@ -86,17 +86,24 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(SettingsCategory.allCases, selection: $selection) { category in
-                NavigationLink(value: category) {
-                    Label {
-                        Text(category.title)
-                    } icon: {
-                        Image(systemName: category.symbol)
-                            .foregroundStyle(.white)
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(width: 20, height: 20)
-                            .background(category.tint.gradient, in: .rect(cornerRadius: 5))
-                    }
+            List(selection: $selection) {
+                Section {
+                    sidebarRow(.general)
+                    sidebarRow(.interface)
+                }
+                Section("Search") {
+                    sidebarRow(.search)
+                    sidebarRow(.filters)
+                    sidebarRow(.volumes)
+                    sidebarRow(.exclusions)
+                }
+                Section("Actions") {
+                    sidebarRow(.shortcuts)
+                    sidebarRow(.apps)
+                    sidebarRow(.scripts)
+                }
+                Section {
+                    sidebarRow(.about)
                 }
             }
             .listStyle(.sidebar)
@@ -109,6 +116,21 @@ struct SettingsView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 820, maxWidth: .infinity, minHeight: 640, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func sidebarRow(_ category: SettingsCategory) -> some View {
+        NavigationLink(value: category) {
+            Label {
+                Text(category.title)
+            } icon: {
+                Image(systemName: category.symbol)
+                    .foregroundStyle(.white)
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 20, height: 20)
+                    .background(category.tint.gradient, in: .rect(cornerRadius: 5))
+            }
+        }
     }
 
     @ViewBuilder
