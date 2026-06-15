@@ -7,14 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AA11000000000000000000A3 /* Highlighter in Frameworks */ = {isa = PBXBuildFile; productRef = AA11000000000000000000A2 /* Highlighter */; };
 		C74B68A12D50F95800FCDEBA /* Ignore in Frameworks */ = {isa = PBXBuildFile; productRef = C74B68A02D50F95800FCDEBA /* Ignore */; };
 		C7605CC82F77D87C0087B195 /* ClingCLI in Copy CLI */ = {isa = PBXBuildFile; fileRef = C7605CC02F77D81A0087B195 /* ClingCLI */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		C7605CD02F77E0000087B195 /* ArgumentParser in Frameworks */ = {isa = PBXBuildFile; productRef = C7605CCF2F77E0000087B195 /* ArgumentParser */; };
 		C76172292D50F5D000D78B4F /* Lowtech in Frameworks */ = {isa = PBXBuildFile; productRef = C76172282D50F5D000D78B4F /* Lowtech */; };
 		C761722B2D50F5D000D78B4F /* LowtechIndie in Frameworks */ = {isa = PBXBuildFile; productRef = C761722A2D50F5D000D78B4F /* LowtechIndie */; };
 		C761722D2D50F5D000D78B4F /* LowtechPro in Frameworks */ = {isa = PBXBuildFile; productRef = C761722C2D50F5D000D78B4F /* LowtechPro */; };
+		C7C2CDD32FDFE0B6005EC019 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = C7C2CDD22FDFE0B6005EC019 /* KeyboardShortcuts */; };
+		C7C2CDD62FDFE115005EC019 /* WarpDrop in Frameworks */ = {isa = PBXBuildFile; productRef = C7C2CDD52FDFE115005EC019 /* WarpDrop */; };
 		C7FE59F12D635D1500141592 /* ClopSDK in Frameworks */ = {isa = PBXBuildFile; productRef = C7FE59F02D635D1500141592 /* ClopSDK */; };
-		AA11000000000000000000A3 /* Highlighter in Frameworks */ = {isa = PBXBuildFile; productRef = AA11000000000000000000A2 /* Highlighter */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -62,17 +64,17 @@
 			path = ClingCLI;
 			sourceTree = "<group>";
 		};
-		C7AA00010000000000000001 /* Shared */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = Shared;
-			sourceTree = "<group>";
-		};
 		C76172152D50E43600D78B4F /* Cling */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				C74B68F32D51710500FCDEBA /* Exceptions for "Cling" folder in "Cling" target */,
 			);
 			path = Cling;
+			sourceTree = "<group>";
+		};
+		C7AA00010000000000000001 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -91,11 +93,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				C74B68A12D50F95800FCDEBA /* Ignore in Frameworks */,
+				C7C2CDD32FDFE0B6005EC019 /* KeyboardShortcuts in Frameworks */,
 				C76172292D50F5D000D78B4F /* Lowtech in Frameworks */,
 				C7FE59F12D635D1500141592 /* ClopSDK in Frameworks */,
 				C761722B2D50F5D000D78B4F /* LowtechIndie in Frameworks */,
 				C761722D2D50F5D000D78B4F /* LowtechPro in Frameworks */,
 				AA11000000000000000000A3 /* Highlighter in Frameworks */,
+				C7C2CDD62FDFE115005EC019 /* WarpDrop in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -181,6 +185,8 @@
 				C74B68A02D50F95800FCDEBA /* Ignore */,
 				C7FE59F02D635D1500141592 /* ClopSDK */,
 				AA11000000000000000000A2 /* Highlighter */,
+				C7C2CDD22FDFE0B6005EC019 /* KeyboardShortcuts */,
+				C7C2CDD52FDFE115005EC019 /* WarpDrop */,
 			);
 			productName = Cling;
 			productReference = C76172132D50E43600D78B4F /* Cling.app */;
@@ -219,6 +225,8 @@
 				C76172332D50F8B100D78B4F /* XCRemoteSwiftPackageReference "swift-ignore" */,
 				C7FE59EF2D635CDC00141592 /* XCRemoteSwiftPackageReference "ClopSDK" */,
 				AA11000000000000000000A1 /* XCRemoteSwiftPackageReference "HighlighterSwift" */,
+				C7C2CDD12FDFE0B6005EC019 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
+				C7C2CDD42FDFE115005EC019 /* XCLocalSwiftPackageReference "../../../Github/alin23/warpdrop/swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C76172142D50E43600D78B4F /* Products */;
@@ -529,7 +537,22 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		C7C2CDD42FDFE115005EC019 /* XCLocalSwiftPackageReference "../../../Github/alin23/warpdrop/swift" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../Github/alin23/warpdrop/swift;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
+		AA11000000000000000000A1 /* XCRemoteSwiftPackageReference "HighlighterSwift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/smittytone/HighlighterSwift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.1.0;
+			};
+		};
 		C7605CCE2F77E0000087B195 /* XCRemoteSwiftPackageReference "swift-argument-parser" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/apple/swift-argument-parser";
@@ -554,6 +577,14 @@
 				minimumVersion = 1.0.0;
 			};
 		};
+		C7C2CDD12FDFE0B6005EC019 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.0.0;
+			};
+		};
 		C7FE59EF2D635CDC00141592 /* XCRemoteSwiftPackageReference "ClopSDK" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/FuzzyIdeas/ClopSDK";
@@ -562,17 +593,14 @@
 				minimumVersion = 1.1.0;
 			};
 		};
-		AA11000000000000000000A1 /* XCRemoteSwiftPackageReference "HighlighterSwift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/smittytone/HighlighterSwift";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 3.1.0;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		AA11000000000000000000A2 /* Highlighter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA11000000000000000000A1 /* XCRemoteSwiftPackageReference "HighlighterSwift" */;
+			productName = Highlighter;
+		};
 		C74B68A02D50F95800FCDEBA /* Ignore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C76172332D50F8B100D78B4F /* XCRemoteSwiftPackageReference "swift-ignore" */;
@@ -598,15 +626,19 @@
 			package = C76172272D50F5D000D78B4F /* XCRemoteSwiftPackageReference "Lowtech" */;
 			productName = LowtechPro;
 		};
+		C7C2CDD22FDFE0B6005EC019 /* KeyboardShortcuts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C7C2CDD12FDFE0B6005EC019 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
+			productName = KeyboardShortcuts;
+		};
+		C7C2CDD52FDFE115005EC019 /* WarpDrop */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WarpDrop;
+		};
 		C7FE59F02D635D1500141592 /* ClopSDK */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C7FE59EF2D635CDC00141592 /* XCRemoteSwiftPackageReference "ClopSDK" */;
 			productName = ClopSDK;
-		};
-		AA11000000000000000000A2 /* Highlighter */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = AA11000000000000000000A1 /* XCRemoteSwiftPackageReference "HighlighterSwift" */;
-			productName = Highlighter;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

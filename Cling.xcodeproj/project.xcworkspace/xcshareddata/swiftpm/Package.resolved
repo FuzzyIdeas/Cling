@@ -1,5 +1,5 @@
 {
-  "originHash" : "a3f7cdf9358cea1da0c2cb9d643a94162aa7581f35e372f1db4dd2683393d15e",
+  "originHash" : "5e9b80014f38c239fa5caddb65f7f9374cdfd0f76bfaa9eb268a2df8c81f7df6",
   "pins" : [
     {
       "identity" : "appreceiptvalidator",
@@ -53,6 +53,15 @@
       "state" : {
         "revision" : "fe7aae9c9b31d3b296fd3d2dd575e1a207bb29e0",
         "version" : "3.1.0"
+      }
+    },
+    {
+      "identity" : "keyboardshortcuts",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sindresorhus/KeyboardShortcuts",
+      "state" : {
+        "revision" : "f7d08ba4109d5ca025e1a64165be169cdf089206",
+        "version" : "3.0.0"
       }
     },
     {
@@ -170,6 +179,15 @@
       "state" : {
         "revision" : "5127afab23337699a714e036588f02d9481ae612",
         "version" : "1.2.0"
+      }
+    },
+    {
+      "identity" : "webrtc",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/stasel/WebRTC.git",
+      "state" : {
+        "revision" : "1048f8396529c10e259f8240d0c2cd607a13defd",
+        "version" : "130.0.0"
       }
     }
   ],
