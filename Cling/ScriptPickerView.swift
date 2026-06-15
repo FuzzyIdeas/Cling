@@ -858,6 +858,8 @@ private struct ScriptCodeEditor: View {
         CodeEditorView(source: $source, language: language, fontSize: 12)
             .frame(height: 300)
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
     }
 }
 
