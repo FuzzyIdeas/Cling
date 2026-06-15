@@ -34,12 +34,13 @@ func expirationShortLabel(_ seconds: TimeInterval) -> String {
     let id: String
     let files: [URL]
     let task: Task<String, Error>
+    var tempArchives: [URL]
     @Published var downloadCount = 0
     @Published var expiresAt: Date?
     @Published var stopped = false
 
-    init(id: String, files: [URL], task: Task<String, Error>, expiresAt: Date?) {
-        self.id = id; self.files = files; self.task = task; self.expiresAt = expiresAt
+    init(id: String, files: [URL], task: Task<String, Error>, expiresAt: Date?, tempArchives: [URL] = []) {
+        self.id = id; self.files = files; self.task = task; self.expiresAt = expiresAt; self.tempArchives = tempArchives
     }
 
     var directURL: String { "https://drop.lowtechguys.com/d/\(id)" }
@@ -67,17 +68,87 @@ final class Box<T>: @unchecked Sendable {
     }
 }
 
+struct PendingSend: Equatable { let files: [URL]; let expiration: TimeInterval }
+
 @MainActor final class SendManager: ObservableObject {
     static let shared = SendManager()
     @Published var sessions: [SendSession] = []          // active transfers
     @Published var recentSessions: [SendSession] = []    // session-only history (kept after stop/expiry, cleared on quit)
     @Published var connectingPaths: Set<String> = []     // in-flight guard against duplicate sends
     @Published var linkCopiedTick = 0                    // incremented each time a new link is auto-copied
+    @Published var pendingFolderConfirm: PendingSend?    // deferred send awaiting folder-archive confirmation
     var expiryTimers: [String: Task<Void, Never>] = [:]  // auto-stop timers
     var pendingTasks: [String: Task<String, Error>] = [:]
 }
 
 extension SendManager {
+    // MARK: - Directory helpers
+
+    func isDirectory(_ url: URL) -> Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    func folderCount(in files: [URL]) -> Int { files.filter { isDirectory($0) }.count }
+
+    // MARK: - Confirmation gate
+
+    /// Entry point used by the UI. If the selection contains folders, defer to a confirmation;
+    /// otherwise send immediately.
+    func requestSend(files: [URL], expiration: TimeInterval) {
+        guard !files.isEmpty else { return }
+        if folderCount(in: files) > 0 {
+            pendingFolderConfirm = PendingSend(files: files, expiration: expiration)
+        } else {
+            send(files: files, expiration: expiration)
+        }
+    }
+
+    func confirmPendingSend() {
+        guard let p = pendingFolderConfirm else { return }
+        pendingFolderConfirm = nil
+        send(files: p.files, expiration: p.expiration)
+    }
+
+    func cancelPendingSend() { pendingFolderConfirm = nil }
+
+    // MARK: - Zip helper (nonisolated — runs off-main inside detached tasks)
+
+    nonisolated static func archive(folder: URL) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClingSend-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let archiveURL = dir.appendingPathComponent(folder.lastPathComponent + ".zip")
+
+        // Primary: bundled 7zz (attribute-preserving)
+        let sevenZipURL = SEVEN_ZIP.url
+        let p = Process()
+        p.executableURL = sevenZipURL
+        p.currentDirectoryURL = folder.deletingLastPathComponent()
+        p.arguments = ["a", "-tzip", "-bd", "-bso0", "-bsp0", archiveURL.path, folder.lastPathComponent]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = Pipe()
+        try? p.run(); p.waitUntilExit()
+        if p.terminationStatus == 0, FileManager.default.fileExists(atPath: archiveURL.path) {
+            return archiveURL
+        }
+
+        // Fallback: ditto (attribute-preserving, keeps resource forks)
+        let d = Process()
+        d.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        d.arguments = ["-c", "-k", "--sequesterRsrc", "--keepParent", folder.path, archiveURL.path]
+        try d.run(); d.waitUntilExit()
+        guard d.terminationStatus == 0 else {
+            throw NSError(
+                domain: "Cling.Send", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Could not archive \(folder.lastPathComponent)"]
+            )
+        }
+        return archiveURL
+    }
+
+    // MARK: - Send
+
     func send(files: [URL], expiration: TimeInterval) {
         guard !files.isEmpty else { return }
         let key = files.map(\.path).joined(separator: "|")
@@ -87,15 +158,39 @@ extension SendManager {
 
         let roomIDRef = Box<String?>(nil)
         let task = Task.detached {
+            // Replace any directories with .zip archives
+            var prepared: [URL] = []
+            var temps: [URL] = []
+            do {
+                for url in files {
+                    var isDir: ObjCBool = false
+                    let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+                    if exists, isDir.boolValue {
+                        let zip = try SendManager.archive(folder: url)
+                        prepared.append(zip)
+                        temps.append(zip)
+                    } else {
+                        prepared.append(url)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    SendManager.shared.connectingPaths.remove(key)
+                    SendManager.shared.pendingTasks.removeValue(forKey: key)
+                }
+                temps.forEach { try? FileManager.default.removeItem(at: $0.deletingLastPathComponent()) }
+                throw error
+            }
+
             do {
                 let client = WarpDropClient()
                 return try await client.send(
-                    files: files,
+                    files: prepared,
                     keep: true,
                     onRoomCreated: { roomID in
                         roomIDRef.value = roomID
                         Task { @MainActor in
-                            SendManager.shared.roomCreated(roomID: roomID, files: files, expiration: expiration, key: key)
+                            SendManager.shared.roomCreated(roomID: roomID, files: prepared, tempArchives: temps, expiration: expiration, key: key)
                         }
                     },
                     onDownloadCompleted: { count in
@@ -109,6 +204,7 @@ extension SendManager {
                         SendManager.shared.connectingPaths.remove(key)
                         SendManager.shared.pendingTasks.removeValue(forKey: key)
                     }
+                    temps.forEach { try? FileManager.default.removeItem(at: $0.deletingLastPathComponent()) }
                 }
                 throw error
             }
@@ -116,11 +212,11 @@ extension SendManager {
         pendingTasks[key] = task
     }
 
-    func roomCreated(roomID: String, files: [URL], expiration: TimeInterval, key: String) {
+    func roomCreated(roomID: String, files: [URL], tempArchives: [URL] = [], expiration: TimeInterval, key: String) {
         connectingPaths.remove(key)
         guard let task = pendingTasks.removeValue(forKey: key) else { return }
         let expiresAt = expiration > 0 ? Date().addingTimeInterval(expiration) : nil
-        let session = SendSession(id: roomID, files: files, task: task, expiresAt: expiresAt)
+        let session = SendSession(id: roomID, files: files, task: task, expiresAt: expiresAt, tempArchives: tempArchives)
         sessions.append(session)
         recentSessions.insert(session, at: 0)
         session.copyLink()
@@ -154,6 +250,8 @@ extension SendManager {
         expiryTimers[session.id]?.cancel()
         expiryTimers[session.id] = nil
         sessions.removeAll { $0.id == session.id }
+        // Clean up any temp archives created for this session
+        session.tempArchives.forEach { try? FileManager.default.removeItem(at: $0.deletingLastPathComponent()) }
         // session stays in recentSessions (session-only history)
     }
 

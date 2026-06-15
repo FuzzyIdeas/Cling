@@ -96,6 +96,20 @@ struct ActionButtons: View {
         .onChange(of: sendManager.linkCopiedTick) { _, _ in
             flashCopied(.sendSecurely, text: "Link copied")
         }
+        .confirmationDialog(
+            "Archive folders before sending?",
+            isPresented: Binding(
+                get: { sendManager.pendingFolderConfirm != nil },
+                set: { if !$0 { sendManager.cancelPendingSend() } }
+            ),
+            presenting: sendManager.pendingFolderConfirm
+        ) { _ in
+            Button("Create archive & send") { sendManager.confirmPendingSend() }
+            Button("Cancel", role: .cancel) { sendManager.cancelPendingSend() }
+        } message: { pending in
+            let n = sendManager.folderCount(in: pending.files)
+            Text("\(n) folder\(n == 1 ? "" : "s") will be archived into a .zip before sending.")
+        }
     }
 
     @State private var shortcutMonitor: Any?
@@ -863,6 +877,7 @@ struct ActionButtons: View {
     private var isAnySheetOpen: Bool {
         isPresentingRenameView || isPresentingOpenWithPicker || isPresentingConfirm
             || isPresentingCopyToSheet || isPresentingMoveToSheet || showingSendPopover || showingTransfers
+            || sendManager.pendingFolderConfirm != nil
     }
 }
 

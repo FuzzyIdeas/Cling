@@ -18,7 +18,7 @@ struct SendExpirationPopover: View {
             Text("Link expires in \(expirationDurationLabel(expiration))").font(.headline)
             Slider(value: index, in: 0 ... Double(LINK_EXPIRATION_PRESETS.count - 1), step: 1)
             Button("Copy link, expires in \(expirationShortLabel(expiration))") {
-                SendManager.shared.send(files: files, expiration: expiration)
+                SendManager.shared.requestSend(files: files, expiration: expiration)
                 onSent()
             }
             .keyboardShortcut(.defaultAction)
