@@ -49,6 +49,11 @@ struct ToolbarAction: Identifiable {
 
     /// Segment display order, left to right (alternate handled separately by the Option-held set).
     static let segmentOrder: [ActionSegment] = [.open, .fileOps, .share, .destructive]
+
+    /// Actions dispatched by the window-local shortcut loop. Excludes `.open` and
+    /// `.pasteToFrontmost`, whose Return-key behavior is context-dependent (terminal vs
+    /// non-terminal) and handled explicitly, not via a single rebindable shortcut.
+    static let rebindable: [ToolbarAction] = all.filter { $0.id != .open && $0.id != .pasteToFrontmost }
 }
 
 extension ActionSegment {

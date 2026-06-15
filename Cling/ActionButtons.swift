@@ -1,4 +1,5 @@
 import Defaults
+import KeyboardShortcuts
 import Lowtech
 import OSLog
 import SwiftUI
@@ -132,13 +133,7 @@ struct ActionButtons: View {
 
             if sel.isEmpty { return event }
 
-            // ⌘⏎ Show in Finder
-            if isReturn, mods == .command {
-                RH.trackRun(sel)
-                revealInFinder(sel.map(\.url))
-                return nil
-            }
-            // ⏎ Open (default app, non-terminal context)
+            // ⏎ Open (default app, non-terminal context) — context-dependent, not rebindable
             if isReturn, mods.isEmpty, !inTerminal {
                 RH.trackRun(sel)
                 for url in sel.map(\.url) {
@@ -146,7 +141,7 @@ struct ActionButtons: View {
                 }
                 return nil
             }
-            // ⌘⇧⏎ Open (default app, terminal context)
+            // ⌘⇧⏎ Open (default app, terminal context) — context-dependent, not rebindable
             if isReturn, mods == [.command, .shift], inTerminal {
                 RH.trackRun(sel)
                 for url in sel.map(\.url) {
@@ -154,135 +149,44 @@ struct ActionButtons: View {
                 }
                 return nil
             }
-            // ⏎ Paste to terminal
+            // ⏎ Paste to terminal — context-dependent, not rebindable
             if isReturn, mods.isEmpty, inTerminal {
                 RH.trackRun(sel)
                 APP_MANAGER.pasteToFrontmostApp(paths: sel.arr, separator: " ", quoted: true)
                 return nil
             }
-            // ⌘⇧⏎ Paste to non-terminal
+            // ⌘⇧⏎ Paste to non-terminal — context-dependent, not rebindable
             if isReturn, mods == [.command, .shift], !inTerminal {
                 RH.trackRun(sel)
                 APP_MANAGER.pasteToFrontmostApp(paths: sel.arr, separator: "\n", quoted: false)
                 return nil
             }
-            // ⌥⏎ Drop into focused element of last frontmost app
-            if isReturn, mods == .option {
-                RH.trackRun(sel)
-                APP_MANAGER.dropToFocusedElement(paths: sel.arr)
-                return nil
-            }
-            // ⌥⇧⏎ Drop to zone (escape hatch)
-            if isReturn, mods == [.option, .shift] {
-                RH.trackRun(sel)
-                APP_MANAGER.dropToZone(paths: sel.arr)
-                return nil
-            }
-            // ⌘⌥⏎ Open with last frontmost app
-            if isReturn, mods == [.command, .option],
-               let app = APP_MANAGER.lastFrontmostApp, let appURL = app.bundleURL
-            {
-                RH.trackRun(sel)
-                NSWorkspace.shared.open(
-                    sel.map(\.url), withApplicationAt: appURL, configuration: .init(),
-                    completionHandler: { _, _ in }
-                )
-                return nil
-            }
-            // ⌘T Open in terminal
-            if chars == "t", mods == .command,
-               let terminal = Defaults[.terminalApp].existingFilePath?.url
-            {
-                RH.trackRun(sel)
-                let dirs = sel.map { $0.isDir ? $0.url : $0.dir.url }.uniqued
-                NSWorkspace.shared.open(
-                    dirs, withApplicationAt: terminal, configuration: .init(),
-                    completionHandler: { _, _ in }
-                )
-                return nil
-            }
-            // ⌘E Edit
-            if chars == "e", mods == .command,
-               let editor = Defaults[.editorApp].existingFilePath?.url
-            {
-                RH.trackRun(sel)
-                NSWorkspace.shared.open(
-                    sel.map(\.url), withApplicationAt: editor, configuration: .init(),
-                    completionHandler: { _, _ in }
-                )
-                return nil
-            }
-            // ⌘S Shelve
-            if chars == "s", mods == .command,
-               let shelf = Defaults[.shelfApp].existingFilePath?.url
-            {
-                RH.trackRun(sel)
-                let config = NSWorkspace.OpenConfiguration()
-                config.activates = false
-                NSWorkspace.shared.open(
-                    sel.map(\.url), withApplicationAt: shelf, configuration: config,
-                    completionHandler: { _, _ in }
-                )
-                return nil
-            }
-            // ⌘O Open With picker
-            if chars == "o", mods == .command, !FUZZY.openWithAppShortcuts.isEmpty {
-                focusBinding.wrappedValue = .openWith
-                openWithB.wrappedValue = true
-                return nil
-            }
-            // ⌘M Move to...
-            if chars == "m", mods == .command {
-                moveToB.wrappedValue = true
-                return nil
-            }
-            // ⌘R Rename
-            if chars == "r", mods == .command {
-                renameB.wrappedValue = true
-                return nil
-            }
-            // ⌘Y Quicklook
-            if chars == "y", mods == .command {
-                let resultsList = (FUZZY.noQuery && FUZZY.volumeFilter == nil)
-                    ? (FUZZY.sortField == .score ? FUZZY.recents : FUZZY.sortedRecents)
-                    : FUZZY.results
-                QLP.present(
-                    urls: sel.count > 1 ? sel.map(\.url) : resultsList.map(\.url),
-                    selectedItemIndex: sel.count == 1 ? (resultsList.firstIndex(of: sel.first!) ?? 0) : 0
-                )
-                return nil
-            }
-            // ⌘C Copy / ⌘⌥C Copy to...
-            if chars == "c", mods == .command, focus == .list {
-                RH.trackRun(sel)
-                withAnimation(.fastSpring) { copiedFilesB.wrappedValue = true }
-                mainAsyncAfter(ms: 150) {
-                    withAnimation(.easeOut(duration: 0.1)) { copiedFilesB.wrappedValue = false }
+
+            // Window-local dispatch from user-rebindable shortcuts. NOT global hotkeys.
+            // copy and trash originally required focus == .list in the per-branch keyDown handler;
+            // all other rebindable actions had no focus guard. Reproduce that exactly here.
+            // Note: .open and .pasteToFrontmost are handled above with context-dependent Return-key logic.
+            if let pressed = KeyboardShortcuts.Shortcut(event: event) {
+                let currentHidden = Defaults[.hiddenActions]
+                let handled = MainActor.assumeIsolated {
+                    for action in ToolbarAction.rebindable where !currentHidden.contains(action.id) {
+                        if (action.id == .copy || action.id == .trash), focusBinding.wrappedValue != .list { continue }
+                        guard let bound = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: action.id)),
+                              bound == pressed, isAvailable(action.id) else { continue }
+                        execute(action.id)
+                        return true
+                    }
+                    return false
                 }
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects(sel.map(\.url) as [NSPasteboardWriting])
-                return nil
+                if handled { return nil }
             }
+
+            // ⌘⌥C Copy to... (non-rebindable ⌥ variant; ⌘C is handled above by the registry)
             if chars == "c", mods == [.command, .option], focus == .list {
                 copyToB.wrappedValue = true
                 return nil
             }
-            // ⌘⇧C Copy paths / ⌘⌥⇧C Copy filenames
-            if chars == "c", mods == [.command, .shift] {
-                withAnimation(.fastSpring) { copiedPathsB.wrappedValue = true }
-                mainAsyncAfter(ms: 150) {
-                    withAnimation(.easeOut(duration: 0.1)) { copiedPathsB.wrappedValue = false }
-                }
-                let useTilde = Defaults[.copyPathsWithTilde]
-                let pathStr: (FilePath) -> String = useTilde ? { $0.shellString } : { $0.string }
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(
-                    APP_MANAGER.frontmostAppIsTerminal
-                        ? sel.map { pathStr($0).replacingOccurrences(of: " ", with: "\\ ") }.joined(separator: " ")
-                        : sel.map { pathStr($0) }.joined(separator: "\n"), forType: .string
-                )
-                return nil
-            }
+            // ⌘⌥⇧C Copy filenames (non-rebindable ⌥ variant; ⌘⇧C is handled above by the registry)
             if chars == "c", mods == [.command, .shift, .option] {
                 withAnimation(.fastSpring) { copiedPathsB.wrappedValue = true }
                 mainAsyncAfter(ms: 150) {
@@ -297,20 +201,12 @@ struct ActionButtons: View {
                 )
                 return nil
             }
-            // ⌘⌫ Trash / ⌘⌥⌫ Delete
-            if isDelete, focus == .list, !sel.contains(where: \.isOnReadOnlyVolume) {
-                if mods == .command {
-                    if Defaults[.suppressTrashConfirm] {
-                        Self.performTrash(selection: selB)
-                    } else {
-                        confirmB.wrappedValue = true
-                    }
-                    return nil
-                }
-                if mods == [.command, .option] {
-                    Self.performDelete(selection: selB)
-                    return nil
-                }
+            // ⌘⌥⌫ Permanent delete (non-rebindable ⌥ variant; ⌘⌫ trash is handled above by the registry)
+            if isDelete, focus == .list, mods == [.command, .option],
+               !sel.contains(where: \.isOnReadOnlyVolume)
+            {
+                Self.performDelete(selection: selB)
+                return nil
             }
 
             return event
@@ -663,11 +559,18 @@ struct ActionButtons: View {
         }
     }
 
+    // isAvailable gates executability (used by the shortcut monitor and toolbar button disabling).
+    // isConfigured gates toolbar VISIBILITY (external tool configured vs not); do not conflate them —
+    // e.g. openInTerminal belongs in isAvailable so ⌘T does nothing when no terminal is set.
+    // NOTE: focus guards for copy/trash belong in the shortcut dispatch loop, NOT here — the toolbar
+    // buttons must stay enabled regardless of which field is focused.
     func isAvailable(_ id: ActionID) -> Bool {
         switch id {
         case .openInTerminal:  return terminalApp.existingFilePath != nil
         case .openInEditor:    return editorApp.existingFilePath != nil
-        case .copy, .trash:    return !selectedResults.isEmpty
+        case .copy:            return !selectedResults.isEmpty
+        case .trash:           return !selectedResults.isEmpty && !selectedResults.contains(where: \.isOnReadOnlyVolume)
+        case .openWith:        return !selectedResults.isEmpty && !fuzzy.openWithAppShortcuts.isEmpty
         default:               return true
         }
     }
