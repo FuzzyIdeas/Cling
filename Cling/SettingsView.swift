@@ -28,7 +28,7 @@ let envState = EnvState()
 // MARK: - SettingsCategory
 
 private enum SettingsCategory: String, CaseIterable, Identifiable {
-    case general, interface, apps, search, volumes, filters, scripts, exclusions, about
+    case general, interface, shortcuts, apps, search, volumes, filters, scripts, exclusions, about
 
     var id: String { rawValue }
 
@@ -36,6 +36,7 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .general: "General"
         case .interface: "Interface"
+        case .shortcuts: "Shortcuts"
         case .apps: "Apps"
         case .search: "Search"
         case .volumes: "Volumes"
@@ -50,6 +51,7 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .general: "gearshape"
         case .interface: "slider.horizontal.3"
+        case .shortcuts: "keyboard"
         case .apps: "app.badge"
         case .search: "magnifyingglass"
         case .volumes: "externaldrive"
@@ -64,6 +66,7 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .general: .gray
         case .interface: .orange
+        case .shortcuts: .mint
         case .apps: .blue
         case .search: .green
         case .volumes: .cyan
@@ -113,6 +116,7 @@ struct SettingsView: View {
         switch selection {
         case .general: GeneralSettingsPane().environmentObject(env)
         case .interface: InterfaceSettingsPane()
+        case .shortcuts: ShortcutsSettingsPane()
         case .apps: AppsSettingsPane()
         case .search: SearchSettingsPane()
         case .volumes: VolumesSettingsPane()
