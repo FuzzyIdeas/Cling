@@ -252,7 +252,7 @@ private struct InterfaceSettingsPane: View {
 
             // MARK: Part A — toolbar knobs
 
-            Section("Toolbar Style") {
+            Section("Action Bar styling") {
                 SettingRow(title: "Labels") {
                     Picker("", selection: $toolbarLabelStyle) {
                         Text("Icon + Text").tag(ToolbarLabelStyle.iconAndText)
@@ -308,7 +308,7 @@ private struct InterfaceSettingsPane: View {
 
             // MARK: Sharing
 
-            Section("Sharing") {
+            Section {
                 SettingRow(title: "Default link expiration") {
                     Picker("", selection: $defaultLinkExpiration) {
                         ForEach(LINK_EXPIRATION_PRESETS, id: \.self) { e in
@@ -318,29 +318,40 @@ private struct InterfaceSettingsPane: View {
                     .labelsHidden()
                     .fixedSize()
                 }
+            } header: {
+                Text("Sharing")
+            } footer: {
+                Text("Send Securely shares the selected files over a private link that expires on its own. This sets how long new links last by default.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
 
             // MARK: Part B — per-action visibility editor
 
-            ForEach(ToolbarAction.segmentOrder, id: \.self) { segment in
+            ForEach(Array(ToolbarAction.segmentOrder.enumerated()), id: \.element) { index, segment in
                 let actions = ToolbarAction.all.filter { $0.segment == segment }
                 if !actions.isEmpty {
-                    Section(segment.title) {
-                        ForEach(actions) { action in
-                            LabeledContent {
-                                Picker("", selection: toolbarPlacement(for: action.id)) {
-                                    Text("Bar").tag(ToolbarPlacement.bar)
-                                    Text("More").tag(ToolbarPlacement.more)
-                                    Text("Hidden").tag(ToolbarPlacement.hidden)
-                                }
-                                .labelsHidden()
-                                .fixedSize()
-                            } label: {
-                                Label(action.title, systemImage: action.systemImage)
+                    if index == 0 {
+                        Section {
+                            ForEach(actions) { action in
+                                placementRow(action)
+                            }
+                        } header: {
+                            Text(segment.title)
+                        } footer: {
+                            Text("Choose where each action lives: the Action Bar, the ⋯ Action Menu, or hidden entirely.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        .disabled(!showActionRow)
+                    } else {
+                        Section(segment.title) {
+                            ForEach(actions) { action in
+                                placementRow(action)
                             }
                         }
+                        .disabled(!showActionRow)
                     }
-                    .disabled(!showActionRow)
                 }
             }
         }
@@ -349,6 +360,21 @@ private struct InterfaceSettingsPane: View {
     }
 
     // MARK: Helpers
+
+    private func placementRow(_ action: ToolbarAction) -> some View {
+        LabeledContent {
+            Picker("", selection: toolbarPlacement(for: action.id)) {
+                Label("Action Bar", systemImage: "dock.rectangle").tag(ToolbarPlacement.bar)
+                Label("Action Menu", systemImage: "ellipsis").tag(ToolbarPlacement.more)
+                Label("Hidden", systemImage: "eye.slash").tag(ToolbarPlacement.hidden)
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+        } label: {
+            Label(action.title, systemImage: action.systemImage)
+        }
+    }
 
     private func toolbarPlacement(for id: ActionID) -> Binding<ToolbarPlacement> {
         Binding(
