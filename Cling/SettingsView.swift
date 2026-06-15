@@ -183,6 +183,27 @@ private struct DescriptiveToggle: View {
 // MARK: - InterfaceSettingsPane
 
 private struct InterfaceSettingsPane: View {
+    // MARK: Part A — knob state
+
+    @Default(.showActionRow) private var showActionRow
+    @Default(.showOpenWithRow) private var showOpenWithRow
+    @Default(.showScriptRow) private var showScriptRow
+    @Default(.hiddenActionButtons) private var hiddenActionButtons
+
+    @Default(.toolbarLabelStyle) private var toolbarLabelStyle
+    @Default(.toolbarDensity) private var toolbarDensity
+    @Default(.toolbarOverflowMode) private var toolbarOverflowMode
+    @Default(.toolbarShortcutHint) private var toolbarShortcutHint
+    @Default(.toolbarShowDividers) private var toolbarShowDividers
+    @Default(.toolbarRowBackground) private var toolbarRowBackground
+
+    // MARK: Part B — placement state
+
+    @Default(.barActions) private var barActions
+    @Default(.hiddenActions) private var hiddenActions
+
+    // MARK: Body
+
     var body: some View {
         Form {
             Section("Rows") {
@@ -215,15 +236,92 @@ private struct InterfaceSettingsPane: View {
                     .foregroundStyle(.secondary)
             }
             .disabled(!showActionRow)
+
+            // MARK: Part A — toolbar knobs
+
+            Section("Toolbar Style") {
+                SettingRow(title: "Labels") {
+                    Picker("", selection: $toolbarLabelStyle) {
+                        Text("Icon + Text").tag(ToolbarLabelStyle.iconAndText)
+                        Text("Text only").tag(ToolbarLabelStyle.textOnly)
+                        Text("Icon only").tag(ToolbarLabelStyle.iconOnly)
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+
+                SettingRow(title: "Density") {
+                    Picker("", selection: $toolbarDensity) {
+                        Text("Regular").tag(ToolbarDensity.regular)
+                        Text("Compact").tag(ToolbarDensity.compact)
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+
+                SettingRow(title: "Overflow") {
+                    Picker("", selection: $toolbarOverflowMode) {
+                        Text("Auto").tag(ToolbarOverflowMode.auto)
+                        Text("Always").tag(ToolbarOverflowMode.always)
+                        Text("Off").tag(ToolbarOverflowMode.off)
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+
+                SettingRow(title: "Shortcut hint") {
+                    Picker("", selection: $toolbarShortcutHint) {
+                        Text("Tooltip").tag(ToolbarShortcutHint.tooltip)
+                        Text("Menu + tooltip").tag(ToolbarShortcutHint.menuAndTooltip)
+                        Text("Never").tag(ToolbarShortcutHint.never)
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+
+                DescriptiveToggle(
+                    title: "Show segment dividers",
+                    detail: "Thin separators between action groups",
+                    isOn: $toolbarShowDividers
+                )
+
+                DescriptiveToggle(
+                    title: "Show row background",
+                    detail: "Show the material behind the action row",
+                    isOn: $toolbarRowBackground
+                )
+            }
+            .disabled(!showActionRow)
+
+            // MARK: Part B — per-action visibility editor
+
+            ForEach(ToolbarAction.segmentOrder, id: \.self) { segment in
+                let actions = ToolbarAction.all.filter { $0.segment == segment }
+                if !actions.isEmpty {
+                    Section(segment.title) {
+                        ForEach(actions) { action in
+                            LabeledContent {
+                                Picker("", selection: toolbarPlacement(for: action.id)) {
+                                    Text("Bar").tag(ToolbarPlacement.bar)
+                                    Text("More").tag(ToolbarPlacement.more)
+                                    Text("Hidden").tag(ToolbarPlacement.hidden)
+                                }
+                                .labelsHidden()
+                                .fixedSize()
+                            } label: {
+                                Label(action.title, systemImage: action.systemImage)
+                            }
+                        }
+                    }
+                    .disabled(!showActionRow)
+                }
+            }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
     }
 
-    @Default(.showActionRow) private var showActionRow
-    @Default(.showOpenWithRow) private var showOpenWithRow
-    @Default(.showScriptRow) private var showScriptRow
-    @Default(.hiddenActionButtons) private var hiddenActionButtons
+    // MARK: Helpers
 
     private func visibleBinding(for btn: HiddenActionButton) -> Binding<Bool> {
         Binding(
@@ -240,6 +338,33 @@ private struct InterfaceSettingsPane: View {
         )
     }
 
+    private func toolbarPlacement(for id: ActionID) -> Binding<ToolbarPlacement> {
+        Binding(
+            get: {
+                if hiddenActions.contains(id) { return .hidden }
+                return barActions.contains(id) ? .bar : .more
+            },
+            set: { newValue in
+                var bar = barActions
+                var hidden = hiddenActions
+                bar.removeAll { $0 == id }
+                hidden.remove(id)
+                switch newValue {
+                case .bar:    bar.append(id)
+                case .more:   break
+                case .hidden: hidden.insert(id)
+                }
+                barActions = bar
+                hiddenActions = hidden
+            }
+        )
+    }
+}
+
+// MARK: - ToolbarPlacement
+
+private enum ToolbarPlacement: String, CaseIterable {
+    case bar, more, hidden
 }
 
 // MARK: - GeneralSettingsPane
