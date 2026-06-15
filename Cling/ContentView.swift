@@ -445,6 +445,7 @@ struct ContentView: View {
 
     @Default(.showOpenWithRow) private var showOpenWithRow
     @Default(.showScriptRow) private var showScriptRow
+    @Default(.toolbarRowBackground) private var toolbarRowBackground
 
     private var actionButtonRows: some View {
         let rows = VStack {
@@ -463,7 +464,7 @@ struct ContentView: View {
         }
 
         return Group {
-            if AM.useGlass, #available(macOS 26, *) {
+            if toolbarRowBackground, AM.useGlass, #available(macOS 26, *) {
                 GlassEffectContainer {
                     rows
                 }
