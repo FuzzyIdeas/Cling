@@ -18,6 +18,7 @@ struct ActionButtons: View {
     @State private var fuzzy: FuzzyClient = FUZZY
     @State private var scriptManager: ScriptManager = SM
     @Default(.suppressTrashConfirm) var suppressTrashConfirm: Bool
+    @Default(.enterPastesToFrontmostTerminal) var enterPastesToFrontmostTerminal: Bool
     @Default(.terminalApp) var terminalApp
     @Default(.editorApp) var editorApp
     @Default(.shelfApp) var shelfApp
@@ -124,6 +125,7 @@ struct ActionButtons: View {
         let copiedFilesB = $copiedFiles
         let copiedPathsB = $copiedPaths
         let focusBinding = focused
+        let enterPastesB = $enterPastesToFrontmostTerminal
 
         shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             // Only act on key events delivered to the main Cling window — never to Settings,
@@ -147,11 +149,14 @@ struct ActionButtons: View {
 
             let isReturn = kc == 36 || kc == 76
             let isDelete = kc == 51 || kc == 117
+            // When disabled, plain ⏎ always opens even if a terminal is frontmost.
+            // Only affects the plain-⏎ branches below; the ⌘⇧⏎ variants keep using raw `inTerminal`.
+            let enterPastesToTerminal = inTerminal && enterPastesB.wrappedValue
 
             if sel.isEmpty { return event }
 
             // ⏎ Open (default app, non-terminal context) — context-dependent, not rebindable
-            if isReturn, mods.isEmpty, !inTerminal {
+            if isReturn, mods.isEmpty, !enterPastesToTerminal {
                 RH.trackRun(sel)
                 for url in sel.map(\.url) {
                     NSWorkspace.shared.open(url)
@@ -167,7 +172,7 @@ struct ActionButtons: View {
                 return nil
             }
             // ⏎ Paste to terminal — context-dependent, not rebindable
-            if isReturn, mods.isEmpty, inTerminal {
+            if isReturn, mods.isEmpty, enterPastesToTerminal {
                 RH.trackRun(sel)
                 APP_MANAGER.pasteToFrontmostApp(paths: sel.arr, separator: " ", quoted: true)
                 return nil

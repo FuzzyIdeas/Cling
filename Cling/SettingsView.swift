@@ -547,6 +547,12 @@ private struct AppsSettingsPane: View {
                     .truncationMode(.middle)
                 }
 
+                DescriptiveToggle(
+                    title: "Press Enter to send to a frontmost terminal",
+                    detail: "When a terminal app is frontmost, Enter pastes the selected file paths into it instead of opening them. Turn off to always open on Enter.",
+                    isOn: $enterPastesToFrontmostTerminal
+                )
+
                 SettingRow(
                     title: "Shelf app",
                     detail: "Used for shelving files with ⌘F (e.g. Yoink, Dropover)."
@@ -574,6 +580,7 @@ private struct AppsSettingsPane: View {
     @Default(.terminalApp) private var terminalApp
     @Default(.shelfApp) private var shelfApp
     @Default(.copyPathsWithTilde) private var copyPathsWithTilde
+    @Default(.enterPastesToFrontmostTerminal) private var enterPastesToFrontmostTerminal
 
     private func selectApp(type: String, onCompletion: @escaping (URL) -> Void) {
         let panel = NSOpenPanel()
