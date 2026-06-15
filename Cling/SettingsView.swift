@@ -549,8 +549,8 @@ private struct AppsSettingsPane: View {
                 }
 
                 DescriptiveToggle(
-                    title: "Press Enter to send to a frontmost terminal",
-                    detail: "When a terminal app is frontmost, Enter pastes the selected file paths into it instead of opening them. Turn off to always open on Enter.",
+                    title: "Enter key pastes paths to frontmost terminal",
+                    detail: "When a terminal app is frontmost, Enter pastes the selected file paths into it instead of opening them. Turn off if you always prefer to open files on Enter.",
                     isOn: $enterPastesToFrontmostTerminal
                 )
 
