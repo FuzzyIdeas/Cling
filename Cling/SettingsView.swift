@@ -192,7 +192,6 @@ private struct InterfaceSettingsPane: View {
     @Default(.showActionRow) private var showActionRow
     @Default(.showOpenWithRow) private var showOpenWithRow
     @Default(.showScriptRow) private var showScriptRow
-    @Default(.hiddenActionButtons) private var hiddenActionButtons
 
     @Default(.toolbarLabelStyle) private var toolbarLabelStyle
     @Default(.toolbarDensity) private var toolbarDensity
@@ -227,19 +226,6 @@ private struct InterfaceSettingsPane: View {
                     isOn: $showScriptRow
                 )
             }
-
-            Section {
-                ForEach(HiddenActionButton.allCases, id: \.self) { btn in
-                    Toggle(btn.label, isOn: visibleBinding(for: btn))
-                }
-            } header: {
-                Text("Action Buttons")
-            } footer: {
-                Text("Hiding a button removes it from the action row but keeps its keyboard shortcut working.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            .disabled(!showActionRow)
 
             // MARK: Part A — toolbar knobs
 
@@ -326,21 +312,6 @@ private struct InterfaceSettingsPane: View {
     }
 
     // MARK: Helpers
-
-    private func visibleBinding(for btn: HiddenActionButton) -> Binding<Bool> {
-        Binding(
-            get: { !hiddenActionButtons.contains(btn) },
-            set: { visible in
-                var updated = hiddenActionButtons
-                if visible {
-                    updated.removeAll { $0 == btn }
-                } else if !updated.contains(btn) {
-                    updated.append(btn)
-                }
-                hiddenActionButtons = updated
-            }
-        )
-    }
 
     private func toolbarPlacement(for id: ActionID) -> Binding<ToolbarPlacement> {
         Binding(
