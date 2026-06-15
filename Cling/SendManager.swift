@@ -72,6 +72,7 @@ final class Box<T>: @unchecked Sendable {
     @Published var sessions: [SendSession] = []          // active transfers
     @Published var recentSessions: [SendSession] = []    // session-only history (kept after stop/expiry, cleared on quit)
     @Published var connectingPaths: Set<String> = []     // in-flight guard against duplicate sends
+    @Published var linkCopiedTick = 0                    // incremented each time a new link is auto-copied
     var expiryTimers: [String: Task<Void, Never>] = [:]  // auto-stop timers
     var pendingTasks: [String: Task<String, Error>] = [:]
 }
@@ -123,6 +124,7 @@ extension SendManager {
         sessions.append(session)
         recentSessions.insert(session, at: 0)
         session.copyLink()
+        linkCopiedTick += 1
         scheduleExpiry(session)
     }
 

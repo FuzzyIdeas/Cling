@@ -93,6 +93,9 @@ struct ActionButtons: View {
             guard !selectedResults.isEmpty else { return }
             isPresentingRenameView = true
         }
+        .onChange(of: sendManager.linkCopiedTick) { _, _ in
+            flashCopied(.sendSecurely, text: "Link copied")
+        }
     }
 
     @State private var shortcutMonitor: Any?
@@ -552,6 +555,18 @@ struct ActionButtons: View {
         .buttonStyle(.text(color: sendActive ? Color.accentColor : color))
         .disabled(!isAvailable(action.id))
         .shortcutBadge(shortcutString(action.id), visible: showingShortcutBadges)
+        .overlay {
+            if copiedFeedbackAction == action.id {
+                Text(copiedFeedbackText)
+                    .font(.system(size: density.fontSize, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.accentColor, in: Capsule())
+                    .fixedSize()
+                    .allowsHitTesting(false)
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
+            }
+        }
         .popover(isPresented: isSend ? $showingSendPopover : .constant(false), arrowEdge: .bottom) {
             if isSend {
                 SendExpirationPopover(files: selectedResults.map(\.url)) { showingSendPopover = false }
@@ -607,7 +622,7 @@ struct ActionButtons: View {
         case .openWith:             openWithPicker()
         case .openInTerminal:       openInTerminal()
         case .openInEditor:         openInEditor()
-        case .copy:                 copyFiles()
+        case .copy:                 copyFiles(); flashCopied(.copy)
         case .copyPaths:            copyPaths()
         case .moveTo:               moveTo()
         case .rename:               renameSelected()
@@ -828,6 +843,22 @@ struct ActionButtons: View {
     @State private var isPresentingMoveToSheet = false
     @State private var showingSendPopover = false
     @State private var showingTransfers = false
+
+    @State private var copiedFeedbackAction: ActionID?
+    @State private var copiedFeedbackText: String = "Copied"
+    @State private var copiedClearTask: Task<Void, Never>?
+
+    func flashCopied(_ id: ActionID, text: String = "Copied") {
+        copiedClearTask?.cancel()
+        copiedFeedbackText = text
+        withAnimation(.easeOut(duration: 0.18)) { copiedFeedbackAction = id }
+        copiedClearTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            withAnimation(.easeIn(duration: 0.25)) {
+                if copiedFeedbackAction == id { copiedFeedbackAction = nil }
+            }
+        }
+    }
 
     private var isAnySheetOpen: Bool {
         isPresentingRenameView || isPresentingOpenWithPicker || isPresentingConfirm
