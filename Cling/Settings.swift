@@ -539,7 +539,7 @@ extension Defaults.Keys {
     static let toolbarShowDividers     = Key<Bool>("toolbarShowDividers", default: true)
     static let toolbarOverflowMode     = Key<ToolbarOverflowMode>("toolbarOverflowMode", default: .auto)
     static let toolbarRowBackground    = Key<Bool>("toolbarRowBackground", default: true)
-    static let toolbarShortcutHint     = Key<ToolbarShortcutHint>("toolbarShortcutHint", default: .tooltip)
+    static let toolbarShortcutHint     = Key<ToolbarShortcutHint>("toolbarShortcutHint", default: .menuAndTooltip)
     static let barActions              = Key<[ActionID]>("barActions", default: ToolbarAction.defaultBar)
     static let hiddenActions           = Key<Set<ActionID>>("hiddenActions", default: [])
     static let didMigrateHiddenActions = Key<Bool>("didMigrateHiddenActions", default: false)
