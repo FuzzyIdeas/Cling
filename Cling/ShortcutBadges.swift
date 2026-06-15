@@ -50,7 +50,7 @@ struct ShortcutBadge: ViewModifier {
     @ViewBuilder
     private var pill: some View {
         let label = Text(text)
-            .font(.system(size: 8, weight: .semibold))
+            .font(.system(size: 10, weight: .semibold))
             .padding(.horizontal, 3).padding(.vertical, 1)
         if AM.useGlass, #available(macOS 26, *) {
             label
