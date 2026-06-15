@@ -1407,14 +1407,14 @@ struct ContentView: View {
 
     private var sizeColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
         TableColumn("Size", value: \.memoz.size) { path in
-            Text(path.memoz.humanizedFileSize).monospaced().lineLimit(1)
+            Text(path.memoz.humanizedFileSize).font(.system(size: 12, design: .monospaced)).lineLimit(1)
         }.width(min: 60, ideal: 80)
     }
 
     private var dateColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
         TableColumn("Date Modified", value: \.memoz.date) { path in
             let date = path.memoz.formattedModificationDate
-            Text(date).monospaced().lineLimit(1).help(date)
+            Text(date).font(.system(size: 12, design: .monospaced)).lineLimit(1).help(date)
         }.width(min: 100, ideal: 160)
     }
 
