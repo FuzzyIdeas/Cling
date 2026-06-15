@@ -23,7 +23,6 @@ struct ActionButtons: View {
     @Default(.shelfApp) var shelfApp
     @Default(.copyPathsWithTilde) var copyPathsWithTilde
     @Default(.showActionRow) var showActionRow
-    @Default(.hiddenActionButtons) var hiddenActionButtons
     @Default(.barActions) var barActions
     @Default(.hiddenActions) var hiddenActions
     @Default(.toolbarShowDividers) var showDividers
@@ -36,7 +35,7 @@ struct ActionButtons: View {
     var body: some View {
         let inTerminal = appManager.frontmostAppIsTerminal
         let showingAlternates = (km.ralt || km.lalt) && !isAnySheetOpen
-        let hidden = Set(hiddenActionButtons)
+        let hidden = hiddenActions
 
         HStack {
             if showActionRow {
