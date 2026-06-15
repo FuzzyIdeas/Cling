@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import ClopSDK
 import Defaults
 import Lowtech
 import LowtechPro
@@ -896,6 +897,23 @@ struct ContentView: View {
                 RH.trackRun(selectedResults)
                 scriptManager.run(script: script, args: selectedResults.map(\.string))
                 return nil
+            }
+            // ⌃⌘O (hold ⌥ for aggressive) → Optimise with Clop. Reads the live selection here so it
+            // never acts on a stale snapshot. Sits after the script branch, so a script bound to "o"
+            // keeps priority (mirrors the toolbar button's o-key-available check).
+            if proactive, chars == "o", mods.subtracting(.option) == [.command, .control],
+               fuzzy.clopIsAvailable
+            {
+                let candidates = selectedResults.filter(\.exists).map(\.url).filter(\.memoz.canBeOptimisedByClop)
+                if !candidates.isEmpty {
+                    let paths = candidates.map(\.path)
+                    let aggressive = mods.contains(.option)
+                    Task.detached {
+                        guard ClopSDK.shared.waitForClopToBeAvailable(for: 5) else { return }
+                        _ = try? ClopSDK.shared.optimise(paths: paths, aggressive: aggressive, inTheBackground: true)
+                    }
+                    return nil
+                }
             }
             // ⌘⌥<letter> → open with app
             if mods == [.command, .option],

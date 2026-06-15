@@ -344,9 +344,6 @@ struct ScriptActionButtons: View {
                     }
                 }
                 .buttonStyle(.text(color: .fg.warm.opacity(0.8)))
-                .if(oKeyAvailable) {
-                    $0.keyboardShortcut("o", modifiers: [.command, .control])
-                }
             }
         }
 
