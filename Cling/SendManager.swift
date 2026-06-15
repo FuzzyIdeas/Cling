@@ -2,7 +2,11 @@ import Foundation
 import AppKit
 import WarpDrop
 
-let LINK_EXPIRATION_PRESETS: [TimeInterval] = [60, 120, 300, 600, 900, 1800, 2700, 3600, 7200, 10800, 21600, 43200, 86400, 172800, 259200]
+let LINK_EXPIRATION_PRESETS: [TimeInterval] = [
+    60, 120, 180, 300, 600, 900, 1200, 1800, 2700,
+    3600, 7200, 10800, 14400, 21600, 28800, 43200, 64800,
+    86400, 172800, 259200,
+]
 let LINK_EXPIRATION_NEVER: TimeInterval = 0
 
 func nearestExpirationPresetIndex(_ value: TimeInterval) -> Int {
@@ -47,6 +51,17 @@ func expirationShortLabel(_ seconds: TimeInterval) -> String {
     var roomURL: String { "https://drop.lowtechguys.com/r/\(id)" }
     var shareURL: String { files.count == 1 ? directURL : roomURL }
     var fileNames: String { files.map(\.lastPathComponent).joined(separator: ", ") }
+    /// Glanceable summary: lists up to 3 names, then collapses to "<first> + N more files"
+    /// so large selections don't balloon the Transfers row or download notifications.
+    var fileSummary: String {
+        let names = files.map(\.lastPathComponent)
+        switch names.count {
+        case 0:    return ""
+        case 1:    return names[0]
+        case 2, 3: return names.joined(separator: ", ")
+        default:   return "\(names[0]) + \(names.count - 1) more files"
+        }
+    }
     var expiresInLabel: String? {
         guard let expiresAt else { return nil }
         let r = expiresAt.timeIntervalSinceNow
@@ -219,9 +234,25 @@ extension SendManager {
         let session = SendSession(id: roomID, files: files, task: task, expiresAt: expiresAt, tempArchives: tempArchives)
         sessions.append(session)
         recentSessions.insert(session, at: 0)
+        trimRecentSessions()
         session.copyLink()
         linkCopiedTick += 1
         scheduleExpiry(session)
+    }
+
+    /// Keep the recent-transfers history short. Retains the newest `limit`, but never drops a
+    /// still-active transfer so an in-progress share can't disappear from the list.
+    func trimRecentSessions(limit: Int = 3) {
+        guard recentSessions.count > limit else { return }
+        recentSessions = recentSessions.enumerated()
+            .filter { $0.offset < limit || !$0.element.stopped }
+            .map(\.element)
+    }
+
+    /// Remove finished (stopped) transfers from the list. Active transfers stay so they aren't
+    /// silently cut off; use the per-row Stop button to end those first.
+    func clearFinished() {
+        recentSessions.removeAll { $0.stopped }
     }
 
     func scheduleExpiry(_ session: SendSession) {
@@ -260,6 +291,6 @@ extension SendManager {
     func didCompleteDownload(roomID: String, count: Int) {
         guard let s = sessions.first(where: { $0.id == roomID }) else { return }
         s.downloadCount = count
-        NotificationManager.shared.notifyDownload(fileNames: s.fileNames, count: count)
+        NotificationManager.shared.notifyDownload(summary: s.fileSummary, count: count)
     }
 }
