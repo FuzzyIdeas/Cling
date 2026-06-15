@@ -60,7 +60,7 @@ extension ActionSegment {
     var title: String {
         switch self {
         case .open: "Open"
-        case .fileOps: "File ops"
+        case .fileOps: "File operations"
         case .share: "Share"
         case .destructive: "Destructive"
         case .alternate: "More actions"

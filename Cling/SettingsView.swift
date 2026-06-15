@@ -218,7 +218,6 @@ private struct InterfaceSettingsPane: View {
     @Default(.toolbarLabelStyle) private var toolbarLabelStyle
     @Default(.toolbarDensity) private var toolbarDensity
     @Default(.toolbarOverflowMode) private var toolbarOverflowMode
-    @Default(.toolbarShortcutHint) private var toolbarShortcutHint
     @Default(.toolbarShowDividers) private var toolbarShowDividers
     @Default(.toolbarRowBackground) private var toolbarRowBackground
     @Default(.defaultLinkExpiration) private var defaultLinkExpiration
@@ -271,22 +270,15 @@ private struct InterfaceSettingsPane: View {
                     .labelsHidden()
                     .fixedSize()
                 }
+            }
+            .disabled(!showActionRow)
 
-                SettingRow(title: "Show Action Menu") {
+            Section {
+                SettingRow(title: "Show Action Menu", detail: "The \u{22EF} menu holds actions you keep out of the bar. Auto shows it only when something's there.") {
                     Picker("", selection: $toolbarOverflowMode) {
                         Text("Auto").tag(ToolbarOverflowMode.auto)
                         Text("Always").tag(ToolbarOverflowMode.always)
                         Text("Off").tag(ToolbarOverflowMode.off)
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                }
-
-                SettingRow(title: "Keyboard shortcut hint") {
-                    Picker("", selection: $toolbarShortcutHint) {
-                        Text("Tooltip").tag(ToolbarShortcutHint.tooltip)
-                        Text("Menu + tooltip").tag(ToolbarShortcutHint.menuAndTooltip)
-                        Text("Never").tag(ToolbarShortcutHint.never)
                     }
                     .labelsHidden()
                     .fixedSize()

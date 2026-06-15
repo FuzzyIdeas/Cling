@@ -29,7 +29,6 @@ struct ActionButtons: View {
     @Default(.toolbarOverflowMode) var overflowMode
     @Default(.toolbarLabelStyle) var labelStyle
     @Default(.toolbarDensity) var density
-    @Default(.toolbarShortcutHint) var shortcutHint
     @ObservedObject var km = KM
     @ObservedObject private var sendManager = SendManager.shared
 
@@ -184,11 +183,26 @@ struct ActionButtons: View {
             // copy and trash originally required focus == .list in the per-branch keyDown handler;
             // all other rebindable actions had no focus guard. Reproduce that exactly here.
             // Note: .open and .pasteToFrontmost are handled above with context-dependent Return-key logic.
+            //
+            // Skip actions that have a native .keyboardShortcut on an Action Menu item — those fire
+            // via macOS menu key equivalents even when the menu is closed, so dispatching them here
+            // too would execute the action twice. An action is "owned by the menu" when:
+            //   overflowMode != .off  AND  action is not hidden  AND  action is not in barActions
+            //   AND  action.segment != .alternate
             if let pressed = KeyboardShortcuts.Shortcut(event: event) {
                 let currentHidden = Defaults[.hiddenActions]
+                let currentBarActions = Defaults[.barActions]
+                let currentOverflowMode = Defaults[.toolbarOverflowMode]
                 let handled = MainActor.assumeIsolated {
                     for action in ToolbarAction.rebindable where !currentHidden.contains(action.id) {
                         if (action.id == .copy || action.id == .trash), focusBinding.wrappedValue != .list { continue }
+                        // If this action is rendered as an Action Menu item with a native shortcut,
+                        // the menu key equivalent handles dispatch — skip to avoid double-fire.
+                        if currentOverflowMode != .off,
+                           !currentHidden.contains(action.id),
+                           !currentBarActions.contains(action.id),
+                           action.segment != .alternate
+                        { continue }
                         guard let bound = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: action.id)),
                               bound == pressed, isAvailable(action.id) else { continue }
                         execute(action.id)
@@ -565,7 +579,6 @@ struct ActionButtons: View {
                 }
             }
         }
-        .help(tooltip(for: action))
         .buttonStyle(.text(color: sendActive ? Color.accentColor : color))
         .disabled(!isAvailable(action.id))
         .shortcutBadge(shortcutString(action.id), visible: showingShortcutBadges)
@@ -597,10 +610,16 @@ struct ActionButtons: View {
         return sc.description
     }
 
-    @MainActor func tooltip(for action: ToolbarAction) -> String {
-        guard shortcutHint != .never else { return action.title }
-        let s = shortcutString(action.id)
-        return s.isEmpty ? action.title : "\(action.title)  \(s)"
+    @MainActor func menuShortcut(for id: ActionID) -> (KeyEquivalent, SwiftUI.EventModifiers)? {
+        guard ToolbarAction.rebindable.contains(where: { $0.id == id }),
+              let sc = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: id)),
+              let keyStr = sc.nsMenuItemKeyEquivalent, let ch = keyStr.first else { return nil }
+        var mods: SwiftUI.EventModifiers = []
+        if sc.modifiers.contains(.command) { mods.insert(.command) }
+        if sc.modifiers.contains(.option)  { mods.insert(.option) }
+        if sc.modifiers.contains(.control) { mods.insert(.control) }
+        if sc.modifiers.contains(.shift)   { mods.insert(.shift) }
+        return (KeyEquivalent(ch), mods)
     }
 
     @ViewBuilder var overflowButton: some View {
@@ -612,10 +631,13 @@ struct ActionButtons: View {
                     if !items.isEmpty {
                         Section(segment.title) {
                             ForEach(items) { a in
-                                let sc = shortcutHint == .menuAndTooltip ? shortcutString(a.id) : ""
-                                let title = sc.isEmpty ? a.title : "\(a.title)  \(sc)"
-                                Button { execute(a.id) } label: { Label(title, systemImage: a.systemImage) }
+                                let button = Button { execute(a.id) } label: { Label(a.title, systemImage: a.systemImage) }
                                     .disabled(!isAvailable(a.id))
+                                if let (k, m) = menuShortcut(for: a.id) {
+                                    button.keyboardShortcut(k, modifiers: m)
+                                } else {
+                                    button
+                                }
                             }
                         }
                     }
