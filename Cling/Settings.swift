@@ -543,6 +543,7 @@ extension Defaults.Keys {
     static let didMigrateHiddenActions = Key<Bool>("didMigrateHiddenActions", default: false)
     static let defaultLinkExpiration   = Key<TimeInterval>("defaultLinkExpiration", default: 3600)
     static let shortcutsCoachmarkShown = Key<Bool>("shortcutsCoachmarkShown", default: false)
+    static let shortcutBadgesRevealedOnce = Key<Bool>("shortcutBadgesRevealedOnce", default: false)
 }
 
 // MARK: - hiddenActionButtons → hiddenActions migration

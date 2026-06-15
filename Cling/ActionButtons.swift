@@ -32,6 +32,9 @@ struct ActionButtons: View {
     @Default(.toolbarDensity) var density
     @ObservedObject var km = KM
     @ObservedObject private var sendManager = SendManager.shared
+    @Default(.shortcutBadgesRevealedOnce) private var badgesRevealedOnce
+    @State private var badgesVisible = false
+    @State private var badgeRevealTask: Task<Void, Never>?
 
     var body: some View {
         let inTerminal = appManager.frontmostAppIsTerminal
@@ -95,6 +98,25 @@ struct ActionButtons: View {
         }
         .onChange(of: sendManager.linkCopiedTick) { _, _ in
             flashCopied(.sendSecurely, text: "Link copied")
+        }
+        .onChange(of: cmdHeld) { _, held in
+            badgeRevealTask?.cancel()
+            guard held else {
+                withAnimation(.easeOut(duration: 0.12)) { badgesVisible = false }
+                return
+            }
+            // First reveal after the coachmark is instant, to reward the discovery.
+            // Afterwards the badges only show if ⌘ is held a beat, so plain ⌘ hotkeys don't flash them.
+            if !badgesRevealedOnce {
+                badgesRevealedOnce = true
+                withAnimation(.easeOut(duration: 0.12)) { badgesVisible = true }
+            } else {
+                badgeRevealTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard !Task.isCancelled, cmdHeld else { return }
+                    withAnimation(.easeOut(duration: 0.12)) { badgesVisible = true }
+                }
+            }
         }
         .confirmationDialog(
             "Archive folders before sending?",
@@ -523,7 +545,7 @@ struct ActionButtons: View {
         }
     }
 
-    var showingShortcutBadges: Bool { (km.rcmd || km.lcmd) && !isAnySheetOpen }
+    var cmdHeld: Bool { (km.rcmd || km.lcmd) && !isAnySheetOpen }
 
     var visibleBarActions: [ToolbarAction] {
         barActions.compactMap { ToolbarAction.byID[$0] }
@@ -586,7 +608,7 @@ struct ActionButtons: View {
         }
         .buttonStyle(.text(color: sendActive ? Color.accentColor : color))
         .disabled(!isAvailable(action.id))
-        .shortcutBadge(shortcutString(action.id), visible: showingShortcutBadges)
+        .shortcutBadge(shortcutString(action.id), visible: badgesVisible)
         .overlay {
             if copiedFeedbackAction == action.id {
                 Text(copiedFeedbackText)
