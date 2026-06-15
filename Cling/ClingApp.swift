@@ -110,6 +110,7 @@ class AppDelegate: LowtechProAppDelegate {
             app.forceTerminate()
         }
         Migration.run()
+        migrateHiddenActionButtonsIfNeeded()
         FUZZY.start()
         setupCleanup()
         QuickLookSupport.shared.warmUp()

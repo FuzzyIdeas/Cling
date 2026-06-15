@@ -304,6 +304,18 @@ let DEFAULT_QUICK_FILTERS = [
     QuickFilter(id: "Xcode Projects", extensions: ".xcodeproj .xcworkspace", preQuery: nil, dirsOnly: true, folders: [HOME], key: "x"),
 ]
 
+// MARK: - Toolbar knob enums
+
+enum ToolbarLabelStyle: String, Codable, Defaults.Serializable, CaseIterable { case iconAndText, textOnly, iconOnly }
+enum ToolbarDensity: String, Codable, Defaults.Serializable, CaseIterable { case regular, compact }
+enum ToolbarOverflowMode: String, Codable, Defaults.Serializable, CaseIterable { case auto, always, off }
+enum ToolbarShortcutHint: String, Codable, Defaults.Serializable, CaseIterable { case tooltip, menuAndTooltip, never }
+
+extension ToolbarDensity {
+    var fontSize: CGFloat { self == .compact ? 9 : 10 }
+    var spacing: CGFloat { self == .compact ? 4 : 6 }
+}
+
 // MARK: - HiddenActionButton
 
 enum HiddenActionButton: String, CaseIterable, Defaults.Serializable {
@@ -521,6 +533,40 @@ extension Defaults.Keys {
 
     #:custom name=Your rules
     """)
+
+    static let toolbarLabelStyle       = Key<ToolbarLabelStyle>("toolbarLabelStyle", default: .iconAndText)
+    static let toolbarDensity          = Key<ToolbarDensity>("toolbarDensity", default: .regular)
+    static let toolbarShowDividers     = Key<Bool>("toolbarShowDividers", default: true)
+    static let toolbarOverflowMode     = Key<ToolbarOverflowMode>("toolbarOverflowMode", default: .auto)
+    static let toolbarRowBackground    = Key<Bool>("toolbarRowBackground", default: true)
+    static let toolbarShortcutHint     = Key<ToolbarShortcutHint>("toolbarShortcutHint", default: .tooltip)
+    static let barActions              = Key<[ActionID]>("barActions", default: ToolbarAction.defaultBar)
+    static let hiddenActions           = Key<Set<ActionID>>("hiddenActions", default: [])
+    static let didMigrateHiddenActions = Key<Bool>("didMigrateHiddenActions", default: false)
+    static let defaultLinkExpiration   = Key<TimeInterval>("defaultLinkExpiration", default: 3600)
+    static let shortcutsCoachmarkShown = Key<Bool>("shortcutsCoachmarkShown", default: false)
+}
+
+// MARK: - hiddenActionButtons → hiddenActions migration
+
+func migrateHiddenActionButtonsIfNeeded() {
+    guard !Defaults[.didMigrateHiddenActions] else { return }
+    let map: [HiddenActionButton: ActionID] = [
+        .open: .open,
+        .showInFinder: .showInFinder,
+        .pasteToFrontmost: .pasteToFrontmost,
+        .openInTerminal: .openInTerminal,
+        .openInEditor: .openInEditor,
+        .shelve: .shelve,
+        .moveTo: .moveTo,
+        .copy: .copy,
+        .copyPaths: .copyPaths,
+        .trash: .trash,
+        .quicklook: .quickLook,
+        .rename: .rename,
+    ]
+    Defaults[.hiddenActions] = Set(Defaults[.hiddenActionButtons].compactMap { map[$0] })
+    Defaults[.didMigrateHiddenActions] = true
 }
 
 // MARK: - DefaultsCache
