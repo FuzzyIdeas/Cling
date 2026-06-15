@@ -1,3 +1,4 @@
+import Defaults
 import Lowtech
 import SwiftUI
 import System
@@ -6,9 +7,10 @@ import System
 
 struct OpenWithMenuView: View {
     let fileURLs: [URL]
+    @Default(.toolbarLabelStyle) private var labelStyle
 
     var body: some View {
-        Menu("⌘O Open with...   ") {
+        Menu {
             let apps = commonApplications(for: fileURLs).sorted(by: \.lastPathComponent)
             ForEach(apps, id: \.path) { app in
                 Button(action: {
@@ -21,7 +23,15 @@ struct OpenWithMenuView: View {
                     Text(app.lastPathComponent.ns.deletingPathExtension)
                 }
             }
+        } label: {
+            switch labelStyle {
+            case .iconAndText: Label("Open With", systemImage: "square.and.arrow.up.on.square")
+            case .textOnly:    Text("Open With")
+            case .iconOnly:    Image(systemName: "square.and.arrow.up.on.square")
+            }
         }
+        .help("Open the selected files with a specific app")
+        .fixedSize()
     }
 
 }
@@ -102,26 +112,33 @@ struct OpenWithPickerView: View {
 struct OpenWithActionButtons: View {
     let selectedResults: Set<FilePath>
 
+    @State private var fuzzy: FuzzyClient = FUZZY
+    @ObservedObject private var km = KM
+    @Default(.toolbarLabelStyle) private var labelStyle
+    @Default(.toolbarDensity) private var density
+    @State private var hintsVisible = false
+
+    /// ⌘⌥ held: the prefix of every open-with app shortcut, so its hints reveal on hold.
+    private var cmdOptHeld: Bool { (km.lcmd || km.rcmd) && (km.lalt || km.ralt) }
+
     var buttons: some View {
         ForEach(fuzzy.openWithAppShortcuts.sorted(by: \.key.lastPathComponent), id: \.0.path) { app, key in
-            Button(action: {
+            ActionPillButton(
+                title: app.lastPathComponent.ns.deletingPathExtension,
+                icon: .image(icon(for: app)),
+                shortcut: "⌘⌥\(key.uppercased())",
+                badgesVisible: hintsVisible,
+                labelStyle: labelStyle
+            ) {
                 RH.trackRun(selectedResults)
                 NSWorkspace.shared.open(selectedResults.map(\.url), withApplicationAt: app, configuration: .init(), completionHandler: { _, _ in })
-            }) {
-                HStack(spacing: 0) {
-                    Text("\(key.uppercased())").mono(10, weight: .bold).foregroundColor(.fg.warm).roundbg(color: .bg.primary.opacity(0.2))
-                    Text(" \(app.lastPathComponent.ns.deletingPathExtension)")
-                }
             }
         }
-        .buttonStyle(.borderlessText(color: .fg.warm.opacity(0.8)))
     }
 
     var body: some View {
-        HStack {
+        HStack(spacing: density.spacing) {
             OpenWithMenuView(fileURLs: selectedResults.map(\.url))
-                .help("Open the selected files with a specific app")
-                .frame(width: 110, alignment: .leading)
                 .disabled(selectedResults.isEmpty || fuzzy.openWithAppShortcuts.isEmpty)
 
             Divider().frame(height: 16)
@@ -129,29 +146,21 @@ struct OpenWithActionButtons: View {
             if fuzzy.openWithAppShortcuts.isEmpty {
                 Text("Open with app hotkeys will appear here")
                     .foregroundStyle(.secondary)
-                    .font(.system(size: 10))
+                    .font(.system(size: density.fontSize))
             } else {
-                HStack(spacing: 1) {
-                    Text("⌘").roundbg(color: .bg.primary.opacity(0.2))
-                    Text("⌥").roundbg(color: .bg.primary.opacity(0.2))
-                    Text(" +")
-                }.foregroundColor(.fg.warm)
-
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 3) { buttons }
+                    HStack(spacing: density.spacing) { buttons }
                 }
                 Divider().frame(height: 16)
                 ShareButton(urls: selectedResults.map(\.url))
                     .bold()
-                    .buttonStyle(.borderlessText)
             }
         }
-        .font(.system(size: 10))
+        .font(.system(size: density.fontSize))
         .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
         .lineLimit(1)
+        .revealShortcutHints(held: cmdOptHeld, visible: $hintsVisible)
     }
-
-    @State private var fuzzy: FuzzyClient = FUZZY
 
 }
 
@@ -159,10 +168,39 @@ func icon(for app: URL) -> NSImage {
     if let cached = FUZZY.appIconCache[app.path] {
         return cached
     }
-    let i = NSWorkspace.shared.icon(forFile: app.path)
-    i.size = NSSize(width: 16, height: 16)
-    FUZZY.appIconCache[app.path] = i
-    return i
+    let thumb = appIconThumbnail(forFile: app.path)
+    FUZZY.appIconCache[app.path] = thumb
+    return thumb
+}
+
+/// Renders a small, memory-light thumbnail of a file/app icon. `NSWorkspace.icon(forFile:)` returns
+/// an image backed by several large representations (up to 512×512); drawing it once into a points
+/// sized bitmap at screen scale keeps it crisp while caching only a few KB per icon. Uses an
+/// offscreen bitmap context (not `lockFocus`) so it is safe to call off the main thread.
+func appIconThumbnail(forFile path: String, points: CGFloat = 18, scale: CGFloat = 2) -> NSImage {
+    let raw = NSWorkspace.shared.icon(forFile: path)
+    let pixels = max(1, Int((points * scale).rounded()))
+    let size = NSSize(width: points, height: points)
+    guard let rep = NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels,
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+    ) else {
+        raw.size = size
+        return raw
+    }
+    rep.size = size
+    NSGraphicsContext.saveGraphicsState()
+    if let ctx = NSGraphicsContext(bitmapImageRep: rep) {
+        NSGraphicsContext.current = ctx
+        ctx.imageInterpolation = .high
+        raw.draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .sourceOver, fraction: 1)
+        ctx.flushGraphics()
+    }
+    NSGraphicsContext.restoreGraphicsState()
+    let thumb = NSImage(size: size)
+    thumb.addRepresentation(rep)
+    return thumb
 }
 
 extension URL {

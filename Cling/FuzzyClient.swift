@@ -1869,9 +1869,7 @@ class FuzzyClient {
             // ⌘⌥ actions (see ActionButtons), e.g. ⌘⌥C for Copy to...
             openWithAppShortcuts = computeShortcuts(for: commonOpenWithApps, reserved: reservedOptionCommandLetters)
             for app in commonOpenWithApps where appIconCache[app.path] == nil {
-                let img = NSWorkspace.shared.icon(forFile: app.path)
-                img.size = NSSize(width: 16, height: 16)
-                appIconCache[app.path] = img
+                appIconCache[app.path] = appIconThumbnail(forFile: app.path)
             }
         }
     }
@@ -1885,9 +1883,7 @@ class FuzzyClient {
 
             var icons: [String: NSImage] = [:]
             for url in urls {
-                let img = NSWorkspace.shared.icon(forFile: url.path)
-                img.size = NSSize(width: 16, height: 16)
-                icons[url.path] = img
+                icons[url.path] = appIconThumbnail(forFile: url.path)
             }
 
             mainActor {

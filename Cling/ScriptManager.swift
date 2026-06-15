@@ -56,6 +56,19 @@ class ScriptManager {
     static let SEQUENTIAL_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+sequential:\s*(true|yes|1|on|enable)"#).anchorsMatchLineEndings().ignoresCase()
     static let DESCRIPTION_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+description:\s*(.+)"#).anchorsMatchLineEndings().ignoresCase()
     static let KEY_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+key:\s*([a-z0-9])"#).anchorsMatchLineEndings().ignoresCase()
+    static let ICON_REGEX: Regex<(Substring, Substring)> = try! Regex(#"^[^a-z0-9\n]+icon:\s*(.+)"#).anchorsMatchLineEndings().ignoresCase()
+
+    /// SF Symbol fallbacks for the scripts we bundle, keyed by lowercased base filename, used when a
+    /// script has no `# icon:` comment of its own. Any other script falls back to a generic glyph.
+    static let bundledScriptIcons: [String: String] = [
+        "copy to tmp": "doc.on.doc",
+        "list contents": "list.bullet",
+        "zip": "doc.zipper",
+        "print": "printer",
+        "diff": "plusminus.circle",
+        "compare": "arrow.left.arrow.right",
+        "disk usage": "internaldrive",
+    ]
 
     var reservedShortcuts: Set<Character> = []
     var scriptShortcuts: [URL: Character] = [:]
@@ -70,6 +83,15 @@ class ScriptManager {
     var scriptsSequential: Set<URL> = []
     var scriptDescriptions: [URL: String] = [:]
     var scriptKeyOverrides: [URL: Character] = [:]
+    var scriptIcons: [URL: String] = [:]
+
+    /// SF Symbol name or emoji to show for a script: an explicit `# icon:` comment wins, then the
+    /// bundled defaults, then a generic script glyph.
+    func iconGlyph(for script: URL) -> String {
+        scriptIcons[script]
+            ?? Self.bundledScriptIcons[script.deletingPathExtension().lastPathComponent.lowercased()]
+            ?? "scroll"
+    }
     var lastScript: URL?
     var lastOutputFile: FilePath?
     var lastErrorFile: FilePath?
@@ -198,6 +220,7 @@ class ScriptManager {
             scriptsSequential = []
             scriptDescriptions = [:]
             scriptKeyOverrides = [:]
+            scriptIcons = [:]
             for script in scriptURLs {
                 guard let scriptContents = try? String(contentsOf: script) else {
                     continue
@@ -229,6 +252,10 @@ class ScriptManager {
                 }
                 if let match = try? Self.KEY_REGEX.firstMatch(in: scriptContents), let ch = String(match.1).lowercased().first {
                     scriptKeyOverrides[script] = ch
+                }
+                if let match = try? Self.ICON_REGEX.firstMatch(in: scriptContents) {
+                    let glyph = match.1.trimmingCharacters(in: .whitespaces)
+                    if !glyph.isEmpty { scriptIcons[script] = glyph }
                 }
             }
 

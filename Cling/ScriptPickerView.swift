@@ -140,9 +140,8 @@ struct ScriptActionButtons: View {
     var focused: FocusState<FocusedField?>.Binding
 
     var body: some View {
-        HStack {
+        HStack(spacing: density.spacing) {
             runThroughScriptButton
-                .frame(width: 110, alignment: .leading)
                 .disabled(selectedResults.isEmpty || scriptManager.process != nil)
 
             Divider().frame(height: 16)
@@ -150,28 +149,23 @@ struct ScriptActionButtons: View {
             if commonScripts.isEmpty {
                 Text("Script hotkeys will appear here")
                     .foregroundStyle(.secondary)
-                    .font(.system(size: 10))
+                    .font(.system(size: density.fontSize))
                 Spacer()
             } else {
-                HStack(spacing: 1) {
-                    Text("⌘").roundbg(color: .bg.primary.opacity(0.2))
-                    Text("⌃").roundbg(color: .bg.primary.opacity(0.2))
-                    Text(" +")
-                }.foregroundColor(.fg.warm)
-
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 3) {
+                    HStack(spacing: density.spacing) {
                         scriptList
-                    }.buttonStyle(.borderlessText(color: .fg.warm.opacity(0.8)))
+                    }
                 }.disabled(selectedResults.isEmpty || scriptManager.process != nil)
             }
 
             runningProcessButton
             clopButton
         }
-        .font(.system(size: 10))
+        .font(.system(size: density.fontSize))
         .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
         .lineLimit(1)
+        .revealShortcutHints(held: cmdCtrlHeld, visible: $hintsVisible)
         .onAppear {
             let extensions = selectedResults.compactMap(\.extension).uniqued
             commonScripts = scriptManager.commonScripts(for: extensions).sorted(by: \.lastPathComponent)
@@ -266,6 +260,13 @@ struct ScriptActionButtons: View {
     @State private var scriptManager = SM
     @State private var fuzzy = FUZZY
     @State private var isPresentingScriptPicker = false
+    @ObservedObject private var km = KM
+    @Default(.toolbarLabelStyle) private var labelStyle
+    @Default(.toolbarDensity) private var density
+    @State private var hintsVisible = false
+
+    /// ⌘⌃ held: the prefix of every script (and Clop) shortcut, so its hints reveal on hold.
+    private var cmdCtrlHeld: Bool { (km.lcmd || km.rcmd) && (km.lctrl || km.rctrl) }
 
     @ViewBuilder
     private var runningProcessButton: some View {
@@ -327,32 +328,34 @@ struct ScriptActionButtons: View {
             let clopCandidates = selectedResults.filter(\.exists).map(\.url).filter(\.memoz.canBeOptimisedByClop)
             if clopCandidates.isNotEmpty {
                 let oKeyAvailable = !scriptManager.scriptShortcuts.values.contains("o")
-                Button(action: {
-                    guard ClopSDK.shared.waitForClopToBeAvailable(for: 5) else {
-                        return
-                    }
+                ActionPillButton(
+                    title: "Optimise with Clop",
+                    icon: .symbol("wand.and.stars"),
+                    shortcut: oKeyAvailable ? "⌘⌃O" : "",
+                    badgesVisible: hintsVisible,
+                    labelStyle: labelStyle
+                ) {
+                    guard ClopSDK.shared.waitForClopToBeAvailable(for: 5) else { return }
                     _ = try? ClopSDK.shared.optimise(
                         paths: clopCandidates.map(\.path),
                         aggressive: NSEvent.modifierFlags.contains(.option),
                         inTheBackground: true
                     )
-                }) {
-                    if oKeyAvailable {
-                        Text("⌘⌃O").mono(10, weight: .bold).foregroundColor(.fg.warm.opacity(0.8)) + Text(" Optimise with Clop")
-                    } else {
-                        Text("Optimise with Clop")
-                    }
                 }
-                .buttonStyle(.text(color: .fg.warm.opacity(0.8)))
             }
         }
-
     }
 
     private var runThroughScriptButton: some View {
-        Button("⌘X Execute script") {
+        Button {
             focused.wrappedValue = .executeScript
             isPresentingScriptPicker = true
+        } label: {
+            switch labelStyle {
+            case .iconAndText: Label("Execute script", systemImage: "terminal")
+            case .textOnly:    Text("Execute script")
+            case .iconOnly:    Image(systemName: "terminal")
+            }
         }
         .keyboardShortcut("x", modifiers: [.command])
         .disabled(focused.wrappedValue == .search)
@@ -365,16 +368,17 @@ struct ScriptActionButtons: View {
     }
 
     private func scriptButton(_ script: URL, key: Character) -> some View {
-        Button(action: {
+        ActionPillButton(
+            title: script.lastPathComponent.ns.deletingPathExtension,
+            icon: PillIcon.from(glyph: scriptManager.iconGlyph(for: script)),
+            shortcut: "⌘⌃\(key.uppercased())",
+            badgesVisible: hintsVisible,
+            labelStyle: labelStyle
+        ) {
             if scriptManager.scriptsWithConfirm.contains(script) {
                 confirmScript = script
             } else {
                 scriptManager.run(script: script, args: selectedResults.map(\.string))
-            }
-        }) {
-            HStack(spacing: 0) {
-                Text("\(key.uppercased())").mono(10, weight: .bold).foregroundColor(.fg.warm).roundbg(color: .bg.primary.opacity(0.2))
-                Text(" \(script.lastPathComponent.ns.deletingPathExtension)")
             }
         }
     }
