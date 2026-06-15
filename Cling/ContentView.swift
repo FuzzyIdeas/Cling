@@ -206,6 +206,11 @@ struct ContentView: View {
 
             historySuggestionsOverlay
         }
+        .overlay(alignment: .bottom) {
+            if !coachmarkShown, onboardingCompleted, showActionRow, showingResults {
+                ShortcutCoachmark()
+            }
+        }
         .padding(.top, 24)
         .padding([.leading, .trailing])
         .padding(.bottom, 4)
@@ -446,6 +451,9 @@ struct ContentView: View {
     @Default(.showOpenWithRow) private var showOpenWithRow
     @Default(.showScriptRow) private var showScriptRow
     @Default(.toolbarRowBackground) private var toolbarRowBackground
+    @Default(.showActionRow) private var showActionRow
+    @Default(.shortcutsCoachmarkShown) private var coachmarkShown
+    @Default(.onboardingCompleted) private var onboardingCompleted
 
     private var actionButtonRows: some View {
         let rows = VStack {
