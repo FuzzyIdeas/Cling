@@ -472,9 +472,23 @@ struct ContentView: View {
         }
 
         return Group {
-            if toolbarRowBackground, AM.useGlass, #available(macOS 26, *) {
-                GlassEffectContainer {
+            if toolbarRowBackground {
+                if AM.useGlass, #available(macOS 26, *) {
+                    GlassEffectContainer {
+                        rows
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                    }
+                    .glassEffect(.regular, in: .rect(cornerRadius: 12))
+                } else {
                     rows
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .strokeBorder(.primary.opacity(0.08), lineWidth: 0.5)
+                        )
                 }
             } else {
                 rows
