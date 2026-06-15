@@ -199,6 +199,7 @@ private struct InterfaceSettingsPane: View {
     @Default(.toolbarShortcutHint) private var toolbarShortcutHint
     @Default(.toolbarShowDividers) private var toolbarShowDividers
     @Default(.toolbarRowBackground) private var toolbarRowBackground
+    @Default(.defaultLinkExpiration) private var defaultLinkExpiration
 
     // MARK: Part B — placement state
 
@@ -282,6 +283,20 @@ private struct InterfaceSettingsPane: View {
                 )
             }
             .disabled(!showActionRow)
+
+            // MARK: Sharing
+
+            Section("Sharing") {
+                SettingRow(title: "Default link expiration") {
+                    Picker("", selection: $defaultLinkExpiration) {
+                        ForEach(LINK_EXPIRATION_PRESETS, id: \.self) { e in
+                            Text(expirationDurationLabel(e)).tag(e)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
 
             // MARK: Part B — per-action visibility editor
 

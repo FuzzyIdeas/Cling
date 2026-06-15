@@ -96,6 +96,15 @@ struct RightClickMenu: View {
 
         Divider()
 
+        Button {
+            SendManager.shared.send(files: orderedSelection.map(\.url), expiration: Defaults[.defaultLinkExpiration])
+        } label: {
+            Label("Send securely", systemImage: "paperplane")
+        }
+        .disabled(orderedSelection.isEmpty)
+
+        Divider()
+
         Button("Move to Trash", role: .destructive) { moveToTrash() }
 
         Divider()
