@@ -343,7 +343,7 @@ struct ScriptActionButtons: View {
                 let oKeyAvailable = !scriptManager.scriptShortcuts.values.contains("o")
                 ActionPillButton(
                     title: "Optimise with Clop",
-                    icon: .symbol("wand.and.stars"),
+                    icon: .symbol("hat.widebrim"),
                     shortcut: oKeyAvailable ? "O" : "",
                     badgesVisible: pillHintsVisible,
                     labelStyle: labelStyle,
