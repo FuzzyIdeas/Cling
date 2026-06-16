@@ -9,57 +9,134 @@ import Foundation
 import Lowtech
 import SwiftUI
 
-// MARK: - GlassTextButton
+/// One radius shared by the results table, the file preview panel and the action-row background so
+/// their rounded corners read as nested inside the window. macOS doesn't expose the window's own
+/// radius, and these panels sit only ~16pt in from the edge, so a true concentric inset (via
+/// `ContainerRelativeShape`) would round to almost square; a single tuned value tracks the window
+/// far better here. Tune this one number to taste.
+let windowCornerRadius: CGFloat = 16
 
-struct GlassTextButton: ButtonStyle {
-    @Environment(\.isEnabled) public var isEnabled
+// MARK: - TextButtonContent
 
-    public func makeBody(configuration: Configuration) -> some View {
-        let enabled = isEnabledOverride ?? isEnabled
-        let label = configuration.label
+/// The rendered body shared by the text button styles. This is a real `View` (not the ButtonStyle
+/// struct), so its `@State hovering` is actually installed and tracked by SwiftUI. The styles used
+/// to call each other's `makeBody` by hand, which left that `@State` dead — the hover and press
+/// feedback never updated. Hover/press now drive both the background fill and a subtle scale.
+private struct TextButtonContent<Label: View>: View {
+    enum Variant { case glass, vibrant, opaque }
+
+    let label: Label
+    let isPressed: Bool
+    let variant: Variant
+    var color = Color.primary.opacity(0.8)
+    var borderColor: Color?
+    var active = false
+    var activeTint: Color = .accentColor
+    var isEnabledOverride: Bool?
+
+    var body: some View {
+        label
             .foregroundStyle(color)
             .padding(.vertical, 2.0)
             .padding(.horizontal, 8.0)
-            .contentShape(Rectangle())
-            .opacity(enabled ? 1 : 0.6)
-
-        if #available(macOS 26, *) {
-            if active {
-                label.glassEffect(.regular.tint(activeTint).interactive(), in: .capsule)
-            } else {
-                label.glassEffect(.regular.interactive(), in: .capsule)
+            .contentShape(isSquare ? AnyShape(squareShape) : AnyShape(Capsule(style: .continuous)))
+            .opacity(enabled ? (hovering ? 1 : 0.82) : 0.5)
+            .background { fillBackground }
+            .overlay { border }
+            .scaleEffect(enabled && hovering ? 1.06 : 1)
+            .onHover { hover in
+                guard enabled else { return }
+                withAnimation(.easeOut(duration: 0.14)) { hovering = hover }
             }
-        } else {
-            label
+            .animation(.easeOut(duration: 0.12), value: isPressed)
+    }
+
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var scheme
+    @State private var hovering = false
+
+    private var enabled: Bool { isEnabledOverride ?? isEnabled }
+
+    // Opaque pills are squarish (small radius); glass/vibrant are capsules.
+    private var isSquare: Bool { variant == .opaque }
+    private var squareShape: RoundedRectangle { RoundedRectangle(cornerRadius: 2, style: .continuous) }
+
+    private var fillColor: Color {
+        if active { return activeTint.opacity(0.22) }
+
+        if variant == .glass {
+            // A contrasting fill against the translucent window: whiter in light, blacker in dark,
+            // getting more opaque on hover/press.
+            let base = scheme == .dark ? Color.black : Color.white
+            guard enabled else { return base.opacity(scheme == .dark ? 0.12 : 0.22) }
+            if isPressed { return base.opacity(scheme == .dark ? 0.5 : 0.72) }
+            if hovering { return base.opacity(scheme == .dark ? 0.4 : 0.6) }
+            return base.opacity(scheme == .dark ? 0.28 : 0.45)
         }
+
+        // Bordered variants rely on their stroke at rest, filling in only on hover/press.
+        guard enabled else { return .clear }
+        if isPressed { return .primary.opacity(0.18) }
+        if hovering { return .primary.opacity(0.12) }
+        return .clear
+    }
+
+    @ViewBuilder
+    private var fillBackground: some View {
+        if isSquare {
+            squareShape.fill(fillColor)
+        } else {
+            Capsule(style: .continuous).fill(fillColor)
+        }
+    }
+
+    @ViewBuilder
+    private var border: some View {
+        switch variant {
+        case .glass:
+            // A caller that opts out (e.g. the status bar passes `.clear`) wins; otherwise the glass
+            // pills get a modern top-lit bevel edge that reads as a thin glass rim.
+            if let borderColor {
+                Capsule(style: .continuous).strokeBorder(borderColor, lineWidth: 0.5)
+            } else {
+                Capsule(style: .continuous).strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            .white.opacity(scheme == .dark ? 0.30 : 0.65),
+                            .black.opacity(scheme == .dark ? 0.04 : 0.06),
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    ),
+                    lineWidth: 0.8
+                )
+            }
+        case .vibrant:
+            Capsule(style: .continuous).strokeBorder(borderColor ?? color, lineWidth: 0.5)
+        case .opaque:
+            squareShape.strokeBorder((borderColor ?? color).opacity(0.4), lineWidth: 1)
+        }
+    }
+
+}
+
+// MARK: - GlassTextButton
+
+struct GlassTextButton: ButtonStyle {
+    public func makeBody(configuration: Configuration) -> some View {
+        TextButtonContent(label: configuration.label, isPressed: configuration.isPressed, variant: .glass, color: color, active: active, activeTint: activeTint, isEnabledOverride: isEnabledOverride)
     }
 
     var color = Color.primary.opacity(0.8)
     var active = false
     var activeTint: Color = .accentColor
     var isEnabledOverride: Bool?
-
 }
 
 // MARK: - VibrantTextButton
 
 struct VibrantTextButton: ButtonStyle {
-    @Environment(\.isEnabled) public var isEnabled
-
     public func makeBody(configuration: Configuration) -> some View {
-        let enabled = isEnabledOverride ?? isEnabled
-        configuration.label
-            .foregroundStyle(color)
-            .padding(.vertical, 2.0)
-            .padding(.horizontal, 8.0)
-            .contentShape(Rectangle())
-            .onHover { hover in
-                guard enabled else { return }
-                withAnimation(.easeOut(duration: 0.2)) { hovering = hover }
-            }
-            .opacity(enabled ? (hovering ? 1 : 0.8) : 0.6)
-            .background(active ? activeTint.opacity(0.2) : Color.clear, in: .capsule)
-            .overlay(Capsule().strokeBorder(borderColor ?? color, lineWidth: 0.5))
+        TextButtonContent(label: configuration.label, isPressed: configuration.isPressed, variant: .vibrant, color: color, borderColor: borderColor, active: active, activeTint: activeTint, isEnabledOverride: isEnabledOverride)
     }
 
     var color = Color.primary.opacity(0.8)
@@ -67,30 +144,13 @@ struct VibrantTextButton: ButtonStyle {
     var active = false
     var activeTint: Color = .accentColor
     var isEnabledOverride: Bool?
-
-    @State private var hovering = false
-
 }
 
 // MARK: - OpaqueTextButton
 
 struct OpaqueTextButton: ButtonStyle {
-    @Environment(\.isEnabled) public var isEnabled
-
     public func makeBody(configuration: Configuration) -> some View {
-        let enabled = isEnabledOverride ?? isEnabled
-        configuration.label
-            .foregroundStyle(color)
-            .padding(.vertical, 2.0)
-            .padding(.horizontal, 8.0)
-            .contentShape(Rectangle())
-            .onHover { hover in
-                guard enabled else { return }
-                withAnimation(.easeOut(duration: 0.2)) { hovering = hover }
-            }
-            .opacity(enabled ? (hovering ? 1 : 0.8) : 0.6)
-            .background(active ? activeTint.opacity(0.2) : Color.clear, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-            .background(roundRect(2, stroke: borderColor ?? color, lineWidth: 1))
+        TextButtonContent(label: configuration.label, isPressed: configuration.isPressed, variant: .opaque, color: color, borderColor: borderColor, active: active, activeTint: activeTint, isEnabledOverride: isEnabledOverride)
     }
 
     var color = Color.primary.opacity(0.8)
@@ -98,27 +158,14 @@ struct OpaqueTextButton: ButtonStyle {
     var active = false
     var activeTint: Color = .accentColor
     var isEnabledOverride: Bool?
-
-    @State private var hovering = false
-
 }
 
 // MARK: - TextButton
 
 struct TextButton: ButtonStyle {
-    @Environment(\.isEnabled) public var isEnabled
-
     public func makeBody(configuration: Configuration) -> some View {
-        if AM.useGlass {
-            GlassTextButton(color: color, active: active, activeTint: activeTint, isEnabledOverride: isEnabled)
-                .makeBody(configuration: configuration)
-        } else if AM.useVibrant {
-            VibrantTextButton(color: color, borderColor: borderColor, active: active, activeTint: activeTint, isEnabledOverride: isEnabled)
-                .makeBody(configuration: configuration)
-        } else {
-            OpaqueTextButton(color: color, borderColor: borderColor, active: active, activeTint: activeTint, isEnabledOverride: isEnabled)
-                .makeBody(configuration: configuration)
-        }
+        let variant: TextButtonContent<Configuration.Label>.Variant = AM.useGlass ? .glass : (AM.useVibrant ? .vibrant : .opaque)
+        TextButtonContent(label: configuration.label, isPressed: configuration.isPressed, variant: variant, color: color, borderColor: borderColor, active: active, activeTint: activeTint)
     }
 
     var color = Color.primary.opacity(0.8)
@@ -242,7 +289,7 @@ extension View {
     }
 
     @ViewBuilder
-    func raisedPanel(cornerRadius: CGFloat = 18) -> some View {
+    func raisedPanel(cornerRadius: CGFloat = windowCornerRadius) -> some View {
         clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
