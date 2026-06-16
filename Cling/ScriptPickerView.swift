@@ -152,10 +152,16 @@ struct ScriptActionButtons: View {
                     .font(.system(size: density.fontSize))
                 Spacer()
             } else {
+                if comboHintVisible {
+                    ModifierComboHint(secondary: "⌃", secondaryHeld: ctrlHeld, tint: ShortcutTint.scripts)
+                        .transition(.opacity)
+                }
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: density.spacing) {
                         scriptList
                     }
+                    .padding(.vertical, ActionRowLayout.badgeClearance)
+                    .padding(.trailing, 6)
                 }.disabled(selectedResults.isEmpty || scriptManager.process != nil)
             }
 
@@ -165,7 +171,8 @@ struct ScriptActionButtons: View {
         .font(.system(size: density.fontSize))
         .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
         .lineLimit(1)
-        .revealShortcutHints(held: cmdCtrlHeld, visible: $hintsVisible)
+        .revealShortcutHints(held: cmdHeld, visible: $comboHintVisible)
+        .revealShortcutHints(held: cmdCtrlHeld, visible: $pillHintsVisible, instant: comboHintVisible)
         .onAppear {
             let extensions = selectedResults.compactMap(\.extension).uniqued
             commonScripts = scriptManager.commonScripts(for: extensions).sorted(by: \.lastPathComponent)
@@ -263,10 +270,16 @@ struct ScriptActionButtons: View {
     @ObservedObject private var km = KM
     @Default(.toolbarLabelStyle) private var labelStyle
     @Default(.toolbarDensity) private var density
-    @State private var hintsVisible = false
+    @State private var comboHintVisible = false
+    @State private var pillHintsVisible = false
 
-    /// ⌘⌃ held: the prefix of every script (and Clop) shortcut, so its hints reveal on hold.
-    private var cmdCtrlHeld: Bool { (km.lcmd || km.rcmd) && (km.lctrl || km.rctrl) }
+    /// ⌘ held: surfaces the "⌘ + ⌃" discoverability hint and the leading button's ⌘X, without
+    /// flooding the row with every script's badge.
+    private var cmdHeld: Bool { km.lcmd || km.rcmd }
+    /// ⌃ held alongside ⌘: the actual combo for the script pills (and Clop), so their ⌘⌃<key>
+    /// badges reveal.
+    private var ctrlHeld: Bool { km.lctrl || km.rctrl }
+    private var cmdCtrlHeld: Bool { cmdHeld && ctrlHeld }
 
     @ViewBuilder
     private var runningProcessButton: some View {
@@ -332,8 +345,9 @@ struct ScriptActionButtons: View {
                     title: "Optimise with Clop",
                     icon: .symbol("wand.and.stars"),
                     shortcut: oKeyAvailable ? "⌘⌃O" : "",
-                    badgesVisible: hintsVisible,
-                    labelStyle: labelStyle
+                    badgesVisible: pillHintsVisible,
+                    labelStyle: labelStyle,
+                    hintColor: ShortcutTint.scripts
                 ) {
                     guard ClopSDK.shared.waitForClopToBeAvailable(for: 5) else { return }
                     _ = try? ClopSDK.shared.optimise(
@@ -351,13 +365,18 @@ struct ScriptActionButtons: View {
             focused.wrappedValue = .executeScript
             isPresentingScriptPicker = true
         } label: {
-            switch labelStyle {
-            case .iconAndText: Label("Execute script", systemImage: "terminal")
-            case .textOnly:    Text("Execute script")
-            case .iconOnly:    Image(systemName: "terminal")
+            Group {
+                switch labelStyle {
+                case .iconAndText: Label("Execute script", systemImage: "terminal")
+                case .textOnly: Text("Execute script")
+                case .iconOnly: Image(systemName: "terminal")
+                }
             }
+            .shortcutPrefix("⌘X", visible: comboHintVisible, color: ShortcutTint.scripts)
         }
         .keyboardShortcut("x", modifiers: [.command])
+        .fixedSize()
+        .frame(minWidth: ActionRowLayout.leadingWidth(for: labelStyle, density: density), alignment: .leading)
         .disabled(focused.wrappedValue == .search)
         .help("Run the selected files through a script")
         .sheet(isPresented: $isPresentingScriptPicker) {
@@ -372,8 +391,9 @@ struct ScriptActionButtons: View {
             title: script.lastPathComponent.ns.deletingPathExtension,
             icon: PillIcon.from(glyph: scriptManager.iconGlyph(for: script)),
             shortcut: "⌘⌃\(key.uppercased())",
-            badgesVisible: hintsVisible,
-            labelStyle: labelStyle
+            badgesVisible: pillHintsVisible,
+            labelStyle: labelStyle,
+            hintColor: ShortcutTint.scripts
         ) {
             if scriptManager.scriptsWithConfirm.contains(script) {
                 confirmScript = script

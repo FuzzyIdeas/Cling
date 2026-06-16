@@ -4,8 +4,8 @@ import SwiftUI
 
 // MARK: - QuickLookPresenter
 
-/// Drives the system Quick Look panel through SwiftUI's `.quickLookPreview(_:in:)`
-/// modifier. Setting `selection` shows the floating, fully interactive Quick Look
+/// Drives the system QuickLook panel through SwiftUI's `.quickLookPreview(_:in:)`
+/// modifier. Setting `selection` shows the floating, fully interactive QuickLook
 /// window; the user dismissing it sets `selection` back to nil.
 @MainActor @Observable
 final class QuickLookPresenter {

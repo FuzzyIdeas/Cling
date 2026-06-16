@@ -98,7 +98,7 @@ struct ActionButtons: View {
             if introWantsSend {
                 introWantsSend = false
                 sendExpiration = Defaults[.defaultLinkExpiration]
-                showingSendPopover = true
+                sendManager.showingSendPopover = true
             }
         }) {
             SendSecurelyIntroView {
@@ -165,7 +165,6 @@ struct ActionButtons: View {
         let copiedPathsB = $copiedPaths
         let focusBinding = focused
         let enterPastesB = $enterPastesToFrontmostTerminal
-        let sendPopoverB = $showingSendPopover
         let sendExpirationB = $sendExpiration
 
         shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -199,13 +198,13 @@ struct ActionButtons: View {
             // While the Send expiration popover is open, ⏎ runs its primary action (copy link
             // & share). The popover doesn't reliably take key focus, so its default-action button
             // can't catch ⏎ itself — handle it here so the whole flow works from the keyboard.
-            if isReturn, mods.isEmpty, sendPopoverB.wrappedValue {
+            if isReturn, mods.isEmpty, MainActor.assumeIsolated({ SendManager.shared.showingSendPopover }) {
                 let files = sel.map(\.url)
                 let exp = sendExpirationB.wrappedValue
                 MainActor.assumeIsolated {
                     SendManager.shared.requestSend(files: files, expiration: exp)
+                    SendManager.shared.showingSendPopover = false
                 }
-                sendPopoverB.wrappedValue = false
                 return nil
             }
 
@@ -243,25 +242,20 @@ struct ActionButtons: View {
             // all other rebindable actions had no focus guard. Reproduce that exactly here.
             // Note: .open and .pasteToFrontmost are handled above with context-dependent Return-key logic.
             //
-            // Skip actions that have a native .keyboardShortcut on an Action Menu item — those fire
-            // via macOS menu key equivalents even when the menu is closed, so dispatching them here
-            // too would execute the action twice. An action is "owned by the menu" when:
-            //   showActionMenu == true  AND  action is not hidden  AND  action is not in barActions
-            //   AND  action.segment != .alternate
+            // We dispatch every rebindable action here, including ones that only live in the Action
+            // Menu (e.g. Open With's ⌘O, which is defaultVisible: false). An inline SwiftUI `Menu`
+            // does NOT fire its items' key equivalents while it's closed, so relying on the menu left
+            // those shortcuts dead. This local monitor runs before the responder chain and returns
+            // nil when it handles a key, so the menu can never also fire it — no double dispatch.
             if let pressed = KeyboardShortcuts.Shortcut(event: event) {
                 let currentHidden = Defaults[.hiddenActions]
-                let currentBarActions = Defaults[.barActions]
-                let menuEnabled = Defaults[.showActionMenu]
                 let handled = MainActor.assumeIsolated {
                     for action in ToolbarAction.rebindable where !currentHidden.contains(action.id) {
                         if action.id == .copy || action.id == .trash, focusBinding.wrappedValue != .list { continue }
-                        // If this action is rendered as an Action Menu item with a native shortcut,
-                        // the menu key equivalent handles dispatch — skip to avoid double-fire.
-                        if menuEnabled,
-                           !currentHidden.contains(action.id),
-                           !currentBarActions.contains(action.id),
-                           action.segment != .alternate
-                        { continue }
+                        // togglePreview must work with no selection too, so it's dispatched by
+                        // ContentView's monitor (which has no selection guard); skip it here to
+                        // avoid toggling twice.
+                        if action.id == .togglePreview { continue }
                         guard let bound = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: action.id)),
                               bound == pressed, isAvailable(action.id) else { continue }
                         execute(action.id)
@@ -399,14 +393,16 @@ struct ActionButtons: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(role: role, action: action) {
-            switch labelStyle {
-            case .iconAndText: Label(title, systemImage: systemImage)
-            case .textOnly:    Text(title)
-            case .iconOnly:    Image(systemName: systemImage)
+            Group {
+                switch labelStyle {
+                case .iconAndText: Label(title, systemImage: systemImage)
+                case .textOnly: Text(title)
+                case .iconOnly: Image(systemName: systemImage)
+                }
             }
+            .shortcutPrefix(shortcut, visible: badgesVisible, color: ShortcutTint.alternate)
         }
         .help(help ?? title)
-        .shortcutBadge(shortcut, visible: badgesVisible)
     }
 
     private var copyFilesButton: some View {
@@ -573,12 +569,28 @@ struct ActionButtons: View {
         let sendActive = isSend && !sendManager.sessions.isEmpty
         let activeCount = sendManager.sessions.count
         Button { execute(action.id) } label: {
-            if sendActive {
-                switch labelStyle {
-                case .iconAndText:
-                    Label {
+            Group {
+                if sendActive {
+                    switch labelStyle {
+                    case .iconAndText:
+                        Label {
+                            Text(action.title)
+                        } icon: {
+                            Image(systemName: "paperplane.fill")
+                                .overlay(alignment: .topTrailing) {
+                                    if activeCount > 1 {
+                                        Text("\(activeCount)")
+                                            .font(.system(size: 7, weight: .bold))
+                                            .padding(1.5)
+                                            .background(Color.accentColor, in: Circle())
+                                            .foregroundStyle(.white)
+                                            .offset(x: 5, y: -5)
+                                    }
+                                }
+                        }
+                    case .textOnly:
                         Text(action.title)
-                    } icon: {
+                    case .iconOnly:
                         Image(systemName: "paperplane.fill")
                             .overlay(alignment: .topTrailing) {
                                 if activeCount > 1 {
@@ -591,39 +603,25 @@ struct ActionButtons: View {
                                 }
                             }
                     }
-                case .textOnly:
-                    Text(action.title)
-                case .iconOnly:
-                    Image(systemName: "paperplane.fill")
-                        .overlay(alignment: .topTrailing) {
-                            if activeCount > 1 {
-                                Text("\(activeCount)")
-                                    .font(.system(size: 7, weight: .bold))
-                                    .padding(1.5)
-                                    .background(Color.accentColor, in: Circle())
-                                    .foregroundStyle(.white)
-                                    .offset(x: 5, y: -5)
-                            }
-                        }
-                }
-            } else {
-                switch labelStyle {
-                case .iconAndText: Label(action.title, systemImage: action.systemImage)
-                case .textOnly: Text(action.title)
-                case .iconOnly: Image(systemName: action.systemImage)
+                } else {
+                    switch labelStyle {
+                    case .iconAndText: Label(action.title, systemImage: action.systemImage)
+                    case .textOnly: Text(action.title)
+                    case .iconOnly: Image(systemName: action.systemImage)
+                    }
                 }
             }
+            .shortcutPrefix(shortcutString(action.id), visible: badgesVisible, color: ShortcutTint.action)
         }
         .buttonStyle(.text(color: sendActive ? Color.accentColor : color))
         .disabled(!isAvailable(action.id))
-        .shortcutBadge(shortcutString(action.id), visible: badgesVisible)
         .buttonFlash(copiedFeedbackText, visible: copiedFeedbackAction == action.id, fontSize: density.fontSize)
-        .popover(isPresented: isSend ? $showingSendPopover : .constant(false), arrowEdge: .bottom) {
+        .popover(isPresented: isSend ? $sendManager.showingSendPopover : .constant(false), arrowEdge: .bottom) {
             if isSend {
-                SendExpirationPopover(files: selectedResults.map(\.url), expiration: $sendExpiration) { showingSendPopover = false }
+                SendExpirationPopover(files: selectedResults.map(\.url), expiration: $sendExpiration) { sendManager.showingSendPopover = false }
             }
         }
-        .popover(isPresented: isSend ? $showingTransfers : .constant(false), arrowEdge: .bottom) {
+        .popover(isPresented: isSend ? $sendManager.showingTransfers : .constant(false), arrowEdge: .bottom) {
             if isSend { TransfersPanel() }
         }
     }
@@ -634,41 +632,31 @@ struct ActionButtons: View {
         return sc.description
     }
 
-    @MainActor func menuShortcut(for id: ActionID) -> (KeyEquivalent, SwiftUI.EventModifiers)? {
+    /// Overflow actions grouped into the menu's sections, dropping empty ones.
+    var overflowSections: [(title: String, items: [ToolbarAction])] {
+        ActionSegment.segmentSections.compactMap { segment in
+            let items = overflowActions.filter { $0.segment == segment }
+            return items.isEmpty ? nil : (segment.title, items)
+        }
+    }
+
+    /// AppKit key equivalent + modifier mask for an action's shortcut, for the native menu display.
+    @MainActor func appKitShortcut(for id: ActionID) -> (key: String, modifiers: NSEvent.ModifierFlags)? {
         guard ToolbarAction.rebindable.contains(where: { $0.id == id }),
               let sc = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: id)),
-              let keyStr = sc.nsMenuItemKeyEquivalent, let ch = keyStr.first else { return nil }
-        var mods: SwiftUI.EventModifiers = []
-        if sc.modifiers.contains(.command) { mods.insert(.command) }
-        if sc.modifiers.contains(.option) { mods.insert(.option) }
-        if sc.modifiers.contains(.control) { mods.insert(.control) }
-        if sc.modifiers.contains(.shift) { mods.insert(.shift) }
-        return (KeyEquivalent(ch), mods)
+              let key = sc.nsMenuItemKeyEquivalent else { return nil }
+        return (key, sc.modifiers)
     }
 
     @ViewBuilder var overflowButton: some View {
-        let show = showActionMenu && !overflowActions.isEmpty
-        if show {
-            Menu {
-                ForEach(ActionSegment.segmentSections, id: \.self) { segment in
-                    let items = overflowActions.filter { $0.segment == segment }
-                    if !items.isEmpty {
-                        Section(segment.title) {
-                            ForEach(items) { a in
-                                let button = Button { execute(a.id) } label: { Label(a.title, systemImage: a.systemImage) }
-                                    .disabled(!isAvailable(a.id))
-                                if let (k, m) = menuShortcut(for: a.id) {
-                                    button.keyboardShortcut(k, modifiers: m)
-                                } else {
-                                    button
-                                }
-                            }
-                        }
-                    }
-                }
-            } label: { Image(systemName: "ellipsis") }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
+        if showActionMenu, !overflowActions.isEmpty {
+            OverflowMenuButton(
+                sections: overflowSections,
+                isEnabled: { isAvailable($0) },
+                shortcut: { appKitShortcut(for: $0) },
+                onSelect: { execute($0) }
+            )
+            .fixedSize()
         }
     }
 
@@ -690,6 +678,7 @@ struct ActionButtons: View {
         case .sendSecurely: startSecureSend()
         case .pasteToFrontmost: pasteToFrontmostApp(inTerminal: appManager.frontmostAppIsTerminal)
         case .trash: trashSelected()
+        case .togglePreview: Defaults[.showFilePreview].toggle()
         case .dropToFocusedElement: dropToFocusedElement()
         case .dropToZone: dropToZone()
         case .openWithFrontmost: openWithFrontmostApp()
@@ -792,12 +781,12 @@ struct ActionButtons: View {
 
     private func startSecureSend() {
         if !sendManager.sessions.isEmpty {
-            showingTransfers = true
+            sendManager.showingTransfers = true
         } else if !sendSecurelyIntroShown {
             showingSendIntro = true
         } else {
             sendExpiration = Defaults[.defaultLinkExpiration]
-            showingSendPopover = true
+            sendManager.showingSendPopover = true
         }
     }
 
@@ -908,8 +897,6 @@ struct ActionButtons: View {
     @State private var isPresentingConfirm = false
     @State private var isPresentingCopyToSheet = false
     @State private var isPresentingMoveToSheet = false
-    @State private var showingSendPopover = false
-    @State private var showingTransfers = false
     @State private var showingSendIntro = false
     @State private var introWantsSend = false
     @State private var sendExpiration: TimeInterval = Defaults[.defaultLinkExpiration]
@@ -933,7 +920,7 @@ struct ActionButtons: View {
 
     private var isAnySheetOpen: Bool {
         isPresentingRenameView || isPresentingOpenWithPicker || isPresentingConfirm
-            || isPresentingCopyToSheet || isPresentingMoveToSheet || showingSendPopover || showingTransfers
+            || isPresentingCopyToSheet || isPresentingMoveToSheet || sendManager.showingSendPopover || sendManager.showingTransfers
             || showingSendIntro || sendManager.pendingFolderConfirm != nil
     }
 }

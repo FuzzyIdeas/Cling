@@ -27,7 +27,7 @@ struct RightClickMenu: View {
     var body: some View {
         Button("Open") { openSelection() }
         Button("Show in Finder") { showInFinder() }
-        Button("Quick Look") { quicklookSelection() }
+        Button("QuickLook") { quicklookSelection() }
         Button("Get Info") {
             let paths = contextPaths.isEmpty ? Array(selectedResults) : contextPaths
             // One panel only, even when many files are right-clicked.

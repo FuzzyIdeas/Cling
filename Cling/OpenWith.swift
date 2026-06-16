@@ -7,7 +7,7 @@ import System
 
 struct OpenWithMenuView: View {
     let fileURLs: [URL]
-    @Default(.toolbarLabelStyle) private var labelStyle
+    var hintVisible = false
 
     var body: some View {
         Menu {
@@ -24,15 +24,23 @@ struct OpenWithMenuView: View {
                 }
             }
         } label: {
-            switch labelStyle {
-            case .iconAndText: Label("Open With", systemImage: "square.and.arrow.up.on.square")
-            case .textOnly:    Text("Open With")
-            case .iconOnly:    Image(systemName: "square.and.arrow.up.on.square")
+            Group {
+                switch labelStyle {
+                case .iconAndText: Label("Open With", systemImage: "square.and.arrow.up.on.square")
+                case .textOnly: Text("Open With")
+                case .iconOnly: Image(systemName: "square.and.arrow.up.on.square")
+                }
             }
+            .shortcutPrefix("⌘O", visible: hintVisible, color: ShortcutTint.apps)
         }
-        .help("Open the selected files with a specific app")
+        .help("Open the selected files with a specific app (⌘O)")
+        .menuIndicator(labelStyle == .iconOnly ? .hidden : .visible)
         .fixedSize()
+        .frame(minWidth: ActionRowLayout.leadingWidth(for: labelStyle, density: density), alignment: .leading)
     }
+
+    @Default(.toolbarLabelStyle) private var labelStyle
+    @Default(.toolbarDensity) private var density
 
 }
 
@@ -116,10 +124,15 @@ struct OpenWithActionButtons: View {
     @ObservedObject private var km = KM
     @Default(.toolbarLabelStyle) private var labelStyle
     @Default(.toolbarDensity) private var density
-    @State private var hintsVisible = false
+    @State private var comboHintVisible = false
+    @State private var pillHintsVisible = false
 
-    /// ⌘⌥ held: the prefix of every open-with app shortcut, so its hints reveal on hold.
-    private var cmdOptHeld: Bool { (km.lcmd || km.rcmd) && (km.lalt || km.ralt) }
+    /// ⌘ held: surfaces the "⌘ + ⌥" discoverability hint and the leading button's ⌘O, without
+    /// flooding the row with every app's badge.
+    private var cmdHeld: Bool { km.lcmd || km.rcmd }
+    /// ⌥ held alongside ⌘: the actual combo for the app pills, so their ⌘⌥<key> badges reveal.
+    private var optHeld: Bool { km.lalt || km.ralt }
+    private var cmdOptHeld: Bool { cmdHeld && optHeld }
 
     var buttons: some View {
         ForEach(fuzzy.openWithAppShortcuts.sorted(by: \.key.lastPathComponent), id: \.0.path) { app, key in
@@ -127,8 +140,9 @@ struct OpenWithActionButtons: View {
                 title: app.lastPathComponent.ns.deletingPathExtension,
                 icon: .image(icon(for: app)),
                 shortcut: "⌘⌥\(key.uppercased())",
-                badgesVisible: hintsVisible,
-                labelStyle: labelStyle
+                badgesVisible: pillHintsVisible,
+                labelStyle: labelStyle,
+                hintColor: ShortcutTint.apps
             ) {
                 RH.trackRun(selectedResults)
                 NSWorkspace.shared.open(selectedResults.map(\.url), withApplicationAt: app, configuration: .init(), completionHandler: { _, _ in })
@@ -138,7 +152,7 @@ struct OpenWithActionButtons: View {
 
     var body: some View {
         HStack(spacing: density.spacing) {
-            OpenWithMenuView(fileURLs: selectedResults.map(\.url))
+            OpenWithMenuView(fileURLs: selectedResults.map(\.url), hintVisible: comboHintVisible)
                 .disabled(selectedResults.isEmpty || fuzzy.openWithAppShortcuts.isEmpty)
 
             Divider().frame(height: 16)
@@ -148,8 +162,14 @@ struct OpenWithActionButtons: View {
                     .foregroundStyle(.secondary)
                     .font(.system(size: density.fontSize))
             } else {
+                if comboHintVisible {
+                    ModifierComboHint(secondary: "⌥", secondaryHeld: optHeld, tint: ShortcutTint.apps)
+                        .transition(.opacity)
+                }
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: density.spacing) { buttons }
+                        .padding(.vertical, ActionRowLayout.badgeClearance)
+                        .padding(.trailing, 6)
                 }
                 Divider().frame(height: 16)
                 ShareButton(urls: selectedResults.map(\.url))
@@ -159,7 +179,8 @@ struct OpenWithActionButtons: View {
         .font(.system(size: density.fontSize))
         .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
         .lineLimit(1)
-        .revealShortcutHints(held: cmdOptHeld, visible: $hintsVisible)
+        .revealShortcutHints(held: cmdHeld, visible: $comboHintVisible)
+        .revealShortcutHints(held: cmdOptHeld, visible: $pillHintsVisible, instant: comboHintVisible)
     }
 
 }

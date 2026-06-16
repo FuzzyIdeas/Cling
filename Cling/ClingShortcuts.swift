@@ -33,6 +33,7 @@ extension KeyboardShortcuts.Name {
     // pasteToFrontmost: bare ⏎ in terminal context is not rebindable; ⌘⇧⏎ is the non-terminal variant.
     static let clPasteToFrontmost = Self("cl_pasteToFrontmost", initial: sc(kVK_Return, [.command, .shift]))
     static let clTrash = Self("cl_trash", initial: sc(kVK_Delete, [.command]))
+    static let clTogglePreview = Self("cl_togglePreview", initial: sc(kVK_ANSI_P, [.command, .shift]))
     static let clDropToFocusedElement = Self("cl_dropToFocusedElement", initial: sc(kVK_Return, [.option]))
     static let clDropToZone = Self("cl_dropToZone", initial: sc(kVK_Return, [.option, .shift]))
     static let clOpenWithFrontmost = Self("cl_openWithFrontmost", initial: sc(kVK_Return, [.command, .option]))
@@ -56,6 +57,7 @@ enum ClingShortcuts {
         .sendSecurely: .clSendSecurely,
         .pasteToFrontmost: .clPasteToFrontmost,
         .trash: .clTrash,
+        .togglePreview: .clTogglePreview,
         .dropToFocusedElement: .clDropToFocusedElement,
         .dropToZone: .clDropToZone,
         .openWithFrontmost: .clOpenWithFrontmost,

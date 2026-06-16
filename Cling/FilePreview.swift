@@ -14,6 +14,7 @@ import AVFoundation
 import AVKit
 import Defaults
 import ImageIO
+import KeyboardShortcuts
 import Lowtech
 import PDFKit
 import QuickLookUI
@@ -107,18 +108,20 @@ struct FilePreviewPanel: View {
                     Spacer(minLength: 0)
                     VStack(spacing: 0) {
                         FileInfoBar(path: path, kind: kind)
-                        hideHint
+                        if showHideHint { hideHint }
                     }
                     .glassBar()
                     .overlay(alignment: .top) { Divider().opacity(0.4) }
                 }
             } else {
                 emptyState
-                VStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    hideHint
-                        .glassBar()
-                        .overlay(alignment: .top) { Divider().opacity(0.4) }
+                if showHideHint {
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        hideHint
+                            .glassBar()
+                            .overlay(alignment: .top) { Divider().opacity(0.4) }
+                    }
                 }
             }
         }
@@ -136,6 +139,8 @@ struct FilePreviewPanel: View {
             pathCount = paths.count
             PreviewPanelState.shared.currentPath = current
             installArrowMonitor()
+            // Count this viewing toward retiring the footer hint.
+            if hintSeenCount < Self.hintRetireCount { hintSeenCount += 1 }
         }
         .onDisappear {
             PreviewPanelState.shared.currentPath = nil
@@ -145,6 +150,17 @@ struct FilePreviewPanel: View {
 
     @State private var index = 0
     @State private var hintHovering = false
+    @Default(.filePreviewHintSeenCount) private var hintSeenCount
+
+    /// The footer retires once the panel has been opened this many times; after that the user
+    /// toggles the panel with the shortcut or the Toggle Preview menu action instead.
+    private static let hintRetireCount = 6
+    private var showHideHint: Bool { hintSeenCount < Self.hintRetireCount }
+
+    /// Current binding for the Toggle Preview shortcut, shown in the footer (falls back to ⌘⇧P).
+    private var toggleShortcutLabel: String {
+        KeyboardShortcuts.getShortcut(for: .clTogglePreview)?.description ?? "⌘⇧P"
+    }
     // Mirror of paths.count, read by the arrow-key monitor (which captures a
     // frozen `self`, so it can only see live values through @State storage).
     @State private var pathCount = 0
@@ -188,7 +204,7 @@ struct FilePreviewPanel: View {
             HStack(spacing: 4) {
                 Image(systemName: "sidebar.right")
                     .font(.system(size: 9))
-                Text("⌘⇧P to toggle")
+                Text("\(toggleShortcutLabel) to toggle")
                     .font(.system(size: 10, design: .rounded))
             }
             .foregroundStyle(.secondary)

@@ -51,50 +51,45 @@ struct ShortcutCoachmark: View {
 
 }
 
-// MARK: - ShortcutBadge
+// MARK: - ShortcutPrefix
 
-struct ShortcutBadge: ViewModifier {
+/// Reveals a shortcut hint *inside* the button rather than overlapping its corner: the hint slides
+/// in on the left, same text size as the label, separated by a hairline divider, so the button's
+/// own border ends up wrapping both. This sidesteps the overlap/clipping/truncation that a
+/// corner-anchored badge hits on narrow (icon-only) buttons.
+struct ShortcutPrefix: ViewModifier {
     let text: String
     let visible: Bool
+    var color: Color = ShortcutTint.action
 
     func body(content: Content) -> some View {
-        content.overlay(alignment: .topTrailing) {
+        HStack(spacing: 6) {
             if visible, !text.isEmpty {
-                pill
-                    .offset(x: 4, y: -6)
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
+                Text(text)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(color)
+                    .fixedSize()
+                Divider()
+                    .frame(height: 12)
             }
+            content
         }
-    }
-
-    @Environment(\.colorScheme) private var scheme
-
-    private var accent: Color { .accentColor }
-
-    @ViewBuilder
-    private var pill: some View {
-        Text(text)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 4).padding(.vertical, 1.5)
-            .background {
-                Capsule(style: .continuous)
-                    .fill(.background)
-                    .overlay {
-                        Capsule(style: .continuous)
-                            .fill(accent.opacity(scheme == .dark ? 0.30 : 0.16))
-                    }
-            }
-            .overlay {
-                Capsule(style: .continuous)
-                    .strokeBorder(accent.opacity(scheme == .dark ? 0.85 : 0.6), lineWidth: 1)
-            }
     }
 }
 
 extension View {
-    func shortcutBadge(_ text: String, visible: Bool) -> some View {
-        modifier(ShortcutBadge(text: text, visible: visible))
+    func shortcutPrefix(_ text: String, visible: Bool, color: Color = ShortcutTint.action) -> some View {
+        modifier(ShortcutPrefix(text: text, visible: visible, color: color))
     }
+}
+
+// MARK: - ShortcutTint
+
+/// Distinct hint colors per row so each shortcut family is recognisable at a glance.
+enum ShortcutTint {
+    static let action = Color.blue
+    static let alternate = Color.orange
+    static let apps = Color.red
+    // A darker, less saturated red so it stays distinct from Apps and legible on light backgrounds.
+    static let scripts = Color(red: 0.62, green: 0.26, blue: 0.26)
 }

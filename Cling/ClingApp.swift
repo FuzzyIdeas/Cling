@@ -111,6 +111,7 @@ class AppDelegate: LowtechProAppDelegate {
         }
         Migration.run()
         migrateHiddenActionButtonsIfNeeded()
+        hideOpenWithFromToolbarByDefault()
         ClingShortcuts.setup()
         FUZZY.start()
         setupCleanup()

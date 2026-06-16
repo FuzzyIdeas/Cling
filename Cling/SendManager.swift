@@ -120,6 +120,10 @@ struct PendingSend: Equatable { let files: [URL]; let expiration: TimeInterval }
     @Published var connectingPaths: Set<String> = [] // in-flight guard against duplicate sends
     @Published var linkCopiedTick = 0 // incremented each time a new link is auto-copied
     @Published var pendingFolderConfirm: PendingSend? // deferred send awaiting folder-archive confirmation
+    // Send UI popovers anchored on the toolbar's Send button. Held here (not as ActionButtons
+    // @State) so the window-level Esc handler can close them instead of dismissing the whole window.
+    @Published var showingSendPopover = false
+    @Published var showingTransfers = false
     var expiryTimers: [String: Task<Void, Never>] = [:] // auto-stop timers
     var pendingTasks: [String: Task<String, Error>] = [:]
 }

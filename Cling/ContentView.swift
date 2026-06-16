@@ -8,6 +8,7 @@
 import AppKit
 import ClopSDK
 import Defaults
+import KeyboardShortcuts
 import Lowtech
 import LowtechPro
 import OSLog
@@ -112,7 +113,7 @@ struct ContentView: View {
 
     var body: some View {
         let _ = appearance.useGlass
-        // Track selection so the Quick Look panel re-presents even when `items`
+        // Track selection so the QuickLook panel re-presents even when `items`
         // is unchanged (the manual binding closures don't register observation).
         let _ = quickLook.selection
         ZStack(alignment: .topTrailing) {
@@ -457,10 +458,14 @@ struct ContentView: View {
     @Default(.onboardingCompleted) private var onboardingCompleted
 
     private var actionButtonRows: some View {
-        let rows = VStack {
+        // Each row clears its shortcut badges by `badgeClearance` on top and bottom (the Open With /
+        // Scripts rows do it inside their pill ScrollViews; the action row gets it here). The bottom
+        // clearance is otherwise empty, so a small negative spacing overlaps it to keep the visible
+        // gap between rows tight and even.
+        let rows = VStack(spacing: -3) {
             ActionButtons(selectedResults: $selectedResults, selectedResultIDs: $selectedResultIDs, focused: $focused)
                 .hfill(.leading)
-                .padding(.bottom, 4)
+                .padding(.vertical, ActionRowLayout.badgeClearance)
 
             if showOpenWithRow {
                 OpenWithActionButtons(selectedResults: selectedResults)
@@ -478,11 +483,11 @@ struct ContentView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        RoundedRectangle(cornerRadius: windowCornerRadius, style: .continuous)
                             .fill(.black.opacity(0.06).shadow(.inner(color: .black.opacity(0.22), radius: 4, y: 1)))
                     }
                     .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        RoundedRectangle(cornerRadius: windowCornerRadius, style: .continuous)
                             .strokeBorder(
                                 LinearGradient(
                                     colors: [.black.opacity(0.25), .white.opacity(0.12)],
@@ -840,8 +845,11 @@ struct ContentView: View {
                 NSApp.windows.first { $0.identifier?.rawValue == "main" }?.level = wm.pinned ? .floating : .normal
                 return nil
             }
-            // ⌘⇧P → toggle file preview panel
-            if mods == [.command, .shift], chars == "p" {
+            // Toggle file preview panel (default ⌘⇧P, user-rebindable via the Toggle Preview action).
+            // Handled here rather than in the ActionButtons monitor so it works with no selection.
+            if let pressed = KeyboardShortcuts.Shortcut(event: event),
+               pressed == KeyboardShortcuts.getShortcut(for: .clTogglePreview)
+            {
                 Defaults[.showFilePreview].toggle()
                 return nil
             }
@@ -873,6 +881,16 @@ struct ContentView: View {
             }
             // Esc → quicklook close / dismiss / clear query (xButton behavior)
             if kc == 53, mods.isEmpty, !showHistorySuggestions, !DropZoneOverlay.shared.isPresenting {
+                // A Send popover/Transfers panel is anchored on the toolbar but doesn't take key
+                // focus, so close it here instead of letting Esc dismiss the whole window.
+                if SendManager.shared.showingSendPopover {
+                    SendManager.shared.showingSendPopover = false
+                    return nil
+                }
+                if SendManager.shared.showingTransfers {
+                    SendManager.shared.showingTransfers = false
+                    return nil
+                }
                 if QLP.isVisible {
                     QLP.close()
                     return nil
@@ -1394,27 +1412,27 @@ struct ContentView: View {
             // .help sets the cell's NSView tooltip (cheap, no layout pass), so the truncated middle is
             // revealed on hover without the per-row measuring that would slow scrolling.
             let name = path.name.string
-            Text(name).lineLimit(1).truncationMode(.middle).help(name)
+            Text(name).font(.system(size: 12)).lineLimit(1).truncationMode(.middle).help(name)
         }.width(min: 100, ideal: 200)
     }
 
     private var pathColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
         TableColumn("Path", value: \.dir.string) { path in
             let dir = path.dir.shellString
-            Text(dir).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary).help(dir)
+            Text(dir).font(.system(size: 12, design: .rounded)).tracking(-0.2).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary).help(dir)
         }.width(min: 100, ideal: 300)
     }
 
     private var sizeColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
         TableColumn("Size", value: \.memoz.size) { path in
-            Text(path.memoz.humanizedFileSize).font(.system(size: 12, design: .monospaced)).lineLimit(1)
+            Text(path.memoz.humanizedFileSize).font(.system(size: 11, design: .monospaced)).lineLimit(1)
         }.width(min: 60, ideal: 80)
     }
 
     private var dateColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
         TableColumn("Date Modified", value: \.memoz.date) { path in
             let date = path.memoz.formattedModificationDate
-            Text(date).font(.system(size: 12, design: .monospaced)).lineLimit(1).help(date)
+            Text(date).font(.system(size: 11, design: .monospaced)).lineLimit(1).help(date)
         }.width(min: 100, ideal: 160)
     }
 

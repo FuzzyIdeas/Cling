@@ -8,6 +8,7 @@ enum ActionID: String, CaseIterable, Codable, Defaults.Serializable {
     case copy, copyPaths, moveTo, rename, shelve
     case sendSecurely, pasteToFrontmost
     case trash
+    case togglePreview
     case dropToFocusedElement, dropToZone, openWithFrontmost
 }
 
@@ -24,7 +25,7 @@ struct ToolbarAction: Identifiable {
     static let all: [ToolbarAction] = [
         .init(id: .open, segment: .open, title: "Open", systemImage: "arrow.up.forward.app", isDestructive: false, defaultVisible: true),
         .init(id: .showInFinder, segment: .open, title: "Show in Finder", systemImage: "folder", isDestructive: false, defaultVisible: true),
-        .init(id: .quickLook, segment: .open, title: "Quick Look", systemImage: "eye", isDestructive: false, defaultVisible: false),
+        .init(id: .quickLook, segment: .open, title: "QuickLook", systemImage: "eye", isDestructive: false, defaultVisible: false),
         .init(id: .openWith, segment: .open, title: "Open With…", systemImage: "square.and.arrow.up.on.square", isDestructive: false, defaultVisible: false),
         .init(id: .openInTerminal, segment: .open, title: "Open in Terminal", systemImage: "terminal", isDestructive: false, defaultVisible: false),
         .init(id: .openInEditor, segment: .open, title: "Open in Editor", systemImage: "curlybraces", isDestructive: false, defaultVisible: false),
@@ -36,6 +37,7 @@ struct ToolbarAction: Identifiable {
         .init(id: .sendSecurely, segment: .share, title: "Send securely", systemImage: "paperplane", isDestructive: false, defaultVisible: true),
         .init(id: .pasteToFrontmost, segment: .share, title: "Paste to Frontmost", systemImage: "arrow.down.doc", isDestructive: false, defaultVisible: false),
         .init(id: .trash, segment: .destructive, title: "Trash", systemImage: "trash", isDestructive: true, defaultVisible: true),
+        .init(id: .togglePreview, segment: .open, title: "Toggle Preview", systemImage: "sidebar.right", isDestructive: false, defaultVisible: false),
         .init(id: .dropToFocusedElement, segment: .alternate, title: "Drop to Focused Element", systemImage: "arrow.down.to.line", isDestructive: false, defaultVisible: false),
         .init(id: .dropToZone, segment: .alternate, title: "Drop to Zone", systemImage: "rectangle.dashed", isDestructive: false, defaultVisible: false),
         .init(id: .openWithFrontmost, segment: .alternate, title: "Open with Frontmost App", systemImage: "app.badge", isDestructive: false, defaultVisible: false),

@@ -548,6 +548,10 @@ extension Defaults.Keys {
     static let shortcutsCoachmarkShown = Key<Bool>("shortcutsCoachmarkShown", default: false)
     static let shortcutBadgesRevealedOnce = Key<Bool>("shortcutBadgesRevealedOnce", default: false)
     static let sendSecurelyIntroShown = Key<Bool>("sendSecurelyIntroShown", default: false)
+    // How many times the preview panel's "⌘⇧P to toggle" footer has been shown; the footer retires
+    // once the user has seen it enough (they can still toggle via the shortcut or the menu action).
+    static let filePreviewHintSeenCount = Key<Int>("filePreviewHintSeenCount", default: 0)
+    static let didDefaultHideOpenWith = Key<Bool>("didDefaultHideOpenWith", default: false)
 }
 
 // MARK: - hiddenActionButtons → hiddenActions migration
@@ -570,6 +574,18 @@ func migrateHiddenActionButtonsIfNeeded() {
     ]
     Defaults[.hiddenActions] = Set(Defaults[.hiddenActionButtons].compactMap { map[$0] })
     Defaults[.didMigrateHiddenActions] = true
+}
+
+// MARK: - Hide Open With from the toolbar by default
+
+/// The dedicated Open With row already covers opening with a specific app, so the redundant Open
+/// With toolbar/menu action is hidden by default. It stays in toolbar customization, so anyone who
+/// turns the row off can re-add it.
+func hideOpenWithFromToolbarByDefault() {
+    guard !Defaults[.didDefaultHideOpenWith] else { return }
+    Defaults[.hiddenActions].insert(.openWith)
+    Defaults[.barActions].removeAll { $0 == .openWith }
+    Defaults[.didDefaultHideOpenWith] = true
 }
 
 // MARK: - DefaultsCache

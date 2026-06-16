@@ -85,13 +85,6 @@ class ScriptManager {
     var scriptKeyOverrides: [URL: Character] = [:]
     var scriptIcons: [URL: String] = [:]
 
-    /// SF Symbol name or emoji to show for a script: an explicit `# icon:` comment wins, then the
-    /// bundled defaults, then a generic script glyph.
-    func iconGlyph(for script: URL) -> String {
-        scriptIcons[script]
-            ?? Self.bundledScriptIcons[script.deletingPathExtension().lastPathComponent.lowercased()]
-            ?? "scroll"
-    }
     var lastScript: URL?
     var lastOutputFile: FilePath?
     var lastErrorFile: FilePath?
@@ -120,6 +113,13 @@ class ScriptManager {
         }
     }
 
+    /// SF Symbol name or emoji to show for a script: an explicit `# icon:` comment wins, then the
+    /// bundled defaults, then a generic script glyph.
+    func iconGlyph(for script: URL) -> String {
+        scriptIcons[script]
+            ?? Self.bundledScriptIcons[script.deletingPathExtension().lastPathComponent.lowercased()]
+            ?? "scroll"
+    }
     func installDefaultScriptsIfNeeded() {
         guard !defaultScriptsMarker.exists else { return }
         for script in DEFAULT_SCRIPTS {
