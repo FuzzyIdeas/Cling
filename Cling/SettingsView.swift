@@ -35,7 +35,7 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: "General"
-        case .interface: "Interface"
+        case .interface: "Style"
         case .shortcuts: "Keyboard Shortcuts"
         case .apps: "Open With"
         case .search: "Search"
@@ -218,6 +218,22 @@ private struct InterfaceSettingsPane: View {
 
     var body: some View {
         Form {
+            Section("Window") {
+                SettingRow(
+                    title: "Window style",
+                    detail: "Choose the window background appearance."
+                ) {
+                    Picker("", selection: $windowAppearance) {
+                        ForEach(WindowAppearance.allCases.filter(\.available), id: \.self) { appearance in
+                            Text(appearance.rawValue).tag(appearance)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+
             Section("Rows") {
                 DescriptiveToggle(
                     title: "Action Bar row",
@@ -245,6 +261,7 @@ private struct InterfaceSettingsPane: View {
                         Text("Text only").tag(ToolbarLabelStyle.textOnly)
                         Text("Icon only").tag(ToolbarLabelStyle.iconOnly)
                     }
+                    .pickerStyle(.segmented)
                     .labelsHidden()
                     .fixedSize()
                 }
@@ -254,6 +271,7 @@ private struct InterfaceSettingsPane: View {
                         Text("Regular").tag(ToolbarDensity.regular)
                         Text("Compact").tag(ToolbarDensity.compact)
                     }
+                    .pickerStyle(.segmented)
                     .labelsHidden()
                     .fixedSize()
                 }
@@ -343,6 +361,7 @@ private struct InterfaceSettingsPane: View {
     @Default(.showOpenWithRow) private var showOpenWithRow
     @Default(.showScriptRow) private var showScriptRow
 
+    @Default(.windowAppearance) private var windowAppearance
     @Default(.toolbarLabelStyle) private var toolbarLabelStyle
     @Default(.toolbarDensity) private var toolbarDensity
     @Default(.showActionMenu) private var showActionMenu
@@ -408,7 +427,6 @@ private struct GeneralSettingsPane: View {
     @Default(.showDockIcon) private var showDockIcon
     @Default(.keepWindowOpenWhenDefocused) private var keepWindowOpenWhenDefocused
     @Default(.instantMode) private var instantMode
-    @Default(.windowAppearance) private var windowAppearance
     @Default(.enableGlobalHotkey) private var enableGlobalHotkey
     @Default(.showAppKey) private var showAppKey
     @Default(.triggerKeys) private var triggerKeys
@@ -439,20 +457,7 @@ private struct GeneralSettingsPane: View {
                 LaunchAtLogin.Toggle()
             }
 
-            Section("Window") {
-                SettingRow(
-                    title: "Window style",
-                    detail: "Choose the window background appearance."
-                ) {
-                    Picker("", selection: $windowAppearance) {
-                        ForEach(WindowAppearance.allCases.filter(\.available), id: \.self) { appearance in
-                            Text(appearance.rawValue).tag(appearance)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                }
-
+            Section {
                 SettingRow(
                     title: "Window mode",
                     detail: "Utility: no Dock icon, hides on defocus. Desktop App: regular app window with dock icon."
@@ -482,7 +487,9 @@ private struct GeneralSettingsPane: View {
                     detail: "Don't close the window when clicking outside the app.",
                     isOn: $keepWindowOpenWhenDefocused
                 )
+            }
 
+            Section("Window") {
                 DescriptiveToggle(
                     title: "Show window at launch",
                     detail: "Show the main window when Cling is first launched.",
