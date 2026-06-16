@@ -126,6 +126,7 @@ struct PendingSend: Equatable { let files: [URL]; let expiration: TimeInterval }
     @Published var showingTransfers = false
     var expiryTimers: [String: Task<Void, Never>] = [:] // auto-stop timers
     var pendingTasks: [String: Task<String, Error>] = [:]
+    var downloadNotifyTasks: [String: Task<Void, Never>] = [:] // debounce download notifications per room
 }
 
 extension SendManager {
@@ -312,6 +313,8 @@ extension SendManager {
         session.stopped = true
         expiryTimers[session.id]?.cancel()
         expiryTimers[session.id] = nil
+        downloadNotifyTasks[session.id]?.cancel()
+        downloadNotifyTasks[session.id] = nil
         sessions.removeAll { $0.id == session.id }
         // Clean up any temp archives created for this session
         session.tempArchives.forEach { try? FileManager.default.removeItem(at: $0.deletingLastPathComponent()) }
@@ -323,6 +326,17 @@ extension SendManager {
     func didCompleteDownload(roomID: String, count: Int) {
         guard let s = sessions.first(where: { $0.id == roomID }) else { return }
         s.downloadCount = count
-        NotificationManager.shared.notifyDownload(summary: s.fileSummary, count: count)
+        // A whole group grabbing the link at once would otherwise fire one notification per download.
+        // Debounce per transfer and post a single, count-summarising notification (with a stable id,
+        // so repeats update that one entry instead of stacking) once the burst settles.
+        let summary = s.fileSummary
+        downloadNotifyTasks[roomID]?.cancel()
+        downloadNotifyTasks[roomID] = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            downloadNotifyTasks[roomID] = nil
+            let latest = sessions.first(where: { $0.id == roomID })?.downloadCount ?? count
+            NotificationManager.shared.notifyDownload(roomID: roomID, summary: summary, count: latest)
+        }
     }
 }
