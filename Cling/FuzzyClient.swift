@@ -287,6 +287,9 @@ class FuzzyClient {
     @ObservationIgnored var mdQueryRecents: [FilePath] = [] // Raw MDQuery results (filtered)
     var commonOpenWithApps: [URL] = []
     var openWithAppShortcuts: [URL: Character] = [:]
+    /// Set when ⌘⌥<letter> (or a collapsed apps pill) matches several apps, to present the Open With
+    /// picker scoped to that group for quick numbered selection.
+    var openWithGroupRequest: OpenWithGroupRequest?
     var installedApps: [URL] = []
     @ObservationIgnored nonisolated(unsafe) var appIconCache: [String: NSImage] = [:]
     @ObservationIgnored var appDirWatchers: [DispatchSourceFileSystemObject] = []
@@ -2100,25 +2103,16 @@ class FuzzyClient {
 /// ⌘⌥⇧-prefixed combos use other keys and are safe.
 let reservedOptionCommandLetters: Set<Character> = ["c"] // ⌘⌥C Copy to...
 
+/// Each app is keyed by the first letter of its name, which is what a user expects (Notes → N).
+/// Several apps can share a letter; that collision is resolved at press time by opening the picker
+/// scoped to them. Apps whose first letter is reserved (e.g. "c" = ⌘⌥C Copy to…) get no shortcut.
 func computeShortcuts(for urls: [URL], reserved: Set<Character> = []) -> [URL: Character] {
-    var usedShortcuts = reserved
     var shortcuts = [URL: Character]()
     for url in urls {
         let name = url.lastPathComponent.ns.deletingPathExtension
-        var shortcut: Character?
-        for char in name.lowercased() {
-            if !usedShortcuts.contains(char) { shortcut = char; break }
-        }
-        if shortcut == nil {
-            for i in 1 ... 9 {
-                let candidate = i.s.first!
-                if !usedShortcuts.contains(candidate) { shortcut = candidate; break }
-            }
-        }
-        if let shortcut {
-            usedShortcuts.insert(shortcut)
-            shortcuts[url] = shortcut
-        }
+        guard let first = name.lowercased().first(where: { $0.isLetter || $0.isNumber }) else { continue }
+        if reserved.contains(first) { continue }
+        shortcuts[url] = first
     }
     return shortcuts
 }

@@ -44,19 +44,35 @@ struct OpenWithMenuView: View {
 
 }
 
+// MARK: - OpenWithGroupRequest
+
+/// A set of apps to scope the Open With picker to (e.g. every app whose name starts with the
+/// pressed letter), plus the files to open.
+struct OpenWithGroupRequest: Identifiable {
+    let id = UUID()
+    let apps: [URL]
+    let files: [URL]
+}
+
 // MARK: - OpenWithPickerView
 
 struct OpenWithPickerView: View {
     let fileURLs: [URL]
+    /// When set, the unfiltered list shows these apps (a shared-letter group) instead of all common
+    /// apps; typing still searches every installed app.
+    var initialApps: [URL]? = nil
+
     @Environment(\.dismiss) var dismiss
     @State private var fuzzy: FuzzyClient = FUZZY
     @State private var filterText = ""
+    @State private var keyMonitor: Any?
+    @FocusState private var filterFocused: Bool
 
-    private var apps: [URL] {
-        if filterText.isEmpty {
-            return fuzzy.commonOpenWithApps
+    private func matchedApps(_ filter: String) -> [URL] {
+        if filter.isEmpty {
+            return initialApps ?? fuzzy.commonOpenWithApps
         }
-        let query = filterText.lowercased()
+        let query = filter.lowercased()
         return fuzzy.installedApps
             .compactMap { url -> (URL, Int)? in
                 let name = url.lastPathComponent.ns.deletingPathExtension.lowercased()
@@ -67,6 +83,8 @@ struct OpenWithPickerView: View {
             .map(\.0)
     }
 
+    private var apps: [URL] { matchedApps(filterText) }
+
     func openWithApp(_ app: URL) {
         RH.trackRun(fileURLs.compactMap(\.existingFilePath))
         NSWorkspace.shared.open(
@@ -76,9 +94,10 @@ struct OpenWithPickerView: View {
         dismiss()
     }
 
-    func appButton(_ app: URL) -> some View {
+    func appButton(_ app: URL, number: Int?) -> some View {
         Button(action: { openWithApp(app) }) {
             HStack(spacing: 8) {
+                numberBadge(number)
                 SwiftUI.Image(nsImage: icon(for: app))
                 Text(app.lastPathComponent.ns.deletingPathExtension)
             }
@@ -89,11 +108,25 @@ struct OpenWithPickerView: View {
         }
     }
 
+    @ViewBuilder
+    private func numberBadge(_ number: Int?) -> some View {
+        if let number {
+            Text("\(number)")
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 17, height: 17)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+        } else {
+            Color.clear.frame(width: 17, height: 17)
+        }
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             TextField("Filter apps...", text: $filterText)
                 .textFieldStyle(.roundedBorder)
                 .frame(minWidth: 300)
+                .focused($filterFocused)
                 .onSubmit {
                     if let first = apps.first {
                         openWithApp(first)
@@ -102,8 +135,9 @@ struct OpenWithPickerView: View {
 
             ScrollView {
                 VStack(spacing: 6) {
-                    ForEach(apps, id: \.path) { app in
-                        appButton(app)
+                    ForEach(Array(apps.enumerated()), id: \.element.path) { index, app in
+                        // First nine rows get a 1–9 quick-select key.
+                        appButton(app, number: index < 9 ? index + 1 : nil)
                             .buttonStyle(FlatButton(color: .bg.primary.opacity(0.4), textColor: .primary))
                     }.focusable(false)
                 }
@@ -112,6 +146,29 @@ struct OpenWithPickerView: View {
         .padding(18)
         .fixedSize(horizontal: true, vertical: false)
         .frame(maxHeight: 500)
+        .onAppear { filterFocused = true; installKeyMonitor() }
+        .onDisappear { removeKeyMonitor() }
+    }
+
+    /// Captures bare 1–9 to open that row; letters and everything else keep flowing to the filter
+    /// field. Runs as a local monitor (before the field) and reads the live filter via a binding.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        let filterB = $filterText
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+                  let chars = event.charactersIgnoringModifiers, let digit = Int(chars), (1 ... 9).contains(digit)
+            else { return event }
+            let list = matchedApps(filterB.wrappedValue)
+            guard digit <= list.count else { return event }
+            openWithApp(list[digit - 1])
+            return nil
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
     }
 }
 
@@ -134,20 +191,77 @@ struct OpenWithActionButtons: View {
     private var optHeld: Bool { km.lalt || km.ralt }
     private var cmdOptHeld: Bool { cmdHeld && optHeld }
 
-    var buttons: some View {
-        ForEach(fuzzy.openWithAppShortcuts.sorted(by: \.key.lastPathComponent), id: \.0.path) { app, key in
-            ActionPillButton(
-                title: app.lastPathComponent.ns.deletingPathExtension,
-                icon: .image(icon(for: app)),
-                shortcut: "⌘⌥\(key.uppercased())",
-                badgesVisible: pillHintsVisible,
-                labelStyle: labelStyle,
-                hintColor: ShortcutTint.apps
-            ) {
-                RH.trackRun(selectedResults)
-                NSWorkspace.shared.open(selectedResults.map(\.url), withApplicationAt: app, configuration: .init(), completionHandler: { _, _ in })
+    /// Apps grouped by their first-letter shortcut, ordered by name.
+    private var appGroups: [(letter: Character, apps: [URL])] {
+        Dictionary(grouping: fuzzy.openWithAppShortcuts.keys, by: { fuzzy.openWithAppShortcuts[$0]! })
+            .map { (letter: $0.key, apps: $0.value.sorted(by: \.lastPathComponent)) }
+            .sorted { ($0.apps.first?.lastPathComponent ?? "") < ($1.apps.first?.lastPathComponent ?? "") }
+    }
+
+    @ViewBuilder var buttons: some View {
+        ForEach(appGroups, id: \.letter) { group in
+            if group.apps.count == 1, let app = group.apps.first {
+                appPill(app, letter: group.letter)
+            } else if pillHintsVisible {
+                // ⌘⌥ held: collapse the shared-letter apps into one pill so the key shows once.
+                groupedPill(letter: group.letter, apps: group.apps)
+            } else {
+                ForEach(group.apps, id: \.path) { app in
+                    appPill(app, letter: nil)
+                }
             }
         }
+    }
+
+    private func openApp(_ app: URL) {
+        RH.trackRun(selectedResults)
+        NSWorkspace.shared.open(selectedResults.map(\.url), withApplicationAt: app, configuration: .init(), completionHandler: { _, _ in })
+    }
+
+    private func appPill(_ app: URL, letter: Character?) -> some View {
+        ActionPillButton(
+            title: app.lastPathComponent.ns.deletingPathExtension,
+            icon: .image(icon(for: app)),
+            shortcut: letter.map { String($0).uppercased() } ?? "",
+            badgesVisible: pillHintsVisible,
+            labelStyle: labelStyle,
+            hintColor: ShortcutTint.apps
+        ) { openApp(app) }
+    }
+
+    @ViewBuilder
+    private func appGlyph(_ app: URL) -> some View {
+        switch labelStyle {
+        case .iconAndText:
+            HStack(spacing: 4) {
+                SwiftUI.Image(nsImage: icon(for: app)).resizable().interpolation(.high).frame(width: 14, height: 14)
+                Text(app.lastPathComponent.ns.deletingPathExtension)
+            }
+        case .textOnly:
+            Text(app.lastPathComponent.ns.deletingPathExtension)
+        case .iconOnly:
+            SwiftUI.Image(nsImage: icon(for: app)).resizable().interpolation(.high).frame(width: 14, height: 14)
+        }
+    }
+
+    /// One pill holding the shared key and every app for that letter, divided. Tapping it opens the
+    /// Open With picker scoped to the group (same as pressing ⌘⌥<letter>).
+    private func groupedPill(letter: Character, apps: [URL]) -> some View {
+        Button {
+            fuzzy.openWithGroupRequest = OpenWithGroupRequest(apps: apps, files: selectedResults.map(\.url))
+        } label: {
+            HStack(spacing: 6) {
+                Text(String(letter).uppercased())
+                    .fontWeight(.semibold)
+                    .monospaced()
+                    .foregroundStyle(ShortcutTint.apps)
+                ForEach(Array(apps.enumerated()), id: \.element.path) { index, app in
+                    Divider().frame(height: 12)
+                    appGlyph(app)
+                }
+            }
+        }
+        .help("Open with: \(apps.map { $0.lastPathComponent.ns.deletingPathExtension }.joined(separator: ", "))")
     }
 
     var body: some View {

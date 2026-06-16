@@ -248,9 +248,10 @@ struct ActionButtons: View {
             // those shortcuts dead. This local monitor runs before the responder chain and returns
             // nil when it handles a key, so the menu can never also fire it — no double dispatch.
             if let pressed = KeyboardShortcuts.Shortcut(event: event) {
-                let currentHidden = Defaults[.hiddenActions]
                 let handled = MainActor.assumeIsolated {
-                    for action in ToolbarAction.rebindable where !currentHidden.contains(action.id) {
+                    // A configured shortcut fires regardless of where (or whether) its button shows
+                    // in the toolbar; hiding Open With from the menu must not also kill ⌘O.
+                    for action in ToolbarAction.rebindable {
                         if action.id == .copy || action.id == .trash, focusBinding.wrappedValue != .list { continue }
                         // togglePreview must work with no selection too, so it's dispatched by
                         // ContentView's monitor (which has no selection guard); skip it here to

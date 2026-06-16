@@ -221,6 +221,10 @@ struct ContentView: View {
         } message: {
             Text(pathNotFoundMessage ?? "")
         }
+        .sheet(item: Binding(get: { fuzzy.openWithGroupRequest }, set: { fuzzy.openWithGroupRequest = $0 })) { req in
+            OpenWithPickerView(fileURLs: req.files, initialApps: req.apps)
+                .font(.medium(13))
+        }
         .if(!fuzzy.hasFullDiskAccess) { view in
             view.overlay(fullDiskAccessOverlay)
         }
@@ -933,17 +937,23 @@ struct ContentView: View {
                     return nil
                 }
             }
-            // ⌘⌥<letter> → open with app
-            if mods == [.command, .option],
-               let ch = chars.first,
-               let app = fuzzy.openWithAppShortcuts.first(where: { $0.value == ch })?.key
-            {
-                RH.trackRun(selectedResults)
-                NSWorkspace.shared.open(
-                    selectedResults.map(\.url), withApplicationAt: app, configuration: .init(),
-                    completionHandler: { _, _ in }
-                )
-                return nil
+            // ⌘⌥<letter> → open with app. One match opens it directly; several apps sharing that
+            // first letter open the picker scoped to them for numbered selection.
+            if mods == [.command, .option], let ch = chars.first {
+                let group = fuzzy.openWithAppShortcuts.filter { $0.value == ch }.map(\.key)
+                if group.count == 1 {
+                    RH.trackRun(selectedResults)
+                    NSWorkspace.shared.open(
+                        selectedResults.map(\.url), withApplicationAt: group[0], configuration: .init(),
+                        completionHandler: { _, _ in }
+                    )
+                    return nil
+                } else if group.count > 1 {
+                    fuzzy.openWithGroupRequest = OpenWithGroupRequest(
+                        apps: group.sorted(by: \.lastPathComponent), files: selectedResults.map(\.url)
+                    )
+                    return nil
+                }
             }
             return event
         }

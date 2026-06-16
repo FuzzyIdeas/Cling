@@ -66,7 +66,7 @@ struct ModifierComboHint: View {
             Text("+")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
-                .padding(.leading, 1)
+                .padding(.leading, 4)
         }
         // 2pt of air between the hint and the first app/script pill.
         .padding(.trailing, 2)
@@ -119,7 +119,7 @@ struct ActionPillButton: View {
                 case .iconOnly: iconView
                 }
             }
-            .shortcutPrefix(shortcut, visible: badgesVisible, color: hintColor)
+            .shortcutPrefix(shortcut, visible: badgesVisible, color: hintColor, monospaced: true)
         }
         .help(help ?? title)
     }

@@ -61,12 +61,16 @@ struct ShortcutPrefix: ViewModifier {
     let text: String
     let visible: Bool
     var color: Color = ShortcutTint.action
+    /// The app/script pills only show the bare key (the row's `⌘⌥ +` / `⌘⌃ +` prefix already
+    /// carries the modifiers), so they render it monospaced to read as a key.
+    var monospaced = false
 
     func body(content: Content) -> some View {
         HStack(spacing: 6) {
             if visible, !text.isEmpty {
                 Text(text)
                     .fontWeight(.semibold)
+                    .monospaced(monospaced)
                     .foregroundStyle(color)
                     .fixedSize()
                 Divider()
@@ -78,8 +82,8 @@ struct ShortcutPrefix: ViewModifier {
 }
 
 extension View {
-    func shortcutPrefix(_ text: String, visible: Bool, color: Color = ShortcutTint.action) -> some View {
-        modifier(ShortcutPrefix(text: text, visible: visible, color: color))
+    func shortcutPrefix(_ text: String, visible: Bool, color: Color = ShortcutTint.action, monospaced: Bool = false) -> some View {
+        modifier(ShortcutPrefix(text: text, visible: visible, color: color, monospaced: monospaced))
     }
 }
 

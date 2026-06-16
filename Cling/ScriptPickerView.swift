@@ -344,7 +344,7 @@ struct ScriptActionButtons: View {
                 ActionPillButton(
                     title: "Optimise with Clop",
                     icon: .symbol("wand.and.stars"),
-                    shortcut: oKeyAvailable ? "⌘⌃O" : "",
+                    shortcut: oKeyAvailable ? "O" : "",
                     badgesVisible: pillHintsVisible,
                     labelStyle: labelStyle,
                     hintColor: ShortcutTint.scripts
@@ -390,7 +390,7 @@ struct ScriptActionButtons: View {
         ActionPillButton(
             title: script.lastPathComponent.ns.deletingPathExtension,
             icon: PillIcon.from(glyph: scriptManager.iconGlyph(for: script)),
-            shortcut: "⌘⌃\(key.uppercased())",
+            shortcut: key.uppercased(),
             badgesVisible: pillHintsVisible,
             labelStyle: labelStyle,
             hintColor: ShortcutTint.scripts
