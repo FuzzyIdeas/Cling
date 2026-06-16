@@ -1,3 +1,28 @@
+# 2.6.0
+## Features
+
+- **Send securely** shares the selected files over an encrypted (peer-to-peer, auto-expiring) link
+    > Files transfer straight from your Mac, so a link only works while you're sharing it.
+    >
+    > Send the selected files without touching the mouse: `⌘U`, then `Return`
+    >
+    > **Transfers** panel on the Send button shows each active link's download count, a live countdown to expiry, and lets you copy, reschedule, or stop it
+    >
+    > A notification tells you when someone finishes downloading a file you sent
+- **Redesigned action toolbar**: actions are grouped into sections with the less-used ones moved into a `⋯` menu, so the row stays clean and glanceable
+    > Restyle the toolbar to taste: *icon-and-text*, *text-only*, or *icon-only* buttons, *regular* or *compact* spacing, optional dividers and background
+    >
+    > Decide where each action lives, in the **Action bar**, the `⋯` **Action menu**, or *hidden*
+    >
+    > Each app is keyed by the first letter of its name; when several apps share a letter, that key opens an app picker
+    >
+    > Hold `⌘` to reveal every action's shortcut right on its button, or `⌘⌥` and `⌘⌃` for the *Open With* and *Scripts* rows
+- **Custom shortcuts**: rebind any toolbar action's keyboard shortcut in Settings, under Shortcuts
+
+## Improvements
+
+- The results table, preview panel, and action row corners match the window's rounding
+
 # 2.5.0
 ## Features
 
