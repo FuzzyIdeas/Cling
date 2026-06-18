@@ -84,7 +84,7 @@ INCLUDE_RELEASES=
 Releases/$(NAME)-%.html: ReleaseNotes/$(VERSION)*.md
 	@echo Compiling $^ to $@
 ifneq (, $(BETA))
-	{ cat $(shell ls -t ReleaseNotes/$(VERSION)*.md); for v in $(subst /, ,$(INCLUDE_RELEASES)); do echo; echo "## From v$$v"; echo; cat "ReleaseNotes/$$v.md"; done; } | pandoc -f gfm -o $@ --standalone --metadata title="$(NAME) $(FULL_VERSION) - Release Notes" --css https://files.lowtechguys.com/release.css
+	{ cat $(shell ls -t ReleaseNotes/$(VERSION)*.md); for v in $(subst /, ,$(INCLUDE_RELEASES)); do echo; echo "## From v$$v"; echo; cat "ReleaseNotes/$$v.md"; done; } | pandoc -f gfm --section-divs -o $@ --standalone --metadata title="$(NAME) $(FULL_VERSION) - Release Notes" --css https://files.lowtechguys.com/release.css
 else
-	{ cat ReleaseNotes/$(VERSION).md; for v in $(subst /, ,$(INCLUDE_RELEASES)); do echo; echo "## From v$$v"; echo; cat "ReleaseNotes/$$v.md"; done; } | pandoc -f gfm -o $@ --standalone --metadata title="$(NAME) $(FULL_VERSION) - Release Notes" --css https://files.lowtechguys.com/release.css
+	{ cat ReleaseNotes/$(VERSION).md; for v in $(subst /, ,$(INCLUDE_RELEASES)); do echo; echo "## From v$$v"; echo; cat "ReleaseNotes/$$v.md"; done; } | pandoc -f gfm --section-divs -o $@ --standalone --metadata title="$(NAME) $(FULL_VERSION) - Release Notes" --css https://files.lowtechguys.com/release.css
 endif
