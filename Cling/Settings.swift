@@ -451,6 +451,11 @@ extension Defaults.Keys {
     static let externalVolumes = Key<[FilePath]>("externalVolumes", default: [])
     static let disabledVolumes = Key<[FilePath]>("disabledVolumes", default: [])
     static let indexedVolumePaths = Key<[FilePath]>("indexedVolumePaths", default: [])
+    /// Every volume the app has encountered (mounted at least once while running).
+    /// Lets opt-in mode detect a genuine first sighting and apply its policy exactly once per volume.
+    static let knownVolumes = Key<[FilePath]>("knownVolumes", default: [])
+    /// When on, a newly connected volume is not indexed automatically; the user enables it in Settings.
+    static let disableAutomaticVolumeIndexing = Key<Bool>("disableAutomaticVolumeIndexing", default: false)
     static let copyPathsWithTilde = Key<Bool>("copyPathsWithTilde", default: true)
     static let fileOpDestinations = Key<[String: String]>("fileOpDestinations", default: [:])
 

@@ -1452,19 +1452,62 @@ struct VolumeListView: View {
 struct ReindexTimeIntervalSlider: View {
     var volume: FilePath
 
+    /// Clean values the slider is magnetically pulled toward.
+    private static let anchors: [TimeInterval] = [
+        3600, // 1 hour
+        10800, // 3 hours
+        21600, // 6 hours
+        43200, // 12 hours
+        86400, // 1 day
+        172_800, // 2 days
+        259_200, // 3 days
+        604_800, // 1 week
+        1_209_600, // 2 weeks
+        1_814_400, // 3 weeks
+        2_419_200, // 4 weeks
+    ]
+
+    /// Fraction of the gap to the neighbouring anchor within which the handle snaps to that anchor.
+    /// The remaining middle of each gap stays free, rounded to the hour.
+    private static let magneticFraction: TimeInterval = 0.2
+
     var body: some View {
         HStack {
             Text("Reindex Interval: ")
                 .round(12)
-            Slider(value: $interval, in: 3600 ... 2_419_200) {
+            Slider(value: snapped, in: 3600 ... 2_419_200) {
                 Text(interval.humanizedInterval).mono(11)
                     .frame(width: 150, alignment: .trailing)
             }
-            .onChange(of: interval) {
-                interval = (interval / 3600).rounded() * 3600
-                Defaults[.reindexTimeIntervalPerVolume][volume] = interval
-            }
         }
+    }
+
+    /// Binding that applies magnetic snapping as the handle moves, then persists the result.
+    private var snapped: Binding<TimeInterval> {
+        Binding(
+            get: { interval },
+            set: { raw in
+                let value = Self.magneticValue(for: raw)
+                interval = value
+                Defaults[.reindexTimeIntervalPerVolume][volume] = value
+            }
+        )
+    }
+
+    /// Snaps `raw` to the nearest anchor when it falls inside that anchor's magnetic zone,
+    /// otherwise rounds to the whole hour.
+    private static func magneticValue(for raw: TimeInterval) -> TimeInterval {
+        guard let idx = anchors.indices.min(by: { abs(anchors[$0] - raw) < abs(anchors[$1] - raw) }) else {
+            return (raw / 3600).rounded() * 3600
+        }
+        let nearest = anchors[idx]
+        let radius: TimeInterval = if raw < nearest {
+            (nearest - anchors[max(idx - 1, 0)]) * magneticFraction
+        } else {
+            (anchors[min(idx + 1, anchors.count - 1)] - nearest) * magneticFraction
+        }
+        if abs(raw - nearest) <= radius { return nearest }
+        return (raw / 3600).rounded() * 3600
     }
 
     @State var interval: TimeInterval = DEFAULT_VOLUME_REINDEX_INTERVAL

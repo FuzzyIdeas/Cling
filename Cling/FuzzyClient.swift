@@ -404,6 +404,7 @@ class FuzzyClient {
     }
 
     var externalVolumes: [FilePath] = initialVolumes { didSet {
+        registerNewVolumes()
         let mounted = Set(externalVolumes)
         disconnectedVolumes = Set(Defaults[.indexedVolumePaths].filter { !mounted.contains($0) && !disabledVolumes.contains($0) })
         enabledVolumes = computeEnabledVolumes(mounted: externalVolumes, disabled: disabledVolumes)
@@ -411,6 +412,30 @@ class FuzzyClient {
         externalIndexes = getExternalIndexes()
         indexStaleExternalVolumes()
     }}
+
+    /// Records freshly-seen volumes. In opt-in mode (`disableAutomaticVolumeIndexing`), a volume seen for
+    /// the first time that has never been indexed starts out disabled, so it shows up toggled-off in
+    /// Settings until the user enables it. Guarded by `knownVolumes` so it runs exactly once per volume:
+    /// it never re-disables a volume the user has already enabled, and never touches already-known or
+    /// previously-indexed volumes (those keep auto-reindexing).
+    func registerNewVolumes() {
+        let known = Set(Defaults[.knownVolumes])
+        let unseen = externalVolumes.filter { !known.contains($0) }
+        guard !unseen.isEmpty else { return }
+        Defaults[.knownVolumes].append(contentsOf: unseen)
+
+        guard Defaults[.disableAutomaticVolumeIndexing] else { return }
+        let indexed = Set(Defaults[.indexedVolumePaths])
+        let toDisable = unseen.filter { !indexed.contains($0) && !disabledVolumes.contains($0) }
+        guard !toDisable.isEmpty else { return }
+
+        Defaults[.disabledVolumes].append(contentsOf: toDisable)
+        disabledVolumes.append(contentsOf: toDisable)
+        let mounted = Set(externalVolumes)
+        disconnectedVolumes = Set(Defaults[.indexedVolumePaths].filter { !mounted.contains($0) && !disabledVolumes.contains($0) })
+        enabledVolumes = computeEnabledVolumes(mounted: externalVolumes, disabled: disabledVolumes)
+        externalIndexes = getExternalIndexes()
+    }
 
     var volumeFilter: FilePath? {
         didSet {
@@ -723,12 +748,21 @@ class FuzzyClient {
         pub(.disabledVolumes)
             .debounce(for: 2.0, scheduler: RunLoop.main)
             .sink { [self] volumes in
+                let previouslyDisabled = Set(disabledVolumes)
                 disabledVolumes = volumes.newValue
+                let nowDisabled = Set(volumes.newValue)
+                let reEnabled = previouslyDisabled.subtracting(nowDisabled)
                 let mounted = Set(externalVolumes)
                 disconnectedVolumes = Set(Defaults[.indexedVolumePaths].filter { !mounted.contains($0) && !disabledVolumes.contains($0) })
                 enabledVolumes = computeEnabledVolumes(mounted: externalVolumes, disabled: disabledVolumes)
                 externalIndexes = getExternalIndexes()
                 performSearch()
+
+                // Index volumes that just became enabled and have no loaded engine yet (covers opt-in's
+                // "flip the toggle on -> index"; a volume toggled off then on with its engine still loaded
+                // is left alone). indexVolumes already skips volumes that are mid-index.
+                let toIndex = reEnabled.filter { $0.exists && volumeEngines[$0] == nil }
+                if !toIndex.isEmpty { indexVolumes(Array(toIndex)) }
             }.store(in: &observers)
 
         NSWorkspace.shared.notificationCenter
@@ -779,6 +813,10 @@ class FuzzyClient {
     // MARK: - Indexing
 
     func startIndex() {
+        // Record volumes present at launch (and, in opt-in mode, leave never-indexed ones disabled)
+        // before any indexStaleExternalVolumes() runs.
+        registerNewVolumes()
+
         if !fsignore.exists {
             do { try FS_IGNORE.copy(to: fsignore) }
             catch { log.error("Failed to copy \(FS_IGNORE.string) to \(fsignoreString): \(error.localizedDescription)") }

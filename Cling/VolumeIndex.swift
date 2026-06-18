@@ -309,6 +309,7 @@ extension FuzzyClient {
         disconnectedVolumes.remove(volume)
 
         Defaults[.indexedVolumePaths].removeAll { $0 == volume }
+        Defaults[.knownVolumes].removeAll { $0 == volume }
         Defaults[.reindexTimeIntervalPerVolume][volume] = nil
         if !Defaults[.disabledVolumes].contains(volume) {
             Defaults[.disabledVolumes].append(volume)
