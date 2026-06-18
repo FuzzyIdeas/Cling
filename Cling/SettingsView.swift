@@ -27,7 +27,7 @@ let envState = EnvState()
 
 // MARK: - SettingsCategory
 
-private enum SettingsCategory: String, CaseIterable, Identifiable {
+enum SettingsCategory: String, CaseIterable, Identifiable {
     case general, interface, shortcuts, apps, search, volumes, filters, scripts, exclusions, licenseAndUpdates, about
 
     var id: String { rawValue }
@@ -83,13 +83,20 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
 
 // MARK: - SettingsView
 
+/// Drives the Settings sidebar selection so it can be set programmatically — e.g. focusing the
+/// About item before presenting the Paddle licence sheet.
+@MainActor final class SettingsNavigation: ObservableObject {
+    static let shared = SettingsNavigation()
+    @Published var selection: SettingsCategory = .general
+}
+
 struct SettingsView: View {
-    @State private var selection: SettingsCategory = .general
+    @ObservedObject private var nav = SettingsNavigation.shared
     @EnvironmentObject var env: EnvState
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selection) {
+            List(selection: $nav.selection) {
                 Section {
                     sidebarRow(.general)
                     sidebarRow(.interface)
@@ -115,7 +122,7 @@ struct SettingsView: View {
             .toolbar(removing: .sidebarToggle)
         } detail: {
             detailView
-                .navigationTitle(selection.title)
+                .navigationTitle(nav.selection.title)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationSplitViewStyle(.balanced)
@@ -139,7 +146,7 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var detailView: some View {
-        switch selection {
+        switch nav.selection {
         case .general: GeneralSettingsPane().environmentObject(env)
         case .interface: InterfaceSettingsPane()
         case .shortcuts: ShortcutsSettingsPane()
@@ -793,8 +800,19 @@ private struct SearchSettingsPane: View {
 // MARK: - VolumesSettingsPane
 
 private struct VolumesSettingsPane: View {
+    @Default(.disableAutomaticVolumeIndexing) private var disableAutomaticVolumeIndexing
+
     var body: some View {
         Form {
+            Section {
+                DescriptiveToggle(
+                    title: "Don't index new volumes automatically",
+                    detail: "When on, a volume connected for the first time is not indexed until you enable it below. Volumes you've already indexed keep refreshing on their own.",
+                    isOn: $disableAutomaticVolumeIndexing
+                )
+                .disabled(!proactive)
+            }
+
             Section {
                 VolumeListView().disabled(!proactive)
             } header: {

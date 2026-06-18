@@ -80,8 +80,17 @@ var PRODUCTS: [Any] {
 @MainActor
 class AppDelegate: LowtechProAppDelegate {
     @MainActor
-    override public func willShowPaddle(_: PADUIType, product _: PADProduct) -> PADDisplayConfiguration? {
-        PADDisplayConfiguration(.window, hideNavigationButtons: false, parentWindow: nil)
+    override public func willShowPaddle(_ uiType: PADUIType, product _: PADProduct) -> PADDisplayConfiguration? {
+        // Present the licence / product-access dialogs as a sheet on the Settings window (which hosts
+        // the About sidebar item) when it is open, consistent with the other Lowtech apps. Standalone
+        // Paddle windows were unclickable on macOS 27. Checkout and alerts keep their own window.
+        if uiType == .product || uiType == .license, let settings = settingsWindow, settings.isVisible {
+            SettingsNavigation.shared.selection = .about
+            focus()
+            settings.makeKeyAndOrderFront(nil)
+            return PADDisplayConfiguration(.sheet, hideNavigationButtons: false, parentWindow: settings)
+        }
+        return PADDisplayConfiguration(.window, hideNavigationButtons: false, parentWindow: nil)
     }
 
     static var shared: AppDelegate!
