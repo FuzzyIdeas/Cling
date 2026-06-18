@@ -708,8 +708,22 @@ struct ContentView: View {
             xButton
             historyButton
             saveFilterButton
+            syntaxHelpButton
         }
         .offset(x: -10)
+    }
+
+    private var syntaxHelpButton: some View {
+        Button(action: { showSyntaxHelp.toggle() }) {
+            Image(systemName: "questionmark.circle")
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(showSyntaxHelp ? .accentColor : .secondary)
+        .focusable(false)
+        .help("Search syntax reference")
+        .popover(isPresented: $showSyntaxHelp, arrowEdge: .bottom) {
+            QuerySyntaxCheatsheet()
+        }
     }
 
     @ViewBuilder
@@ -967,6 +981,7 @@ struct ContentView: View {
     }
 
     @State private var showFullHistory = false
+    @State private var showSyntaxHelp = false
     @State private var showNeedsProPopover = false
     @State private var isAddingFolderFilter = false
     @State private var folderFilterID = ""
@@ -1128,6 +1143,11 @@ struct ContentView: View {
         "Example: **`config/ .toml .yaml`** *(finds configuration files)*",
         "Example: **`.mkv .mp4 in:~/Movies`** *(shows common video files)*",
         "Example: **`.md in:~/Notes`** *(finds Markdown notes)*",
+        "Example: **`.py plot !/packages/`** *(excludes anything under packages)*",
+        "Example: **`^release`** *(matches a folder named like release)*",
+        "Example: **`icon.png$`** *(matches paths ending in icon.png)*",
+        "Example: **`screenshot !.mov`** *(drops the .mov screen recordings)*",
+        "Example: **`'NTSC`** *(exact text, not fuzzy)*",
         "Example: **`brew python`** *(shows installed Python versions)*",
     ]
 

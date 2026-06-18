@@ -156,6 +156,60 @@ private func simdFindByte(_ base: UnsafePointer<UInt8>, count: Int, needle: UInt
     return -1
 }
 
+/// SIMD-accelerated substring search: locate `needle` in `base[0..<count]` by SIMD-scanning
+/// for the first byte, then verifying the rest. Used for literal/anchor/negation operators.
+@inline(__always)
+private func simdContains(_ base: UnsafePointer<UInt8>, count: Int, needle: UnsafePointer<UInt8>, needleLen: Int) -> Bool {
+    if needleLen == 0 { return true }
+    if needleLen > count { return false }
+    let first = needle[0]
+    let limit = count &- needleLen
+    var from = 0
+    while from <= limit {
+        let pos = simdFindByte(base, count: count, needle: first, from: from)
+        if pos < 0 || pos > limit { return false }
+        var j = 1
+        var ok = true
+        while j < needleLen {
+            if base[pos &+ j] != needle[j] { ok = false; break }
+            j &+= 1
+        }
+        if ok { return true }
+        from = pos &+ 1
+    }
+    return false
+}
+
+/// `$` anchor matcher: true if `needle` is a suffix of the basename, or of the basename
+/// stem (basename minus its final `.ext`). So "icon$" matches "crank-icon.png" via the
+/// stem "crank-icon", and "icon.png$" matches via the full basename.
+@inline(__always)
+private func nameEndsWith(_ base: UnsafePointer<UInt8>, off: Int, len: Int, bnStart: Int, needle: UnsafePointer<UInt8>, needleLen: Int) -> Bool {
+    let bnLen = len &- bnStart
+    if needleLen == 0 || needleLen > bnLen { return false }
+    let bnFloor = off &+ bnStart
+    @inline(__always) func endsAt(_ end: Int) -> Bool {
+        let start = end &- needleLen
+        if start < bnFloor { return false }
+        var j = 0
+        while j < needleLen {
+            if base[start &+ j] != needle[j] { return false }
+            j &+= 1
+        }
+        return true
+    }
+    if endsAt(off &+ len) { return true }
+    // Find the final '.' within the basename (skip a leading dotfile dot).
+    var dot = -1
+    var k = off &+ len &- 1
+    while k > bnFloor {
+        if base[k] == 0x2E { dot = k; break }
+        k &-= 1
+    }
+    if dot > bnFloor { return endsAt(dot) }
+    return false
+}
+
 /// SIMD bitmask filter: check `masks[i] & qMask == qMask` for 8 entries at once.
 /// Returns number of passing indices written to `out`.
 private func simdFilterMasks(
@@ -1497,51 +1551,142 @@ final class SearchEngine: @unchecked Sendable {
         guard n > 0 else { return [] }
 
         let qTrimmed = query.trimmingCharacters(in: .whitespaces)
-        let wantDir = qTrimmed.hasSuffix("/")
-        var qRaw = qTrimmed.lowercased()
-        while qRaw.hasPrefix("/") { qRaw.removeFirst() }
-
-        // Split into tokens, separate extension tokens (starting with '.' or '*.') and folder tokens (starting with 'in:') from fuzzy tokens
-        let qTokens = qRaw.split(separator: " ")
-        func isExtToken(_ t: Substring) -> Bool { t.hasPrefix(".") || t.hasPrefix("*.") }
-        func extString(_ t: Substring) -> String { t.hasPrefix("*.") ? "." + t.dropFirst(2) : String(t) }
-        func isInToken(_ t: Substring) -> Bool { t.hasPrefix("in:") && t.count > 3 }
-        func isDepthToken(_ t: Substring) -> Bool { t.hasPrefix("depth:") && t.count > 6 }
+        let qLower = qTrimmed.lowercased()
         let homePath = FileManager.default.homeDirectoryForCurrentUser.path
-        let inPrefixes: [String] = qTokens.flatMap { token -> [String] in
-            guard isInToken(token) else { return [] }
-            var path = String(token.dropFirst(3))
-            if path.hasPrefix("~") { path = homePath + path.dropFirst() }
-            while path.count > 1, path.hasSuffix("/") { path = String(path.dropLast()) }
-            // Mirror macOS firmlinks: /tmp, /var, /etc are exposed both as themselves
-            // and under /private. Index stores the resolved /private/* form, so add it.
-            if path == "/tmp" || path == "/var" || path == "/etc"
-                || path.hasPrefix("/tmp/") || path.hasPrefix("/var/") || path.hasPrefix("/etc/")
-            {
-                return [path, "/private" + path]
-            }
-            if path == "/private/tmp" || path == "/private/var" || path == "/private/etc"
-                || path.hasPrefix("/private/tmp/") || path.hasPrefix("/private/var/") || path.hasPrefix("/private/etc/")
-            {
-                return [path, String(path.dropFirst("/private".count))]
-            }
-            return [path]
+
+        // Operator needles carry both NFD (primary, matches APFS storage) and NFC forms.
+        // A path added programmatically or from a non-APFS volume may be NFC, so an accented
+        // literal/anchor needle must be tried in both forms — mirroring the fuzzy path's NFC
+        // fallback (qAltBytes).
+        typealias OpNeedle = (nfd: [UInt8], nfc: [UInt8]?)
+        @inline(__always) func opNeedle(_ s: String) -> OpNeedle {
+            // Compare the UTF-8 BYTES, not the Strings: String == uses Unicode canonical
+            // equivalence, so a composed vs decomposed string compares equal and would hide
+            // the very difference we need the NFC fallback for.
+            let nfd = Array(s.decomposedStringWithCanonicalMapping.utf8)
+            let nfc = Array(s.precomposedStringWithCanonicalMapping.utf8)
+            return (nfd, nfc != nfd ? nfc : nil)
         }
-        let queryDepths: [Int] = qTokens.compactMap { token -> Int? in
-            guard isDepthToken(token) else { return nil }
-            return Int(token.dropFirst(6))
+        // Letters guaranteed present in EVERY normalization form (intersection), so the candidate
+        // prefilter / negation gate never drops a path that differs only by NFC/NFD spelling.
+        @inline(__always) func needleMask(_ n: OpNeedle) -> UInt64 {
+            let m1 = n.nfd.withUnsafeBufferPointer { letterMaskBytes($0) }
+            guard let alt = n.nfc else { return m1 }
+            return m1 & alt.withUnsafeBufferPointer { letterMaskBytes($0) }
         }
-        let extTokenBytes: [[UInt8]] = qTokens.compactMap { isExtToken($0) ? Array(extString($0).utf8) : nil }
+
+        // Positive token buckets (existing semantics)
+        var inPrefixes: [String] = []
+        var queryDepths: [Int] = []
+        var extStrings: [String] = []       // ".pdf"
+        var dirSegStrings: [String] = []    // "rcmd/"
+        var fuzzyTokens: [String] = []
+        // Operator buckets (fzf-style)
+        var litSubstrings: [OpNeedle] = []   // 'foo  → required contiguous substring
+        var anchorStarts: [OpNeedle] = []    // ^foo or /foo → required substring "/foo"
+        var anchorEnds: [OpNeedle] = []      // foo$ → name ends with foo (extension optional)
+        var negSubstrings: [OpNeedle] = []   // !foo, !foo/, !/x/ → reject if substring present
+        var negExtStrings: [String] = []     // !.py → reject by extension
+        var negAnchorStarts: [OpNeedle] = []
+        var negAnchorEnds: [OpNeedle] = []
+        var filesOnly = false                // !/ → exclude directories
+
+        for rawTok in qLower.split(separator: " ") {
+            var t = String(rawTok)
+            // Negation sigil (leading '!')
+            var negate = false
+            if t.hasPrefix("!") {
+                if t.count == 1 { fuzzyTokens.append("!"); continue } // bare "!" is literal text
+                negate = true; t = String(t.dropFirst())
+            }
+            if negate, t == "/" { filesOnly = true; continue }
+
+            // Folder-scope / depth tokens (positive only)
+            if !negate, t.hasPrefix("in:"), t.count > 3 {
+                var path = String(t.dropFirst(3))
+                if path.hasPrefix("~") { path = homePath + path.dropFirst() }
+                while path.count > 1, path.hasSuffix("/") { path = String(path.dropLast()) }
+                // Mirror macOS firmlinks: /tmp, /var, /etc are exposed both as themselves and
+                // under /private. Index stores the resolved /private/* form, so add it.
+                if path == "/tmp" || path == "/var" || path == "/etc"
+                    || path.hasPrefix("/tmp/") || path.hasPrefix("/var/") || path.hasPrefix("/etc/")
+                {
+                    inPrefixes.append(path); inPrefixes.append("/private" + path)
+                } else if path == "/private/tmp" || path == "/private/var" || path == "/private/etc"
+                    || path.hasPrefix("/private/tmp/") || path.hasPrefix("/private/var/") || path.hasPrefix("/private/etc/")
+                {
+                    inPrefixes.append(path); inPrefixes.append(String(path.dropFirst("/private".count)))
+                } else {
+                    inPrefixes.append(path)
+                }
+                continue
+            }
+            if !negate, t.hasPrefix("depth:"), t.count > 6 {
+                if let d = Int(t.dropFirst(6)) { queryDepths.append(d) }
+                continue
+            }
+
+            // Anchor sigils: trailing '$' (end), leading '^'/single-segment '/' (start), leading '\'' (literal).
+            var anchorEnd = false
+            if t.hasSuffix("$"), t.count > 1 { anchorEnd = true; t = String(t.dropLast()) }
+            var anchorStart = false
+            var literal = false
+            if t.hasPrefix("'"), t.count > 1 {
+                literal = true; t = String(t.dropFirst())
+            } else if t.hasPrefix("^"), t.count > 1 {
+                anchorStart = true; t = String(t.dropFirst())
+            } else if t.hasPrefix("/") {
+                let rest = String(t.dropFirst())
+                if !rest.isEmpty, !rest.contains("/") {
+                    anchorStart = true; t = rest                 // single-segment /foo → start anchor
+                } else {
+                    while t.hasPrefix("/") { t = String(t.dropFirst()) } // legacy: strip leading slashes
+                }
+            }
+            if t.isEmpty { continue }
+            let body = t
+
+            if anchorStart || anchorEnd {
+                if anchorStart {
+                    let b = opNeedle("/" + body)
+                    if negate { negAnchorStarts.append(b) } else { anchorStarts.append(b) }
+                }
+                if anchorEnd {
+                    let b = opNeedle(body)
+                    if negate { negAnchorEnds.append(b) } else { anchorEnds.append(b) }
+                }
+                continue
+            }
+
+            // Extension / dir-segment classifiers are skipped for a quoted body so the quote
+            // operator always forces literal-substring matching (e.g. "'.tar", "'photos/").
+            if !literal, body.hasPrefix("."), body.count > 1 {
+                if negate { negExtStrings.append(body) } else { extStrings.append(body) }
+                continue
+            }
+            if !literal, body.hasPrefix("*."), body.count > 2 {
+                let ext = "." + body.dropFirst(2)
+                if negate { negExtStrings.append(ext) } else { extStrings.append(ext) }
+                continue
+            }
+            if !literal, body.hasSuffix("/"), body.count > 1 {
+                if negate { negSubstrings.append(opNeedle(body)) } else { dirSegStrings.append(body) }
+                continue
+            }
+            // Plain word: fuzzy when a positive bareword, literal substring when quoted or negated.
+            if negate { negSubstrings.append(opNeedle(body)) }
+            else if literal { litSubstrings.append(opNeedle(body)) }
+            else { fuzzyTokens.append(body) }
+        }
+
+        let extTokenBytes: [[UInt8]] = extStrings.map { Array($0.utf8) }
         // Pre-resolve extension IDs for O(1) matching (UInt16 compare vs byte-by-byte suffix)
-        let extTokenIDs: [UInt16] = qTokens.compactMap { token in
-            guard isExtToken(token) else { return nil }
-            return extToID[extString(token)]
-        }
-        // Separate dir-segment tokens (ending with '/') from plain fuzzy tokens.
-        // Dir-segment tokens like "rcmd/" require a literal substring "rcmd/" in the path (not fuzzy).
-        func isDirSegment(_ t: Substring) -> Bool { t.hasSuffix("/") && t.count > 1 && !isInToken(t) && !isDepthToken(t) }
-        let dirSegments: [[UInt8]] = qTokens.compactMap { isDirSegment($0) ? Array(String($0).utf8) : nil }
-        let fuzzyTokens = qTokens.filter { !isExtToken($0) && !isInToken($0) && !isDirSegment($0) && !isDepthToken($0) }.map(String.init)
+        let extTokenIDs: [UInt16] = extStrings.compactMap { extToID[$0] }
+        let dirSegments: [[UInt8]] = dirSegStrings.map { Array($0.utf8) }
+        let negExtIDs: [UInt16] = negExtStrings.compactMap { extToID[$0] }
+        let negExtUnknownBytes: [[UInt8]] = negExtStrings.filter { extToID[$0] == nil }.map { Array($0.utf8) }
+        // Prefer directories when the query carries a positive dir-segment (e.g. "config/").
+        let wantDir = !dirSegments.isEmpty
         // Effective depth limit: smallest of query depth tokens and the explicit parameter
         let effectiveMaxDepth: Int? = {
             var v = maxDepth
@@ -1551,17 +1696,31 @@ final class SearchEngine: @unchecked Sendable {
             return v
         }()
         let q = fuzzyTokens.joined()
-        // Dirs-only when the query is solely dir segments (e.g. "rcmd/" with no fuzzy/ext tokens)
-        let dirsOnly = dirsOnly || (!dirSegments.isEmpty && fuzzyTokens.isEmpty && extTokenBytes.isEmpty)
-        let hasFuzzyQuery = !q.isEmpty || !extTokenBytes.isEmpty || !dirSegments.isEmpty
+        let hasPositiveOperator = !litSubstrings.isEmpty || !anchorStarts.isEmpty || !anchorEnds.isEmpty
+        let hasNegativeOperator = !negSubstrings.isEmpty || !negExtStrings.isEmpty
+            || !negAnchorStarts.isEmpty || !negAnchorEnds.isEmpty || filesOnly
+        let hasOperators = hasPositiveOperator || hasNegativeOperator
+        // Dirs-only only when the query is SOLELY dir segments: a fuzzy/ext token, or a positive
+        // operator ('foo, ^foo, foo$), means the user also wants the matching files inside.
+        let dirsOnly = dirsOnly
+            || (!dirSegments.isEmpty && fuzzyTokens.isEmpty && extTokenBytes.isEmpty && !hasPositiveOperator)
+        let hasFuzzyQuery = !q.isEmpty || !extTokenBytes.isEmpty || !dirSegments.isEmpty || hasPositiveOperator
 
         // APFS stores paths in NFD (decomposed Unicode), so normalize query to NFD for primary matching.
-        // Also prepare NFC bytes for fallback if query has different NFC/NFD representations.
-        let qNFD = q.decomposedStringWithCanonicalMapping
-        let qNFC = q.precomposedStringWithCanonicalMapping
-        let qBytes = Array(qNFD.utf8)
-        let qAltBytes: [UInt8]? = (qNFC != qNFD) ? Array(qNFC.utf8) : nil
-        let qMask: UInt64 = !qBytes.isEmpty ? qBytes.withUnsafeBufferPointer { letterMaskBytes($0) } : 0
+        // Prepare NFC bytes as a fallback for paths stored in NFC (programmatically added, or from a
+        // non-APFS volume). Compare the UTF-8 BYTES — String == uses Unicode canonical equivalence, so
+        // a composed vs decomposed String compares equal and would silently null the fallback.
+        let qBytes = Array(q.decomposedStringWithCanonicalMapping.utf8)
+        let qNFCBytes = Array(q.precomposedStringWithCanonicalMapping.utf8)
+        let qAltBytes: [UInt8]? = qNFCBytes != qBytes ? qNFCBytes : nil
+        // qMask gates the candidate prefilter. When NFD and NFC differ, use the letter intersection
+        // so an NFC-stored accented path isn't pruned before the NFC fallback in scoring can run.
+        let qMask: UInt64 = {
+            guard !qBytes.isEmpty else { return 0 }
+            let m1 = qBytes.withUnsafeBufferPointer { letterMaskBytes($0) }
+            guard let alt = qAltBytes else { return m1 }
+            return m1 & alt.withUnsafeBufferPointer { letterMaskBytes($0) }
+        }()
         // Per-token byte arrays for independent multi-token scoring
         let tokenBytes: [[UInt8]]? = fuzzyTokens.count > 1 ? fuzzyTokens.map { Array($0.utf8) } : nil
         // Bitmask filter uses only ASCII letters/digits, which are identical across NFC/NFD, so no alt mask needed
@@ -1574,7 +1733,19 @@ final class SearchEngine: @unchecked Sendable {
         for seg in dirSegments {
             seg.withUnsafeBufferPointer { dirMask |= letterMaskBytes($0) }
         }
-        let combinedMask = qMask | extMask | dirMask
+        // Positive literal/anchor letters are required-present, so fold them into the candidate
+        // prefilter mask. needleMask() uses the NFC∩NFD intersection so an accented needle never
+        // prunes a path that differs only by normalization. ('/' contributes no bits.)
+        var opMask: UInt64 = 0
+        for lit in litSubstrings { opMask |= needleMask(lit) }
+        for a in anchorStarts { opMask |= needleMask(a) }
+        for a in anchorEnds { opMask |= needleMask(a) }
+        let combinedMask = qMask | extMask | dirMask | opMask
+        // Per-needle letter masks gate the negation substring scan: a path can only contain
+        // the needle if its whole-path mask has every needle letter, so the scan is skipped
+        // for the overwhelming majority of entries.
+        let negSubMasks: [UInt64] = negSubstrings.map { needleMask($0) }
+        let negAnchorStartMasks: [UInt64] = negAnchorStarts.map { needleMask($0) }
 
         let baseBytes: [UInt8]
         let baseAltBytes: [UInt8]?
@@ -1600,7 +1771,13 @@ final class SearchEngine: @unchecked Sendable {
             baseBytes = []
             baseAltBytes = nil
         }
-        let baseMask: UInt64 = !baseBytes.isEmpty ? baseBytes.withUnsafeBufferPointer { letterMaskBytes($0) } : 0
+        // Intersection with the NFC basename letters (when they differ) for the same reason as qMask.
+        let baseMask: UInt64 = {
+            guard !baseBytes.isEmpty else { return 0 }
+            let m1 = baseBytes.withUnsafeBufferPointer { letterMaskBytes($0) }
+            guard let alt = baseAltBytes else { return m1 }
+            return m1 & alt.withUnsafeBufferPointer { letterMaskBytes($0) }
+        }()
         let suffixBytes: [UInt8]? = suffixPattern.map { Array($0.lowercased().utf8) }
         let queryHasDot = qBytes.contains(0x2E) || !extTokenBytes.isEmpty
 
@@ -1676,6 +1853,57 @@ final class SearchEngine: @unchecked Sendable {
 
         let isCancelled = cancelled ?? { false }
 
+        // Dir-segment match (shared by every candidate-filter path). A token "X/" matches a
+        // descendant via the literal substring "X/", AND — the folder-self-match fix — the
+        // directory X itself, whose stored path has no trailing slash (so its last segment
+        // equals X). Without the self-match, "releasenotes/" found files inside ReleaseNotes
+        // but never the folder itself.
+        @inline(__always) func dirSegMatches(_ i: Int) -> Bool {
+            guard !dirSegments.isEmpty else { return true }
+            let off = byteOffsets[i]
+            let len = byteLengths[i]
+            let isDir = entries[i].isDir
+            var si = 0
+            while si < dirSegments.count {
+                let seg = dirSegments[si]
+                let segLen = seg.count
+                guard len >= segLen else { return false }
+                var found = false
+                // Descendant: literal substring "X/" anywhere in the path.
+                var p = 0
+                let limit = len - segLen
+                while p <= limit {
+                    var ok = true
+                    var j = 0
+                    while j < segLen {
+                        if allBytes[off + p + j] != seg[j] { ok = false; break }
+                        j &+= 1
+                    }
+                    if ok { found = true; break }
+                    p &+= 1
+                }
+                // Folder-self: a directory whose own last segment equals "X" (drop the trailing '/').
+                if !found, isDir {
+                    let core = segLen - 1
+                    if len >= core {
+                        var ok = true
+                        var j = 0
+                        while j < core {
+                            if allBytes[off + len - core + j] != seg[j] { ok = false; break }
+                            j &+= 1
+                        }
+                        if ok {
+                            let start = off + len - core
+                            if start == off || allBytes[start - 1] == 0x2F { found = true }
+                        }
+                    }
+                }
+                if !found { return false }
+                si &+= 1
+            }
+            return true
+        }
+
         // Common filter: mask, extension ID, excluded IDs/prefixes
         @inline(__always) func applyBaseFilters(_ i: Int) -> Bool {
             if hasFuzzyQuery, masks[i] & combinedMask != combinedMask { return false }
@@ -1735,30 +1963,8 @@ final class SearchEngine: @unchecked Sendable {
                 }
             }
 
-            // Dir segment literal check: require e.g. "cling/" as a contiguous substring in the path
-            if !dirSegments.isEmpty {
-                var si = 0
-                while si < dirSegments.count {
-                    let seg = dirSegments[si]
-                    let segLen = seg.count
-                    guard len >= segLen else { return false }
-                    var found = false
-                    var p = 0
-                    let limit = len - segLen
-                    while p <= limit {
-                        var ok = true
-                        var j = 0
-                        while j < segLen {
-                            if allBytes[off + p + j] != seg[j] { ok = false; break }
-                            j &+= 1
-                        }
-                        if ok { found = true; break }
-                        p &+= 1
-                    }
-                    if !found { return false }
-                    si &+= 1
-                }
-            }
+            // Dir segment match (descendant substring + folder-self), shared helper.
+            if !dirSegMatches(i) { return false }
 
             return true
         }
@@ -1805,6 +2011,81 @@ final class SearchEngine: @unchecked Sendable {
                 pi &+= 1
             }
             return false
+        }
+
+        // Operator pass: positive literal/anchor terms (required) + negation/files-only
+        // (reject). Run once over the assembled candidate list so every filter path
+        // (full-scan, sorted-prefix, QuickFilter pool) honors it uniformly. `allBase` is the
+        // start of the shared lowercased byte buffer; valid for the lock's duration.
+        // Match an operator needle in either normalization form (NFD primary, NFC fallback).
+        @inline(__always) func containsOp(_ pathPtr: UnsafePointer<UInt8>, _ len: Int, _ n: OpNeedle) -> Bool {
+            if n.nfd.withUnsafeBufferPointer({ simdContains(pathPtr, count: len, needle: $0.baseAddress!, needleLen: $0.count) }) { return true }
+            guard let alt = n.nfc else { return false }
+            return alt.withUnsafeBufferPointer { simdContains(pathPtr, count: len, needle: $0.baseAddress!, needleLen: $0.count) }
+        }
+        @inline(__always) func nameEndsOp(_ allBase: UnsafePointer<UInt8>, _ off: Int, _ len: Int, _ bnStart: Int, _ n: OpNeedle) -> Bool {
+            if n.nfd.withUnsafeBufferPointer({ nameEndsWith(allBase, off: off, len: len, bnStart: bnStart, needle: $0.baseAddress!, needleLen: $0.count) }) { return true }
+            guard let alt = n.nfc else { return false }
+            return alt.withUnsafeBufferPointer { nameEndsWith(allBase, off: off, len: len, bnStart: bnStart, needle: $0.baseAddress!, needleLen: $0.count) }
+        }
+
+        @inline(__always) func passesOperators(_ i: Int, _ allBase: UnsafePointer<UInt8>) -> Bool {
+            let off = byteOffsets[i]
+            let len = byteLengths[i]
+            let e = entries[i]
+            if filesOnly, e.isDir { return false }
+            let pathPtr = allBase + off
+
+            var k = 0
+            while k < litSubstrings.count {
+                if !containsOp(pathPtr, len, litSubstrings[k]) { return false }
+                k &+= 1
+            }
+            k = 0
+            while k < anchorStarts.count {
+                if !containsOp(pathPtr, len, anchorStarts[k]) { return false }
+                k &+= 1
+            }
+            k = 0
+            while k < anchorEnds.count {
+                if !nameEndsOp(allBase, off, len, e.bnStart, anchorEnds[k]) { return false }
+                k &+= 1
+            }
+
+            if !negExtIDs.isEmpty {
+                let eid = extIDs[i]
+                var ni = 0
+                while ni < negExtIDs.count { if eid == negExtIDs[ni] { return false }; ni &+= 1 }
+            }
+            if !negExtUnknownBytes.isEmpty {
+                var ni = 0
+                while ni < negExtUnknownBytes.count {
+                    let ext = negExtUnknownBytes[ni]
+                    if len >= ext.count {
+                        var match = true
+                        var j = 0
+                        while j < ext.count { if allBase[off + len - ext.count + j] != ext[j] { match = false; break }; j &+= 1 }
+                        if match { return false }
+                    }
+                    ni &+= 1
+                }
+            }
+            k = 0
+            while k < negSubstrings.count {
+                if masks[i] & negSubMasks[k] == negSubMasks[k], containsOp(pathPtr, len, negSubstrings[k]) { return false }
+                k &+= 1
+            }
+            k = 0
+            while k < negAnchorStarts.count {
+                if masks[i] & negAnchorStartMasks[k] == negAnchorStartMasks[k], containsOp(pathPtr, len, negAnchorStarts[k]) { return false }
+                k &+= 1
+            }
+            k = 0
+            while k < negAnchorEnds.count {
+                if nameEndsOp(allBase, off, len, e.bnStart, negAnchorEnds[k]) { return false }
+                k &+= 1
+            }
+            return true
         }
 
         if let pool = candidatePool {
@@ -1941,32 +2222,8 @@ final class SearchEngine: @unchecked Sendable {
                             if !match { i &+= 1; continue }
                         }
 
-                        // Dir segment literal substring check (e.g. "cling/" must appear in path)
-                        if !dirSegments.isEmpty {
-                            var allFound = true
-                            var si = 0
-                            while si < dirSegments.count {
-                                let seg = dirSegments[si]
-                                let segLen = seg.count
-                                if len < segLen { allFound = false; break }
-                                var found = false
-                                var p = 0
-                                let limit = len - segLen
-                                while p <= limit {
-                                    var ok = true
-                                    var j = 0
-                                    while j < segLen {
-                                        if allBytes[off + p + j] != seg[j] { ok = false; break }
-                                        j &+= 1
-                                    }
-                                    if ok { found = true; break }
-                                    p &+= 1
-                                }
-                                if !found { allFound = false; break }
-                                si &+= 1
-                            }
-                            if !allFound { i &+= 1; continue }
-                        }
+                        // Dir segment match (descendant substring + folder-self), shared helper.
+                        if !dirSegMatches(i) { i &+= 1; continue }
 
                         if !depthOK(i) { i &+= 1; continue }
 
@@ -1982,6 +2239,16 @@ final class SearchEngine: @unchecked Sendable {
             while ci < filterChunks {
                 cands.append(contentsOf: candStore[ci])
                 ci &+= 1
+            }
+        }
+        // Apply fzf-style operators (negation, literal, anchors, files-only) in one SIMD pass
+        // over the assembled candidate list. Positive operator letters are already in
+        // combinedMask, so most non-matches were pruned upstream; this confirms substrings and
+        // rejects negated matches before scoring and before the extension-only fast path.
+        if hasOperators, !cands.isEmpty {
+            allBytes.withUnsafeBufferPointer { buf in
+                let allBase = buf.baseAddress!
+                cands = cands.filter { passesOperators($0, allBase) }
             }
         }
         // Trigger lazy build of sorted path index for next folder-filtered search
