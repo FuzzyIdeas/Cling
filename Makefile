@@ -44,10 +44,10 @@ upload:
 	cfcli -d lowtechguys.com purge
 
 CHANGELOG.md: $(RELEASE_NOTES_FILES)
-	tail -n +1 $$(ls -r ReleaseNotes/*.md | egrep -v '\d[ab]\d') | sed -E 's/==> ReleaseNotes\/(.+)\.md <==/# \1/g' > CHANGELOG.md
+	tail -n +1 $$(ls ReleaseNotes/*.md | egrep '/[0-9]+(\.[0-9]+)*\.md$$' $(if $(BETA),| egrep -v '/$(VERSION)\.md$$') | sort -Vr) | sd '==> ReleaseNotes/(.+)\.md <==' '# $$1\n\n**[Download $(NAME) $$1 →](https://files.lowtechguys.com/releases/$(NAME)-$$1.dmg)**' > CHANGELOG.md
 
 Releases/changelog.html: CHANGELOG.md
-	pandoc -f gfm -o $@ --standalone --metadata title="$(NAME) Changelog" --css https://files.lowtechguys.com/release.css CHANGELOG.md
+	pandoc -f gfm --section-divs -o $@ --standalone --metadata title="$(NAME) Changelog" --css https://files.lowtechguys.com/release.css --include-in-header=ReleaseNotes/changelog-head.html CHANGELOG.md
 
 changelog: Releases/changelog.html
 

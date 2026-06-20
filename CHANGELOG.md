@@ -1,5 +1,18 @@
 # 2.6.1
+
+**[Download Cling 2.6.1 →](https://files.lowtechguys.com/releases/Cling-2.6.1.dmg)**
 ## Features
+
+- **Search operators** to filter and exclude results as you type
+    > Exclude: `!word` hides matches · `!.png` hides a file type · `!/` shows files only
+    >
+    > Exact: `'word` matches the text exactly, not loosely
+    >
+    > Anchor: `^word` (name starts with it) · `word$` (name ends with it)
+    >
+    > Tap `?` in the search bar for the full list, including `.png`, `in:~/Downloads`, and `depth:1`
+
+- **Step into folders**: select a folder in the results, press `→` to search inside it and `←` to step back out
 
 - **Opt-in indexing for new volumes**: a drive or share you connect stays unindexed until you switch it on yourself
     > Turn on *Don't index new volumes automatically* in Settings, under Drives & Volumes. It's off by default, so volumes keep indexing on connection unless you change it.
@@ -9,12 +22,17 @@
 ## Fixes
 
 - License and purchase dialogs open as a sheet inside Settings, fixing a case where that window couldn't be clicked
+- Searches with accented letters (like `é` or `ñ`) match file names that use those accents
 
 ## Improvements
 
+- `in:` searches list only what's inside the folder, not the folder itself
+- A folder name typed with a trailing slash (`photos/`) turns up the folder itself, not only its contents
 - The per-volume reindex interval slider snaps to clean values like `1 hour`, `1 day`, or `1 week`, so it no longer settles on odd intervals like `6 days 23 hours`
 
 # 2.6.0
+
+**[Download Cling 2.6.0 →](https://files.lowtechguys.com/releases/Cling-2.6.0.dmg)**
 ## Features
 
 - **Send securely** shares the selected files over an encrypted (peer-to-peer, auto-expiring) link
@@ -40,6 +58,8 @@
 - The results table, preview panel, and action row corners match the window's rounding
 
 # 2.5.0
+
+**[Download Cling 2.5.0 →](https://files.lowtechguys.com/releases/Cling-2.5.0.dmg)**
 ## Features
 
 - **Group toggles** turn whole sets of exclusion rules on or off without writing any gitignore syntax
@@ -68,6 +88,8 @@
 - **Reset to Default** on every ignore list and the blocklist, plus a single **Reset All to Default** that restores Cling's built-in rules everywhere at once
 
 # 2.4.0
+
+**[Download Cling 2.4.0 →](https://files.lowtechguys.com/releases/Cling-2.4.0.dmg)**
 ## Raycast extension
 
 Cling's fuzzy search extension is now generally available in the Raycast store!
@@ -104,12 +126,16 @@ Cling's fuzzy search extension is now generally available in the Raycast store!
 - The show/hide hotkey can be set to Space, Return, Tab, or an arrow key, so combos like `⌥Space` work
 
 # 2.3.2
+
+**[Download Cling 2.3.2 →](https://files.lowtechguys.com/releases/Cling-2.3.2.dmg)**
 ## Fixes
 
 - Return, arrows, tab and Esc are no longer intercepted while a CJK input method (Pinyin, Japanese, Korean, etc.) is composing text, so the IME can commit or navigate candidates as expected ([#25](https://github.com/alin23/Cling/issues/25))
 - The *Search* placeholder hides while a CJK input method is composing so the marked pinyin/kana text is visible
 
 # 2.3.1
+
+**[Download Cling 2.3.1 →](https://files.lowtechguys.com/releases/Cling-2.3.1.dmg)**
 ## Improvements
 
 - The right-click menu on results is now grouped by intent and implements some more useful actions:
@@ -121,6 +147,8 @@ Cling's fuzzy search extension is now generally available in the Raycast store!
 - The *Hotkey* trigger key picker no longer shows `fn` and `caps lock` since they are not supported by the register hotkey API
 
 # 2.3.0
+
+**[Download Cling 2.3.0 →](https://files.lowtechguys.com/releases/Cling-2.3.0.dmg)**
 ## Features
 
 - Press `⌥ Option - Enter` to have Cling automatically drag and drop selected files into the last focused field or window
@@ -140,6 +168,8 @@ Cling's fuzzy search extension is now generally available in the Raycast store!
 - Improved fuzzy scoring algorithm for path segments
 
 # 2.2.0
+
+**[Download Cling 2.2.0 →](https://files.lowtechguys.com/releases/Cling-2.2.0.dmg)**
 ## Features
 
 - **Instant mode** keeps the main window alive in the background, so the hotkey brings it back without the usual launch and animation delay
@@ -157,6 +187,8 @@ Cling's fuzzy search extension is now generally available in the Raycast store!
 - Typing in the Filter Editor no longer kicks focus out of the text field after every keystroke
 
 # 2.1.3
+
+**[Download Cling 2.1.3 →](https://files.lowtechguys.com/releases/Cling-2.1.3.dmg)**
 ## Improvements
 
 - Search results now automatically refresh after **Apply & Reindex** or volume reindexing finishes
@@ -171,6 +203,8 @@ Cling's fuzzy search extension is now generally available in the Raycast store!
 - **Apply & Reindex** now ensures the ignore file is saved to disk before starting the reindex
 
 # 2.1.2
+
+**[Download Cling 2.1.2 →](https://files.lowtechguys.com/releases/Cling-2.1.2.dmg)**
 ## Improvements
 
 - **Copy to...** and **Move to...** now remember the last destination path per file extension
@@ -187,6 +221,8 @@ Cling's fuzzy search extension is now generally available in the Raycast store!
 - `cling reindex --scope <name>` now resolves volume names, not just scope names
 
 # 2.1.1
+
+**[Download Cling 2.1.1 →](https://files.lowtechguys.com/releases/Cling-2.1.1.dmg)**
 ## Fixes
 
 - `cling reindex --wait` actually waits for indexing to finish again
@@ -200,6 +236,8 @@ Cling's fuzzy search extension is now generally available in the Raycast store!
 - `cling reindex --scope <name> --wait` can safely attach to an in-progress reindex of that scope instead of hanging
 
 # 2.1.0
+
+**[Download Cling 2.1.0 →](https://files.lowtechguys.com/releases/Cling-2.1.0.dmg)**
 ## Features
 
 - **Onboarding window** on first launch to choose window mode, style, hotkey, volumes, and grant **Full Disk Access**
@@ -227,6 +265,8 @@ Cling's fuzzy search extension is now generally available in the Raycast store!
 - Empty volume indexes are no longer saved to disk
 
 # 2.0.1
+
+**[Download Cling 2.0.1 →](https://files.lowtechguys.com/releases/Cling-2.0.1.dmg)**
 ## Features
 
 - Copy to folder (⌘⌥C)
@@ -248,6 +288,8 @@ Cling's fuzzy search extension is now generally available in the Raycast store!
 - Folder search accepts trailing slashes
 
 # 2.0.0
+
+**[Download Cling 2.0.0 →](https://files.lowtechguys.com/releases/Cling-2.0.0.dmg)**
 ## Cling 2.0: New Search Engine
 
 The search engine has been **completely rewritten from scratch**. Cling no longer depends on any external tools, everything runs natively inside the app.
@@ -319,7 +361,28 @@ Notes:
 - Unicode searches now work correctly
 - Columns are resizable instead of fixed width
 
+# 1.2.2
+
+**[Download Cling 1.2.2 →](https://files.lowtechguys.com/releases/Cling-1.2.2.dmg)**
+## Improvements
+
+- Update to fzf 0.64.0
+
+## Fixes
+
+- Fix Full Disk Access not being detected correctly when SIP is disabled
+- Relaunch the app periodically every 12 hours to avoid search not working because of PTY leaks *(workaround until a proper fix is implemented)*
+
+# 1.2.1
+
+**[Download Cling 1.2.1 →](https://files.lowtechguys.com/releases/Cling-1.2.1.dmg)**
+## Fixes
+
+- Fix **Execute script** hotkey being shown as the wrong key
+
 # 1.2
+
+**[Download Cling 1.2 →](https://files.lowtechguys.com/releases/Cling-1.2.dmg)**
 ## Features
 
 - **External Volumes** support: index and search external volumes like USB drives, network shares, etc.
@@ -340,22 +403,9 @@ Notes:
 - Restart `fzf` with a more limited scope when Folder/Volume filters are used to make search faster
 - Sort by kind
 
-# 1.2.2
-## Improvements
-
-- Update to fzf 0.64.0
-
-## Fixes
-
-- Fix Full Disk Access not being detected correctly when SIP is disabled
-- Relaunch the app periodically every 12 hours to avoid search not working because of PTY leaks *(workaround until a proper fix is implemented)*
-
-# 1.2.1
-## Fixes
-
-- Fix **Execute script** hotkey being shown as the wrong key
-
 # 1.1
+
+**[Download Cling 1.1 →](https://files.lowtechguys.com/releases/Cling-1.1.dmg)**
 ## Fixes
 
 - **Fix search not showing any results when typing**
@@ -381,4 +431,6 @@ Notes:
     - `List archive contents` (this one exemplifies how to limit the extensions on which the script appears and how to show output)
 
 # 1.0
+
+**[Download Cling 1.0 →](https://files.lowtechguys.com/releases/Cling-1.0.dmg)**
 Initial release
