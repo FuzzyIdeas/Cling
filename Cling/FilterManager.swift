@@ -11,9 +11,8 @@ struct QuickFilterAddSheet: View {
 
     @Binding var id: String
     @Binding var extensions: String
-    @Binding var preQuery: String
-    @Binding var postQuery: String
-    @Binding var dirsOnly: Bool
+    @Binding var exclude: String
+    @Binding var match: FilterMatch
     @Binding var folders: [FilePath]
     @Binding var key: SauceKey
 
@@ -32,16 +31,18 @@ struct QuickFilterAddSheet: View {
                 DynamicKey(key: $key, recording: $env.recording, allowedKeys: .ALL_KEYS)
             }
 
-            HStack {
-                TextField("Extensions (e.g. .pdf .png .jpeg)", text: $extensions)
-                    .textFieldStyle(.roundedBorder)
-                Toggle("Dirs only", isOn: $dirsOnly)
-            }
+            TextField("Extensions (e.g. .pdf .png .jpeg)", text: $extensions)
+                .textFieldStyle(.roundedBorder)
 
-            TextField("Pre-query (prepended before your search)", text: $preQuery)
+            TextField("Exclude (e.g. .tmp .log)", text: $exclude)
                 .textFieldStyle(.roundedBorder)
-            TextField("Post-query (appended after your search)", text: $postQuery)
-                .textFieldStyle(.roundedBorder)
+
+            Picker("Match", selection: $match) {
+                Text("Both").tag(FilterMatch.both)
+                Text("Files").tag(FilterMatch.files)
+                Text("Folders").tag(FilterMatch.folders)
+            }
+            .pickerStyle(.segmented)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Folders (optional)").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -65,7 +66,7 @@ struct QuickFilterAddSheet: View {
                     dismiss()
                 }
                 Button("Save") { dismiss() }
-                    .disabled(id.isEmpty || (extensions.isEmpty && preQuery.isEmpty && postQuery.isEmpty && !dirsOnly && folders.isEmpty))
+                    .disabled(id.isEmpty || (extensions.isEmpty && exclude.isEmpty && match == .both && folders.isEmpty))
             }
         }
         .onExitCommand {
@@ -76,7 +77,7 @@ struct QuickFilterAddSheet: View {
     }
 
     private func saveIfValid() {
-        guard !id.isEmpty, !extensions.isEmpty || !preQuery.isEmpty || !postQuery.isEmpty || dirsOnly || !folders.isEmpty else { return }
+        guard !id.isEmpty, !extensions.isEmpty || !exclude.isEmpty || match != .both || !folders.isEmpty else { return }
         dismiss()
     }
 

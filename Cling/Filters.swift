@@ -18,23 +18,21 @@ struct FilterPicker: View {
                 saveQuickFilter(
                     id: filterID,
                     extensions: filterSuffix.trimmed.isEmpty ? nil : filterSuffix.trimmed,
-                    preQuery: filterQuery.trimmed.isEmpty ? nil : filterQuery.trimmed,
-                    postQuery: filterPostQuery.trimmed.isEmpty ? nil : filterPostQuery.trimmed,
-                    dirsOnly: filterDirsOnly,
+                    exclude: filterExclude.trimmed.isEmpty ? nil : filterExclude.trimmed,
+                    match: filterMatch,
                     folders: filterFolders.isEmpty ? nil : filterFolders,
                     key: filterKey,
                     originalID: originalFilterID
                 )
                 filterID = ""
                 filterSuffix = ""
-                filterQuery = ""
-                filterPostQuery = ""
-                filterDirsOnly = false
+                filterExclude = ""
+                filterMatch = .both
                 filterFolders = []
                 originalFilterID = ""
                 isEditingFilter = false
             }) {
-                QuickFilterAddSheet(id: $filterID, extensions: $filterSuffix, preQuery: $filterQuery, postQuery: $filterPostQuery, dirsOnly: $filterDirsOnly, folders: $filterFolders, key: $filterKey)
+                QuickFilterAddSheet(id: $filterID, extensions: $filterSuffix, exclude: $filterExclude, match: $filterMatch, folders: $filterFolders, key: $filterKey)
             }
             .sheet(isPresented: $isAddingFolderFilter, onDismiss: {
                 saveFolderFilter(id: filterID, folders: filterFolders, key: filterKey, originalID: originalFilterID)
@@ -109,9 +107,8 @@ struct FilterPicker: View {
     @State private var originalFilterID = ""
     @State private var filterID = ""
     @State private var filterSuffix = ""
-    @State private var filterQuery = ""
-    @State private var filterPostQuery = ""
-    @State private var filterDirsOnly = false
+    @State private var filterExclude = ""
+    @State private var filterMatch: FilterMatch = .both
     @State private var filterFolders: [FilePath] = []
     @State private var filterKey: SauceKey = .escape
 
@@ -238,9 +235,8 @@ struct FilterPicker: View {
             originalFilterID = filter.id
             filterID = filter.id
             filterSuffix = filter.extensions ?? ""
-            filterQuery = filter.preQuery ?? ""
-            filterPostQuery = filter.postQuery ?? ""
-            filterDirsOnly = filter.dirsOnly
+            filterExclude = filter.exclude ?? ""
+            filterMatch = filter.match
             filterFolders = filter.folders ?? []
             filterKey = filter.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape
             isAddingQuickFilter = true
@@ -375,11 +371,11 @@ struct FilterPicker: View {
 }
 
 @MainActor
-func saveQuickFilter(id: String, extensions: String?, preQuery: String?, postQuery: String? = nil, dirsOnly: Bool, folders: [FilePath]? = nil, key: SauceKey, originalID: String = "") {
-    guard !id.isEmpty, (extensions != nil || preQuery != nil || postQuery != nil || dirsOnly || folders?.isEmpty == false) else { return }
+func saveQuickFilter(id: String, extensions: String?, exclude: String? = nil, match: FilterMatch = .both, folders: [FilePath]? = nil, key: SauceKey, originalID: String = "") {
+    guard !id.isEmpty, (extensions != nil || exclude != nil || match != .both || folders?.isEmpty == false) else { return }
 
     let keyChar: Character? = key == .escape ? nil : key.lowercasedChar.first
-    let filter = QuickFilter(id: id, extensions: extensions, preQuery: preQuery, postQuery: postQuery, dirsOnly: dirsOnly, folders: folders?.isEmpty == true ? nil : folders, key: keyChar)
+    let filter = QuickFilter(id: id, extensions: extensions, preQuery: nil, postQuery: nil, dirsOnly: false, folders: folders?.isEmpty == true ? nil : folders, key: keyChar, exclude: exclude, match: match)
     let originalFilter = Defaults[.quickFilters].first { $0.id == originalID }
 
     if let keyChar, let existingFilter = Defaults[.quickFilters].first(where: { $0.key == keyChar }), existingFilter != originalFilter {
