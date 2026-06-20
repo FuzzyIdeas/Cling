@@ -15,26 +15,12 @@ struct FilterPicker: View {
             .onAppear { installFilterShortcutMonitor() }
             .onDisappear { removeFilterShortcutMonitor() }
             .sheet(isPresented: $isAddingQuickFilter, onDismiss: {
-                saveQuickFilter(
-                    id: filterID,
-                    extensions: filterSuffix.trimmed.isEmpty ? nil : filterSuffix.trimmed,
-                    exclude: filterExclude.trimmed.isEmpty ? nil : filterExclude.trimmed,
-                    match: filterMatch,
-                    folders: filterFolders.isEmpty ? nil : filterFolders,
-                    key: filterKey,
-                    rawQuery: filterRawQuery,
-                    originalID: originalFilterID
-                )
-                filterID = ""
-                filterSuffix = ""
-                filterExclude = ""
-                filterMatch = .both
-                filterFolders = []
-                filterRawQuery = nil
+                saveQuickFilter(draft: filterDraft, originalID: originalFilterID)
+                filterDraft = QuickFilterDraft()
                 originalFilterID = ""
                 isEditingFilter = false
             }) {
-                QuickFilterAddSheet(id: $filterID, extensions: $filterSuffix, exclude: $filterExclude, match: $filterMatch, folders: $filterFolders, key: $filterKey, rawQuery: $filterRawQuery)
+                QuickFilterAddSheet(draft: $filterDraft)
             }
             .sheet(isPresented: $isAddingFolderFilter, onDismiss: {
                 saveFolderFilter(id: filterID, folders: filterFolders, key: filterKey, originalID: originalFilterID)
@@ -107,13 +93,11 @@ struct FilterPicker: View {
     @State private var isAddingFolderFilter = false
     @State private var isEditingFilter = false
     @State private var originalFilterID = ""
+    @State private var filterDraft = QuickFilterDraft()
+    // Folder-filter flow keeps its own vars (shared with FolderFilterAddSheet).
     @State private var filterID = ""
-    @State private var filterSuffix = ""
-    @State private var filterExclude = ""
-    @State private var filterMatch: FilterMatch = .both
     @State private var filterFolders: [FilePath] = []
     @State private var filterKey: SauceKey = .escape
-    @State private var filterRawQuery: String? = nil
 
     @State private var showFilterEditor = false
 
@@ -236,13 +220,7 @@ struct FilterPicker: View {
         Button(action) {
             isEditingFilter = action == "Edit"
             originalFilterID = filter.id
-            filterID = filter.id
-            filterSuffix = filter.extensions ?? ""
-            filterExclude = filter.exclude ?? ""
-            filterMatch = filter.match
-            filterFolders = filter.folders ?? []
-            filterKey = filter.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape
-            filterRawQuery = filter.rawQuery
+            filterDraft = QuickFilterDraft(from: filter)
             isAddingQuickFilter = true
         }
         Button("Delete") {
@@ -375,15 +353,18 @@ struct FilterPicker: View {
 }
 
 @MainActor
-func saveQuickFilter(id: String, extensions: String?, exclude: String? = nil, match: FilterMatch = .both, folders: [FilePath]? = nil, key: SauceKey, rawQuery: String? = nil, originalID: String = "") {
-    let hasRawQuery = rawQuery?.trimmed.isEmpty == false
-    guard !id.isEmpty, (extensions != nil || exclude != nil || match != .both || folders?.isEmpty == false || hasRawQuery) else { return }
+func saveQuickFilter(draft: QuickFilterDraft, originalID: String = "") {
+    let filter = draft.asFilter
+    guard !filter.id.isEmpty,
+          filter.extensions != nil || filter.exclude != nil || filter.match != .both || filter.folders?.isEmpty == false || filter.rawQuery != nil
+    else { return }
 
-    let keyChar: Character? = key == .escape ? nil : key.lowercasedChar.first
-    let filter = QuickFilter(id: id, extensions: extensions, preQuery: nil, postQuery: nil, dirsOnly: false, folders: folders?.isEmpty == true ? nil : folders, key: keyChar, exclude: exclude, rawQuery: rawQuery?.trimmed.isEmpty == true ? nil : rawQuery?.trimmed, match: match)
     let originalFilter = Defaults[.quickFilters].first { $0.id == originalID }
 
-    if let keyChar, let existingFilter = Defaults[.quickFilters].first(where: { $0.key == keyChar }), existingFilter != originalFilter {
+    if let keyChar = filter.key,
+       let existingFilter = Defaults[.quickFilters].first(where: { $0.key == keyChar }),
+       existingFilter != originalFilter
+    {
         Defaults[.quickFilters] = Defaults[.quickFilters].without([existingFilter, originalFilter ?? filter]) + [existingFilter.withKey(nil), filter]
     } else {
         Defaults[.quickFilters] = Defaults[.quickFilters].without(originalFilter ?? filter) + [filter]
@@ -713,18 +694,195 @@ private func folderEditor(folders: Binding<[FilePath]>, emptyText: String, onCha
 
 // MARK: - QuickFilterRow
 
+/// Mutable working copy of a `QuickFilter`'s fields, edited by `QuickFilterEditor`.
+struct QuickFilterDraft {
+    var name = ""
+    var extensions = ""
+    var exclude = ""
+    var match: FilterMatch = .both
+    var prepend = ""   // added before the user's typed search (preQuery)
+    var append = ""    // added after the user's typed search (postQuery)
+    var rawQuery: String?  // nil = structured mode
+    var folders: [FilePath] = []
+    var hotkey: SauceKey = .escape
+    var maxDepth: Int = -1
+
+    init() {}
+    init(from f: QuickFilter) {
+        name = f.id
+        extensions = f.extensions ?? ""
+        exclude = f.exclude ?? ""
+        match = f.match
+        prepend = f.preQuery ?? ""
+        append = f.postQuery ?? ""
+        rawQuery = f.rawQuery
+        folders = f.folders ?? []
+        hotkey = f.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape
+        maxDepth = f.maxDepth ?? -1
+    }
+
+    var asFilter: QuickFilter {
+        QuickFilter(
+            id: name,
+            extensions: extensions.trimmed.isEmpty ? nil : extensions.trimmed,
+            preQuery: prepend.trimmed.isEmpty ? nil : prepend.trimmed,
+            postQuery: append.trimmed.isEmpty ? nil : append.trimmed,
+            dirsOnly: false,
+            folders: folders.isEmpty ? nil : folders,
+            key: hotkey == .escape ? nil : hotkey.lowercasedChar.first,
+            maxDepth: maxDepth < 0 ? nil : maxDepth,
+            exclude: exclude.trimmed.isEmpty ? nil : exclude.trimmed,
+            rawQuery: rawQuery?.trimmed.isEmpty == true ? nil : rawQuery?.trimmed,
+            match: match
+        )
+    }
+}
+
+/// Shared Quick Filter editor (used by the Settings list row and the add sheet). Renders three
+/// Form sections: a pinned edit-mode section, the name + structured fields, and hotkey + scope.
+struct QuickFilterEditor: View {
+    @Binding var draft: QuickFilterDraft
+    var matchCountText: String = ""
+    var onEdit: () -> Void = {}
+    var onAddFolder: () -> Void = {}
+    var onDelete: (() -> Void)? = nil
+
+    @State private var recording = false
+
+    private enum Mode: Hashable { case fields, raw }
+
+    private var modeBinding: Binding<Mode> {
+        Binding(
+            get: { draft.rawQuery == nil ? .fields : .raw },
+            set: { newMode in
+                if newMode == .raw {
+                    draft.rawQuery = draft.asFilter.queryString
+                } else {
+                    draft.rawQuery = nil
+                }
+                onEdit()
+            }
+        )
+    }
+
+    private var fieldsMode: Bool { draft.rawQuery == nil }
+    private var preview: String { draft.asFilter.queryString }
+
+    var body: some View {
+        // Pinned at top so switching modes only changes the sections below it.
+        Section {
+            Picker("Edit mode", selection: modeBinding) {
+                Text("Structured fields").tag(Mode.fields)
+                Text("Raw query").tag(Mode.raw)
+            }
+            .pickerStyle(.segmented)
+            Text("Construct the query using the controls below or edit the raw query directly. They are equivalent as the fields translate into a raw query themselves.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            rawQueryRow
+        }
+
+        Section {
+            TextField("Name", text: $draft.name, prompt: Text("Filter name"))
+                .textFieldStyle(.roundedBorder)
+                .onChange(of: draft.name) { onEdit() }
+            if fieldsMode {
+                TextField("Extensions", text: $draft.extensions, prompt: Text("e.g.: .png .jpg .pdf"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: draft.extensions) { onEdit() }
+                TextField("Exclude", text: $draft.exclude, prompt: Text("e.g.: draft .zip node_modules/"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: draft.exclude) { onEdit() }
+                Picker("Match", selection: $draft.match) {
+                    Text("Both").tag(FilterMatch.both)
+                    Text("Files").tag(FilterMatch.files)
+                    Text("Folders").tag(FilterMatch.folders)
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: draft.match) { onEdit() }
+                TextField("Prepend", text: $draft.prepend, prompt: Text("Added before your search"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: draft.prepend) { onEdit() }
+                TextField("Append", text: $draft.append, prompt: Text("Added after your search"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: draft.append) { onEdit() }
+            }
+        } header: {
+            HStack {
+                Text(draft.name.isEmpty ? "Quick Filter" : draft.name).font(.headline)
+                Spacer()
+                if let onDelete {
+                    Button(action: onDelete) { Image(systemName: "trash") }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.red)
+                        .help("Delete filter")
+                }
+            }
+        }
+
+        Section {
+            LabeledContent("Hotkey") {
+                HStack(spacing: 4) {
+                    Text("\u{2325} +").font(.system(size: 11)).foregroundStyle(.secondary)
+                    DynamicKey(key: $draft.hotkey, recording: $recording, allowedKeys: .ALL_KEYS)
+                        .font(.mono(11, weight: .bold))
+                        .onChange(of: draft.hotkey) { onEdit() }
+                        .frame(width: 28)
+                }
+            }
+            if fieldsMode {
+                Stepper(value: $draft.maxDepth, in: -1 ... 100) {
+                    HStack {
+                        Text("Max depth")
+                        Spacer()
+                        Text(draft.maxDepth < 0 ? "∞" : "\(draft.maxDepth)")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .onChange(of: draft.maxDepth) { onEdit() }
+                .help("Limit results to entries at most N folders below the search root. -1 = unlimited.")
+                LabeledContent("Search in") {
+                    folderEditor(folders: $draft.folders, emptyText: "All locations", onChange: onEdit, onAdd: onAddFolder)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var rawQueryRow: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text("Raw query").font(.system(size: 11)).foregroundStyle(.secondary)
+                Spacer()
+                if !matchCountText.isEmpty {
+                    Text(matchCountText).font(.mono(11)).foregroundStyle(.tertiary)
+                }
+            }
+            if fieldsMode {
+                // Read-only preview of the compiled query; wraps at spaces (token boundaries).
+                Text(preview.isEmpty ? "everything" : preview)
+                    .font(.mono(11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            } else {
+                TextField("", text: Binding(get: { draft.rawQuery ?? "" }, set: { draft.rawQuery = $0 }),
+                          prompt: Text("Full query, e.g.: .png in:~/Desktop !draft"), axis: .vertical)
+                    .lineLimit(1 ... 8)
+                    .font(.mono(12))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: draft.rawQuery) { onEdit() }
+            }
+        }
+    }
+}
+
 struct QuickFilterRow: View {
     init(filter: QuickFilter) {
         self.filter = filter
-        _name = State(initialValue: filter.id)
-        _extensions = State(initialValue: filter.extensions ?? "")
-        _exclude = State(initialValue: filter.exclude ?? "")
-        _match = State(initialValue: filter.match)
-        // Open legacy pre/post filters in raw mode, prefilled with the full effective query.
-        _rawQuery = State(initialValue: filter.rawQuery ?? ((filter.preQuery?.isEmpty == false || filter.postQuery?.isEmpty == false) ? filter.queryString : nil))
-        _folders = State(initialValue: filter.folders ?? [])
-        _hotkey = State(initialValue: filter.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape)
-        _maxDepth = State(initialValue: filter.maxDepth ?? -1)
+        _draft = State(initialValue: QuickFilterDraft(from: filter))
     }
 
     @EnvironmentObject var env: EnvState
@@ -732,125 +890,25 @@ struct QuickFilterRow: View {
     let filter: QuickFilter
 
     var body: some View {
-        Section {
-            TextField("Name", text: $name, prompt: Text("Filter name"))
-                .textFieldStyle(.roundedBorder)
-                .focused($nameFocused)
-                .onSubmit { save() }
-                .onChange(of: nameFocused) { _, focused in
-                    if !focused { save() }
-                }
-            if rawQuery == nil {
-                TextField("Extensions", text: $extensions, prompt: Text("e.g.: .png .jpg .pdf"))
-                    .textFieldStyle(.roundedBorder)
-                    .onChange(of: extensions) { save(); refreshCount() }
-                TextField("Exclude", text: $exclude, prompt: Text("e.g.: draft .zip node_modules/"))
-                    .textFieldStyle(.roundedBorder)
-                    .onChange(of: exclude) { save(); refreshCount() }
-            } else {
-                TextField("Query", text: Binding(get: { rawQuery ?? "" }, set: { rawQuery = $0 }),
-                          prompt: Text("Full query, e.g.: .png in:~/Desktop !draft"))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.mono(12))
-                    .onChange(of: rawQuery) { save(); refreshCount() }
-            }
-        } header: {
-            HStack {
-                Text(filter.id).font(.headline)
-                Text(filter.header).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                Spacer()
-                Button(action: delete) {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.red)
-                .help("Delete filter")
-            }
-        }
-
-        Section {
-            if rawQuery == nil {
-                Picker("Match", selection: $match) {
-                    Text("Both").tag(FilterMatch.both)
-                    Text("Files").tag(FilterMatch.files)
-                    Text("Folders").tag(FilterMatch.folders)
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: match) { save(); refreshCount() }
-            }
-            LabeledContent("Runs as") {
-                HStack {
-                    Text(currentFilter.queryString.isEmpty ? "everything" : currentFilter.queryString)
-                        .font(.mono(11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                    if !matchCountText.isEmpty {
-                        Text(matchCountText)
-                            .font(.mono(11))
-                            .foregroundStyle(.tertiary)
-                    }
-                    Spacer()
-                    if rawQuery == nil {
-                        Button("Edit as query") { rawQuery = currentFilter.queryString; save(); refreshCount() }.font(.caption)
-                    } else {
-                        Button("Use fields") { rawQuery = nil; save(); refreshCount() }.font(.caption)
-                    }
-                }
-            }
-            .task { refreshCount() }
-            Stepper(value: $maxDepth, in: -1 ... 100) {
-                HStack {
-                    Text("Max depth")
-                    Spacer()
-                    Text(maxDepth < 0 ? "∞" : "\(maxDepth)")
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .onChange(of: maxDepth) { save(); refreshCount() }
-            .help("Limit results to entries at most N folders below the search root. -1 = unlimited.")
-            LabeledContent("Hotkey") {
-                HStack(spacing: 4) {
-                    Text("\u{2325} +").font(.system(size: 11)).foregroundStyle(.secondary)
-                    DynamicKey(key: $hotkey, recording: $recording, allowedKeys: .ALL_KEYS)
-                        .font(.mono(11, weight: .bold))
-                        .onChange(of: hotkey) { save() }
-                        .frame(width: 28)
-                }
-            }
-            LabeledContent("Search in") {
-                folderEditor(folders: $folders, emptyText: "All locations", onChange: { save(); refreshCount() }, onAdd: addFolder)
-            }
-        }
+        QuickFilterEditor(
+            draft: $draft,
+            matchCountText: matchCountText,
+            onEdit: { save(); refreshCount() },
+            onAddFolder: addFolder,
+            onDelete: delete
+        )
+        .task { refreshCount() }
     }
 
-    @State private var name: String
-    @State private var extensions: String
-    @State private var exclude: String
-    @State private var match: FilterMatch
-    @State private var rawQuery: String?   // nil = structured mode
-    @State private var folders: [FilePath]
-    @State private var hotkey: SauceKey
-    @State private var recording = false
-    @State private var maxDepth: Int
-    @FocusState private var nameFocused: Bool
+    @State private var draft: QuickFilterDraft
     @State private var matchCountText = ""
     @State private var countTask: Task<Void, Never>?
 
     @Default(.quickFilters) private var quickFilters
 
-    private var currentFilter: QuickFilter {
-        QuickFilter(id: name, extensions: extensions.trimmed.isEmpty ? nil : extensions.trimmed,
-                    preQuery: nil, postQuery: nil, dirsOnly: false,
-                    folders: folders.isEmpty ? nil : folders,
-                    key: hotkey == .escape ? nil : hotkey.lowercasedChar.first,
-                    maxDepth: maxDepth < 0 ? nil : maxDepth,
-                    exclude: exclude.trimmed.isEmpty ? nil : exclude.trimmed,
-                    rawQuery: rawQuery?.trimmed.isEmpty == true ? nil : rawQuery?.trimmed,
-                    match: match)
-    }
-
     private func refreshCount() {
         countTask?.cancel()
-        let f = currentFilter
+        let f = draft.asFilter
         countTask = Task {
             try? await Task.sleep(for: .milliseconds(200))
             if Task.isCancelled { return }
@@ -863,7 +921,7 @@ struct QuickFilterRow: View {
 
     private func save() {
         guard let idx = quickFilters.firstIndex(where: { $0.id == filter.id }) else { return }
-        let updated = currentFilter
+        let updated = draft.asFilter
         quickFilters[idx] = updated
         if FUZZY.quickFilter == filter { FUZZY.quickFilter = updated }
     }
@@ -881,9 +939,10 @@ struct QuickFilterRow: View {
         panel.begin { response in
             if response == .OK {
                 for url in panel.urls {
-                    if let path = url.existingFilePath, !folders.contains(path) { folders.append(path) }
+                    if let path = url.existingFilePath, !draft.folders.contains(path) { draft.folders.append(path) }
                 }
                 save()
+                refreshCount()
             }
         }
     }

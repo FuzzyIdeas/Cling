@@ -626,13 +626,7 @@ struct ContentView: View {
     }
 
     @State private var isAddingQuickFilter = false
-    @State private var filterID = ""
-    @State private var filterSuffix = ""
-    @State private var filterExclude = ""
-    @State private var filterMatch: FilterMatch = .both
-    @State private var filterFolders: [FilePath] = []
-    @State private var filterKey: SauceKey = .escape
-    @State private var filterRawQuery: String? = nil
+    @State private var filterDraft = QuickFilterDraft()
 
     private var filterSubtitle: String? {
         var parts = [String]()
@@ -671,7 +665,7 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $isAddingQuickFilter, onDismiss: handleQuickFilterDismiss) {
-            QuickFilterAddSheet(id: $filterID, extensions: $filterSuffix, exclude: $filterExclude, match: $filterMatch, folders: $filterFolders, key: $filterKey, rawQuery: $filterRawQuery)
+            QuickFilterAddSheet(draft: $filterDraft)
         }
         .sheet(isPresented: $isAddingFolderFilter, onDismiss: handleFolderFilterDismiss) {
             FolderFilterAddSheet(id: $folderFilterID, folders: $folderFilterFolders, key: $folderFilterKey)
@@ -770,17 +764,16 @@ struct ContentView: View {
     }
 
     private func handleQuickFilterDismiss() {
-        let ext = filterSuffix.trimmed.isEmpty ? nil : filterSuffix.trimmed
-        let excl = filterExclude.trimmed.isEmpty ? nil : filterExclude.trimmed
-        let hasRawQuery = filterRawQuery?.trimmed.isEmpty == false
-        guard !filterID.isEmpty, ext != nil || excl != nil || filterMatch != .both || !filterFolders.isEmpty || hasRawQuery else {
-            filterID = ""; filterSuffix = ""; filterExclude = ""; filterMatch = .both; filterRawQuery = nil
+        let f = filterDraft.asFilter
+        let hasContent = f.extensions != nil || f.exclude != nil || f.match != .both || f.folders?.isEmpty == false || f.rawQuery != nil
+        guard !filterDraft.name.trimmed.isEmpty, hasContent else {
+            filterDraft = QuickFilterDraft()
             return
         }
         fuzzy.suppressNextSearch = true
         fuzzy.query = ""
-        saveQuickFilter(id: filterID, extensions: ext, exclude: excl, match: filterMatch, folders: filterFolders.isEmpty ? nil : filterFolders, key: filterKey, rawQuery: filterRawQuery)
-        filterID = ""; filterSuffix = ""; filterExclude = ""; filterMatch = .both; filterFolders = []; filterRawQuery = nil
+        saveQuickFilter(draft: filterDraft, originalID: "")
+        filterDraft = QuickFilterDraft()
     }
 
     private func prefillQuickFilter() {
@@ -799,7 +792,7 @@ struct ContentView: View {
         }
         let fuzzyTokens = tokens.filter { !$0.hasPrefix(".") && !$0.hasPrefix("*.") && !$0.hasPrefix("in:") }
 
-        // If ONLY in: tokens, show FolderFilter sheet
+        // If ONLY in: tokens, show FolderFilter sheet (unchanged).
         if !inTokens.isEmpty, extTokens.isEmpty, fuzzyTokens.isEmpty {
             folderFilterID = inTokens.count == 1 ? inTokens[0].name.string.prefix(1).uppercased() + inTokens[0].name.string.dropFirst() : ""
             folderFilterFolders = inTokens
@@ -808,29 +801,27 @@ struct ContentView: View {
             return
         }
 
+        filterDraft = QuickFilterDraft()
+
         // If there are free-text tokens (or operator chars not mapping to fields),
         // fall back to raw-query mode so nothing is lost.
         if !fuzzyTokens.isEmpty {
             let name = fuzzyTokens.joined(separator: " ")
-            filterID = name.prefix(1).uppercased() + name.dropFirst()
-            filterKey = getFilterKey(id: filterID)
-            filterRawQuery = q
+            filterDraft.name = name.prefix(1).uppercased() + name.dropFirst()
+            filterDraft.hotkey = getFilterKey(id: filterDraft.name)
+            filterDraft.rawQuery = q
             isAddingQuickFilter = true
             return
         }
 
         // Pure extensions / in: / trailing-slash: use structured fields.
-        filterRawQuery = nil
-        // Join ALL extension tokens, normalizing *.ext to .ext
-        filterSuffix = extTokens.map { $0.hasPrefix("*.") ? "." + $0.dropFirst(2) : String($0) }.joined(separator: " ")
-        filterMatch = q.hasSuffix("/") ? .folders : .both
-        filterFolders = inTokens
+        filterDraft.extensions = extTokens.map { $0.hasPrefix("*.") ? "." + $0.dropFirst(2) : String($0) }.joined(separator: " ")
+        filterDraft.match = q.hasSuffix("/") ? .folders : .both
+        filterDraft.folders = inTokens
 
         let name = extTokens.map(String.init).joined(separator: " ")
-        filterID = name.prefix(1).uppercased() + name.dropFirst()
-
-        // Auto-assign hotkey: first alphanumeric char not already used
-        filterKey = getFilterKey(id: filterID)
+        filterDraft.name = name.prefix(1).uppercased() + name.dropFirst()
+        filterDraft.hotkey = getFilterKey(id: filterDraft.name)
 
         isAddingQuickFilter = true
     }

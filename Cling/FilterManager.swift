@@ -7,121 +7,39 @@ import System
 // MARK: - QuickFilterAddSheet
 
 struct QuickFilterAddSheet: View {
-    @EnvironmentObject var env: EnvState
-
-    @Binding var id: String
-    @Binding var extensions: String
-    @Binding var exclude: String
-    @Binding var match: FilterMatch
-    @Binding var folders: [FilePath]
-    @Binding var key: SauceKey
-    @Binding var rawQuery: String?
+    @Binding var draft: QuickFilterDraft
 
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
-        VStack(spacing: 12) {
-            Text("Quick Filter").font(.headline)
-            HStack {
-                TextField("Name", text: $id)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { saveIfValid() }
-                    .padding(.trailing, 8)
-                Text("Hotkey: ")
-                Text("\u{2325} +").bold()
-                DynamicKey(key: $key, recording: $env.recording, allowedKeys: .ALL_KEYS)
-            }
-
-            if rawQuery == nil {
-                TextField("Extensions (e.g. .pdf .png .jpeg)", text: $extensions)
-                    .textFieldStyle(.roundedBorder)
-
-                TextField("Exclude (e.g. .tmp .log)", text: $exclude)
-                    .textFieldStyle(.roundedBorder)
-
-                Picker("Match", selection: $match) {
-                    Text("Both").tag(FilterMatch.both)
-                    Text("Files").tag(FilterMatch.files)
-                    Text("Folders").tag(FilterMatch.folders)
-                }
-                .pickerStyle(.segmented)
-            } else {
-                TextField("Query", text: Binding(get: { rawQuery ?? "" }, set: { rawQuery = $0 }),
-                          prompt: Text("Full query, e.g.: .png in:~/Desktop !draft"))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.mono(12))
-            }
-
-            HStack {
-                Text(compiledQuery)
-                    .font(.mono(11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                Spacer()
-                if rawQuery == nil {
-                    Button("Edit as query") {
-                        rawQuery = compiledQuery
-                    }.font(.caption)
-                } else {
-                    Button("Use fields") {
-                        rawQuery = nil
-                    }.font(.caption)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Folders (optional)").font(.system(size: 11)).foregroundStyle(.secondary)
-                ForEach(folders) { folder in
-                    HStack {
-                        Text(folder.shellString).mono(11).lineLimit(1)
-                        Spacer()
-                        Button(action: { folders.removeAll { $0 == folder } }) {
-                            Image(systemName: "minus.circle.fill")
-                        }.buttonStyle(FlatButton(color: .clear, textColor: .red.opacity(0.7)))
-                    }
-                }
-                Button(action: addFolder) {
-                    Label("Add folder", systemImage: "plus")
-                }.font(.system(size: 11))
-            }
-
-            HStack {
+        Form {
+            QuickFilterEditor(draft: $draft, onAddFolder: addFolder)
+        }
+        .formStyle(.grouped)
+        .frame(minWidth: 420, minHeight: 480)
+        .navigationTitle("Quick Filter")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") {
-                    id = ""
+                    draft = QuickFilterDraft()
                     dismiss()
                 }
+            }
+            ToolbarItem(placement: .confirmationAction) {
                 Button("Save") { dismiss() }
-                    .disabled(id.isEmpty || !hasValidFilter)
+                    .disabled(!canSave)
             }
         }
         .onExitCommand {
-            id = ""
+            draft = QuickFilterDraft()
             dismiss()
         }
-        .padding()
     }
 
-    private var compiledQuery: String {
-        if let rq = rawQuery {
-            return rq
-        }
-        return compileFilterQuery(
-            extensions: extensions.trimmed.isEmpty ? nil : extensions.trimmed,
-            exclude: exclude.trimmed.isEmpty ? nil : exclude.trimmed,
-            match: match,
-            folders: folders.map(\.string),
-            maxDepth: nil
-        )
-    }
-
-    private var hasValidFilter: Bool {
-        if let rq = rawQuery {
-            return !rq.trimmed.isEmpty
-        }
-        return !extensions.isEmpty || !exclude.isEmpty || match != .both || !folders.isEmpty
-    }
-
-    private func saveIfValid() {
-        guard !id.isEmpty, hasValidFilter else { return }
-        dismiss()
+    private var canSave: Bool {
+        guard !draft.name.trimmed.isEmpty else { return false }
+        let f = draft.asFilter
+        return f.extensions != nil || f.exclude != nil || f.match != .both || f.folders?.isEmpty == false || f.rawQuery != nil
     }
 
     private func addFolder() {
@@ -132,8 +50,8 @@ struct QuickFilterAddSheet: View {
         panel.begin { response in
             if response == .OK {
                 for url in panel.urls {
-                    if let path = url.existingFilePath, !folders.contains(path) {
-                        folders.append(path)
+                    if let path = url.existingFilePath, !draft.folders.contains(path) {
+                        draft.folders.append(path)
                     }
                 }
             }
