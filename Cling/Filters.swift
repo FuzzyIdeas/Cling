@@ -717,9 +717,10 @@ struct QuickFilterRow: View {
         self.filter = filter
         _name = State(initialValue: filter.id)
         _extensions = State(initialValue: filter.extensions ?? "")
-        _preQuery = State(initialValue: filter.preQuery ?? "")
-        _postQuery = State(initialValue: filter.postQuery ?? "")
-        _dirsOnly = State(initialValue: filter.dirsOnly)
+        _exclude = State(initialValue: filter.exclude ?? "")
+        _match = State(initialValue: filter.match)
+        // Open legacy pre/post filters in raw mode, prefilled with the full effective query.
+        _rawQuery = State(initialValue: filter.rawQuery ?? ((filter.preQuery?.isEmpty == false || filter.postQuery?.isEmpty == false) ? filter.queryString : nil))
         _folders = State(initialValue: filter.folders ?? [])
         _hotkey = State(initialValue: filter.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape)
         _maxDepth = State(initialValue: filter.maxDepth ?? -1)
@@ -738,15 +739,20 @@ struct QuickFilterRow: View {
                 .onChange(of: nameFocused) { _, focused in
                     if !focused { save() }
                 }
-            TextField("Extensions", text: $extensions, prompt: Text("e.g.: .png .jpg .pdf"))
-                .textFieldStyle(.roundedBorder)
-                .onChange(of: extensions) { save() }
-            TextField("Pre-query", text: $preQuery, prompt: Text("Prepended to every search"))
-                .textFieldStyle(.roundedBorder)
-                .onChange(of: preQuery) { save() }
-            TextField("Post-query", text: $postQuery, prompt: Text("Appended to every search"))
-                .textFieldStyle(.roundedBorder)
-                .onChange(of: postQuery) { save() }
+            if rawQuery == nil {
+                TextField("Extensions", text: $extensions, prompt: Text("e.g.: .png .jpg .pdf"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: extensions) { save() }
+                TextField("Exclude", text: $exclude, prompt: Text("e.g.: draft .zip node_modules/"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: exclude) { save() }
+            } else {
+                TextField("Query", text: Binding(get: { rawQuery ?? "" }, set: { rawQuery = $0 }),
+                          prompt: Text("Full query, e.g.: .png in:~/Desktop !draft"))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.mono(12))
+                    .onChange(of: rawQuery) { save() }
+            }
         } header: {
             HStack {
                 Text(filter.id).font(.headline)
@@ -762,8 +768,27 @@ struct QuickFilterRow: View {
         }
 
         Section {
-            Toggle("Directories only", isOn: $dirsOnly)
-                .onChange(of: dirsOnly) { save() }
+            if rawQuery == nil {
+                Picker("Match", selection: $match) {
+                    Text("Both").tag(FilterMatch.both)
+                    Text("Files").tag(FilterMatch.files)
+                    Text("Folders").tag(FilterMatch.folders)
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: match) { save() }
+            }
+            LabeledContent("Runs as") {
+                HStack {
+                    Text(currentFilter.queryString.isEmpty ? "everything" : currentFilter.queryString)
+                        .font(.mono(11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    if rawQuery == nil {
+                        Button("Edit as query") { rawQuery = currentFilter.queryString; save() }.font(.caption)
+                    } else {
+                        Button("Use fields") { rawQuery = nil; save() }.font(.caption)
+                    }
+                }
+            }
             Stepper(value: $maxDepth, in: -1 ... 100) {
                 HStack {
                     Text("Max depth")
@@ -792,9 +817,9 @@ struct QuickFilterRow: View {
 
     @State private var name: String
     @State private var extensions: String
-    @State private var preQuery: String
-    @State private var postQuery: String
-    @State private var dirsOnly: Bool
+    @State private var exclude: String
+    @State private var match: FilterMatch
+    @State private var rawQuery: String?   // nil = structured mode
     @State private var folders: [FilePath]
     @State private var hotkey: SauceKey
     @State private var recording = false
@@ -803,18 +828,20 @@ struct QuickFilterRow: View {
 
     @Default(.quickFilters) private var quickFilters
 
+    private var currentFilter: QuickFilter {
+        QuickFilter(id: name, extensions: extensions.trimmed.isEmpty ? nil : extensions.trimmed,
+                    preQuery: nil, postQuery: nil, dirsOnly: false,
+                    folders: folders.isEmpty ? nil : folders,
+                    key: hotkey == .escape ? nil : hotkey.lowercasedChar.first,
+                    maxDepth: maxDepth < 0 ? nil : maxDepth,
+                    exclude: exclude.trimmed.isEmpty ? nil : exclude.trimmed,
+                    rawQuery: rawQuery?.trimmed.isEmpty == true ? nil : rawQuery?.trimmed,
+                    match: match)
+    }
+
     private func save() {
         guard let idx = quickFilters.firstIndex(where: { $0.id == filter.id }) else { return }
-        let updated = QuickFilter(
-            id: name,
-            extensions: extensions.trimmed.isEmpty ? nil : extensions.trimmed,
-            preQuery: preQuery.trimmed.isEmpty ? nil : preQuery.trimmed,
-            postQuery: postQuery.trimmed.isEmpty ? nil : postQuery.trimmed,
-            dirsOnly: dirsOnly,
-            folders: folders.isEmpty ? nil : folders,
-            key: hotkey == .escape ? nil : hotkey.lowercasedChar.first,
-            maxDepth: maxDepth < 0 ? nil : maxDepth
-        )
+        let updated = currentFilter
         quickFilters[idx] = updated
         if FUZZY.quickFilter == filter { FUZZY.quickFilter = updated }
     }
