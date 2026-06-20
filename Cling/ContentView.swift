@@ -632,6 +632,7 @@ struct ContentView: View {
     @State private var filterMatch: FilterMatch = .both
     @State private var filterFolders: [FilePath] = []
     @State private var filterKey: SauceKey = .escape
+    @State private var filterRawQuery: String? = nil
 
     private var filterSubtitle: String? {
         var parts = [String]()
@@ -670,7 +671,7 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $isAddingQuickFilter, onDismiss: handleQuickFilterDismiss) {
-            QuickFilterAddSheet(id: $filterID, extensions: $filterSuffix, exclude: $filterExclude, match: $filterMatch, folders: $filterFolders, key: $filterKey)
+            QuickFilterAddSheet(id: $filterID, extensions: $filterSuffix, exclude: $filterExclude, match: $filterMatch, folders: $filterFolders, key: $filterKey, rawQuery: $filterRawQuery)
         }
         .sheet(isPresented: $isAddingFolderFilter, onDismiss: handleFolderFilterDismiss) {
             FolderFilterAddSheet(id: $folderFilterID, folders: $folderFilterFolders, key: $folderFilterKey)
@@ -771,14 +772,15 @@ struct ContentView: View {
     private func handleQuickFilterDismiss() {
         let ext = filterSuffix.trimmed.isEmpty ? nil : filterSuffix.trimmed
         let excl = filterExclude.trimmed.isEmpty ? nil : filterExclude.trimmed
-        guard !filterID.isEmpty, ext != nil || excl != nil || filterMatch != .both || !filterFolders.isEmpty else {
-            filterID = ""; filterSuffix = ""; filterExclude = ""; filterMatch = .both
+        let hasRawQuery = filterRawQuery?.trimmed.isEmpty == false
+        guard !filterID.isEmpty, ext != nil || excl != nil || filterMatch != .both || !filterFolders.isEmpty || hasRawQuery else {
+            filterID = ""; filterSuffix = ""; filterExclude = ""; filterMatch = .both; filterRawQuery = nil
             return
         }
         fuzzy.suppressNextSearch = true
         fuzzy.query = ""
-        saveQuickFilter(id: filterID, extensions: ext, exclude: excl, match: filterMatch, folders: filterFolders.isEmpty ? nil : filterFolders, key: filterKey)
-        filterID = ""; filterSuffix = ""; filterExclude = ""; filterMatch = .both; filterFolders = []
+        saveQuickFilter(id: filterID, extensions: ext, exclude: excl, match: filterMatch, folders: filterFolders.isEmpty ? nil : filterFolders, key: filterKey, rawQuery: filterRawQuery)
+        filterID = ""; filterSuffix = ""; filterExclude = ""; filterMatch = .both; filterFolders = []; filterRawQuery = nil
     }
 
     private func prefillQuickFilter() {
@@ -806,12 +808,25 @@ struct ContentView: View {
             return
         }
 
+        // If there are free-text tokens (or operator chars not mapping to fields),
+        // fall back to raw-query mode so nothing is lost.
+        if !fuzzyTokens.isEmpty {
+            let name = fuzzyTokens.joined(separator: " ")
+            filterID = name.prefix(1).uppercased() + name.dropFirst()
+            filterKey = getFilterKey(id: filterID)
+            filterRawQuery = q
+            isAddingQuickFilter = true
+            return
+        }
+
+        // Pure extensions / in: / trailing-slash: use structured fields.
+        filterRawQuery = nil
         // Join ALL extension tokens, normalizing *.ext to .ext
         filterSuffix = extTokens.map { $0.hasPrefix("*.") ? "." + $0.dropFirst(2) : String($0) }.joined(separator: " ")
         filterMatch = q.hasSuffix("/") ? .folders : .both
         filterFolders = inTokens
 
-        let name = fuzzyTokens.isEmpty ? extTokens.map(String.init).joined(separator: " ") : fuzzyTokens.joined(separator: " ")
+        let name = extTokens.map(String.init).joined(separator: " ")
         filterID = name.prefix(1).uppercased() + name.dropFirst()
 
         // Auto-assign hotkey: first alphanumeric char not already used

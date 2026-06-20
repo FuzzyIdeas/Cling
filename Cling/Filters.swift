@@ -22,6 +22,7 @@ struct FilterPicker: View {
                     match: filterMatch,
                     folders: filterFolders.isEmpty ? nil : filterFolders,
                     key: filterKey,
+                    rawQuery: filterRawQuery,
                     originalID: originalFilterID
                 )
                 filterID = ""
@@ -29,10 +30,11 @@ struct FilterPicker: View {
                 filterExclude = ""
                 filterMatch = .both
                 filterFolders = []
+                filterRawQuery = nil
                 originalFilterID = ""
                 isEditingFilter = false
             }) {
-                QuickFilterAddSheet(id: $filterID, extensions: $filterSuffix, exclude: $filterExclude, match: $filterMatch, folders: $filterFolders, key: $filterKey)
+                QuickFilterAddSheet(id: $filterID, extensions: $filterSuffix, exclude: $filterExclude, match: $filterMatch, folders: $filterFolders, key: $filterKey, rawQuery: $filterRawQuery)
             }
             .sheet(isPresented: $isAddingFolderFilter, onDismiss: {
                 saveFolderFilter(id: filterID, folders: filterFolders, key: filterKey, originalID: originalFilterID)
@@ -111,6 +113,7 @@ struct FilterPicker: View {
     @State private var filterMatch: FilterMatch = .both
     @State private var filterFolders: [FilePath] = []
     @State private var filterKey: SauceKey = .escape
+    @State private var filterRawQuery: String? = nil
 
     @State private var showFilterEditor = false
 
@@ -239,6 +242,7 @@ struct FilterPicker: View {
             filterMatch = filter.match
             filterFolders = filter.folders ?? []
             filterKey = filter.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape
+            filterRawQuery = filter.rawQuery
             isAddingQuickFilter = true
         }
         Button("Delete") {
@@ -371,11 +375,12 @@ struct FilterPicker: View {
 }
 
 @MainActor
-func saveQuickFilter(id: String, extensions: String?, exclude: String? = nil, match: FilterMatch = .both, folders: [FilePath]? = nil, key: SauceKey, originalID: String = "") {
-    guard !id.isEmpty, (extensions != nil || exclude != nil || match != .both || folders?.isEmpty == false) else { return }
+func saveQuickFilter(id: String, extensions: String?, exclude: String? = nil, match: FilterMatch = .both, folders: [FilePath]? = nil, key: SauceKey, rawQuery: String? = nil, originalID: String = "") {
+    let hasRawQuery = rawQuery?.trimmed.isEmpty == false
+    guard !id.isEmpty, (extensions != nil || exclude != nil || match != .both || folders?.isEmpty == false || hasRawQuery) else { return }
 
     let keyChar: Character? = key == .escape ? nil : key.lowercasedChar.first
-    let filter = QuickFilter(id: id, extensions: extensions, preQuery: nil, postQuery: nil, dirsOnly: false, folders: folders?.isEmpty == true ? nil : folders, key: keyChar, exclude: exclude, match: match)
+    let filter = QuickFilter(id: id, extensions: extensions, preQuery: nil, postQuery: nil, dirsOnly: false, folders: folders?.isEmpty == true ? nil : folders, key: keyChar, exclude: exclude, rawQuery: rawQuery?.trimmed.isEmpty == true ? nil : rawQuery?.trimmed, match: match)
     let originalFilter = Defaults[.quickFilters].first { $0.id == originalID }
 
     if let keyChar, let existingFilter = Defaults[.quickFilters].first(where: { $0.key == keyChar }), existingFilter != originalFilter {
