@@ -914,13 +914,18 @@ struct FolderFilterRow: View {
                     if !focused { save() }
                 }
             LabeledContent("Folders") {
-                folderEditor(folders: $folders, emptyText: "No folders", onChange: save, onAdd: addFolder)
+                folderEditor(folders: $folders, emptyText: "No folders", onChange: { save(); refreshCount() }, onAdd: addFolder)
             }
         } header: {
             HStack {
                 Text(filter.id).font(.headline)
                 Text(folders.map { FuzzyClient.friendlyName(for: $0) }.joined(separator: ", "))
                     .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                if !matchCountText.isEmpty {
+                    Text(matchCountText)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
                 Spacer()
                 Button(action: delete) {
                     Image(systemName: "trash")
@@ -930,6 +935,7 @@ struct FolderFilterRow: View {
                 .help("Delete filter")
             }
         }
+        .task { refreshCount() }
 
         Section {
             Stepper(value: $maxDepth, in: -1 ... 100) {
@@ -941,7 +947,7 @@ struct FolderFilterRow: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .onChange(of: maxDepth) { save() }
+            .onChange(of: maxDepth) { save(); refreshCount() }
             .help("Limit results to entries at most N folders below the search root. -1 = unlimited.")
             LabeledContent("Hotkey") {
                 HStack(spacing: 4) {
@@ -961,8 +967,24 @@ struct FolderFilterRow: View {
     @State private var recording = false
     @State private var maxDepth: Int
     @FocusState private var nameFocused: Bool
+    @State private var matchCountText = ""
+    @State private var countTask: Task<Void, Never>?
 
     @Default(.folderFilters) private var folderFilters
+
+    private func refreshCount() {
+        countTask?.cancel()
+        let currentFolders = folders
+        let currentMaxDepth = maxDepth
+        countTask = Task {
+            try? await Task.sleep(for: .milliseconds(200))
+            if Task.isCancelled { return }
+            let n = await FUZZY.matchCount(query: "", dirsOnly: false,
+                                           folders: currentFolders, maxDepth: currentMaxDepth < 0 ? nil : currentMaxDepth)
+            if Task.isCancelled { return }
+            await MainActor.run { matchCountText = n >= 5000 ? "~5000+" : "~\(n)" }
+        }
+    }
 
     private func save() {
         guard let idx = folderFilters.firstIndex(where: { $0.id == filter.id }) else { return }
