@@ -200,14 +200,35 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     /// The filter's contribution to the search query. Raw override wins; otherwise legacy pre-query,
     /// the compiled structured query, and legacy post-query are joined (legacy pre/post are nil for
     /// filters created or re-saved in the new editor).
-    var queryString: String {
+    /// Structured fields compiled to query tokens, with home abbreviated to `~` in folder scopes.
+    private var compiledCore: String {
+        let home = NSHomeDirectory()
+        return compileFilterQuery(
+            extensions: extensions, exclude: exclude, match: match,
+            folders: folders?.map { abbreviateHome($0.string, home: home) } ?? [], maxDepth: maxDepth
+        )
+    }
+
+    /// The part of the query that goes BEFORE the user's typed search: the raw query when set,
+    /// otherwise the compiled structured tokens followed by the Prepend text.
+    var queryPrefix: String {
         if let raw = rawQuery?.trimmingCharacters(in: .whitespaces), !raw.isEmpty { return raw }
-        let core = compileFilterQuery(extensions: extensions, exclude: exclude, match: match,
-                                      folders: folders?.map(\.string) ?? [], maxDepth: maxDepth)
-        return [preQuery, core, postQuery]
+        return [compiledCore, preQuery]
             .compactMap { $0?.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+    }
+
+    /// The part that goes AFTER the user's typed search: the Append text (none in raw mode).
+    var querySuffix: String {
+        guard rawQuery == nil else { return "" }
+        return postQuery?.trimmingCharacters(in: .whitespaces) ?? ""
+    }
+
+    /// The filter's full standalone query (prefix then suffix), shown in the editor's Raw query row
+    /// and used to seed raw mode. The live user search, when present, is inserted between the two.
+    var queryString: String {
+        [queryPrefix, querySuffix].filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     /// Directories-only is the one facet with no query token, so it is preserved even in raw mode

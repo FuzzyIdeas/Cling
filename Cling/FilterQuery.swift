@@ -36,3 +36,11 @@ func compileFilterQuery(extensions: String?, exclude: String?, match: FilterMatc
 func migratedFilterMatch(dirsOnly: Bool, match: FilterMatch?) -> FilterMatch {
     match ?? (dirsOnly ? .folders : .both)
 }
+
+/// Abbreviate the user's home directory to `~` for brevity in compiled `in:` tokens. The search
+/// parser expands `~` back, so the shortened form is equivalent. `home` has no trailing slash.
+func abbreviateHome(_ path: String, home: String) -> String {
+    if path == home { return "~" }
+    if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
+    return path
+}

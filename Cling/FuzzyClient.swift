@@ -1307,8 +1307,9 @@ class FuzzyClient {
         // Combine user query with QuickFilter's queryString
         var query = constructQuery(self.query)
         if let qf = quickFilter {
-            let contribution = qf.queryString
-            if !contribution.isEmpty { query = query.isEmpty ? contribution : "\(contribution) \(query)" }
+            // The filter wraps the user's typed query: prefix (constraints + Prepend) before it,
+            // suffix (Append) after it. Order matters for the fuzzy word ranking.
+            query = [qf.queryPrefix, query, qf.querySuffix].filter { !$0.isEmpty }.joined(separator: " ")
         }
 
         // Skip if nothing changed since last search
