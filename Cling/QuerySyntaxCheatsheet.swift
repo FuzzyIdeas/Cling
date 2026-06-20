@@ -20,26 +20,26 @@ struct QuerySyntaxCheatsheet: View {
 
     static let groups: [Group] = [
         Group(title: "Match", icon: "magnifyingglass", tint: .blue, items: [
-            Item(syntax: "text", desc: "Fuzzy match — letters in order, anywhere in the path", example: "lnr → Lunar"),
-            Item(syntax: "a b", desc: "Every word must match (in order across the path)", example: "search engine"),
-            Item(syntax: "'text", desc: "Exact text, not fuzzy", example: "'NTSC matches NTSC, not Nits"),
+            Item(syntax: "text", desc: "Fuzzy match: the letters in order, anywhere in the path", example: "rprt finds report.pdf"),
+            Item(syntax: "a b", desc: "Every word must appear", example: "vacation photos"),
+            Item(syntax: "'text", desc: "Exact text, not fuzzy", example: "'cat finds vacation, not contact"),
         ]),
         Group(title: "Type & place", icon: "folder", tint: .orange, items: [
-            Item(syntax: ".ext", desc: "Filter by extension (also *.ext)", example: ".swift"),
-            Item(syntax: ".a .b", desc: "Several extensions at once", example: ".png .jpg"),
-            Item(syntax: "in:PATH", desc: "Search only inside a folder", example: "in:~/Downloads"),
-            Item(syntax: "depth:N", desc: "Limit how deep below the root to look", example: "depth:1"),
-            Item(syntax: "name/", desc: "A folder and everything inside it", example: "config/"),
+            Item(syntax: ".ext", desc: "Filter by file type (or *.ext)", example: ".pdf"),
+            Item(syntax: ".a .b", desc: "Several file types at once", example: ".jpg .png"),
+            Item(syntax: "in:PATH", desc: "Search only inside a folder", example: "in:~/Documents"),
+            Item(syntax: "depth:N", desc: "Stay within N folders of the search root", example: "depth:1"),
+            Item(syntax: "name/", desc: "A folder with this name, and everything inside it", example: "Photos/ finds the folder and its files"),
         ]),
         Group(title: "Anchors", icon: "arrow.left.and.right.text.vertical", tint: .purple, items: [
-            Item(syntax: "^text", desc: "A path segment that starts with text (/text works too)", example: "^release → …/Releases, not jq-release.key"),
-            Item(syntax: "text$", desc: "Name ends with text (extension optional)", example: "icon$ or icon.png$ → crank-icon.png"),
+            Item(syntax: "^text", desc: "A folder or file name that starts with this", example: "^report finds Reports, not annual-report"),
+            Item(syntax: "text$", desc: "A name that ends with this (file type optional)", example: "report$ finds annual-report.pdf"),
         ]),
         Group(title: "Exclude", icon: "minus.circle", tint: .red, items: [
-            Item(syntax: "!text", desc: "Hide paths containing text", example: "!invoice"),
-            Item(syntax: "!.ext", desc: "Hide an extension", example: "!.pyc"),
-            Item(syntax: "!name/", desc: "Hide a folder", example: "!node_modules/"),
-            Item(syntax: "!/", desc: "Files only — hide folders", example: nil),
+            Item(syntax: "!text", desc: "Hide anything containing this", example: "!backup"),
+            Item(syntax: "!.ext", desc: "Hide a file type", example: "!.zip"),
+            Item(syntax: "!name/", desc: "Hide a folder", example: "!Backups/"),
+            Item(syntax: "!/", desc: "Files only (hide folders)", example: nil),
         ]),
     ]
 
@@ -90,7 +90,7 @@ struct QuerySyntaxCheatsheet: View {
                     .foregroundStyle(.secondary)
                 Text("Mix freely:")
                     .foregroundStyle(.secondary)
-                chip(".py plot !/packages/")
+                chip("report .pdf in:~/Documents !draft")
             }
             .font(.system(size: 11))
             .padding(.horizontal, 14)

@@ -388,6 +388,27 @@ private func letterMaskBytes(_ p: UnsafeBufferPointer<UInt8>) -> UInt64 {
     return m
 }
 
+/// Split a query into space-delimited tokens, but keep a double-quoted run as a single token
+/// (quotes removed). Lets a path with spaces survive, e.g. `in:"/Users/me/My Folder"`. Single
+/// quotes are left intact so the leading-quote literal operator ('foo) is unaffected.
+private func tokenizeQuery(_ s: String) -> [String] {
+    var tokens: [String] = []
+    var cur = ""
+    var inQuote = false
+    var has = false
+    for ch in s {
+        if ch == "\"" {
+            inQuote.toggle(); has = true
+        } else if ch == " ", !inQuote {
+            if has { tokens.append(cur); cur = ""; has = false }
+        } else {
+            cur.append(ch); has = true
+        }
+    }
+    if has { tokens.append(cur) }
+    return tokens
+}
+
 // MARK: - SearchResult
 
 struct SearchResult: Comparable {
@@ -1591,7 +1612,7 @@ final class SearchEngine: @unchecked Sendable {
         var negAnchorEnds: [OpNeedle] = []
         var filesOnly = false                // !/ → exclude directories
 
-        for rawTok in qLower.split(separator: " ") {
+        for rawTok in tokenizeQuery(qLower) {
             var t = String(rawTok)
             // Negation sigil (leading '!')
             var negate = false
@@ -1992,22 +2013,30 @@ final class SearchEngine: @unchecked Sendable {
         }
 
         // Byte-level folder prefix check (shared by candidatePool and full scan paths)
+        // A path is "inside" a folder prefix only if it is a STRICT descendant: it starts with the
+        // prefix AND has a path separator right after it. This excludes the folder itself (so
+        // `in:~/Foo` returns only the contents, not Foo) and excludes prefix-siblings (so `in:~/Foo`
+        // doesn't match ~/Foobar). The folder prefixes are stored without a trailing slash (root "/"
+        // being the sole exception, which already ends in '/').
+        @inline(__always) func strictlyInside(_ off: Int, _ len: Int, _ prefix: [UInt8]) -> Bool {
+            let pc = prefix.count
+            guard pc > 0, len > pc else { return false }
+            var j = 0
+            while j < pc {
+                if allBytes[off + j] != prefix[j] { return false }
+                j &+= 1
+            }
+            if prefix[pc - 1] == 0x2F { return true }
+            return allBytes[off + pc] == 0x2F
+        }
+
         @inline(__always) func matchesFolderPrefix(_ i: Int) -> Bool {
             guard let prefixes = folderPrefixBytes else { return true }
             let off = byteOffsets[i]
             let len = byteLengths[i]
             var pi = 0
             while pi < prefixes.count {
-                let prefix = prefixes[pi]
-                if len >= prefix.count {
-                    var ok = true
-                    var j = 0
-                    while j < prefix.count {
-                        if allBytes[off + j] != prefix[j] { ok = false; break }
-                        j &+= 1
-                    }
-                    if ok { return true }
-                }
+                if strictlyInside(off, len, prefixes[pi]) { return true }
                 pi &+= 1
             }
             return false
@@ -2107,7 +2136,9 @@ final class SearchEngine: @unchecked Sendable {
                 var idx = lo
                 while idx < hi {
                     let i = sorted[idx]
-                    if applyAllFilters(i), depthOK(i) { cands.append(i) }
+                    // The [lo, hi) range matches the prefix loosely (includes the folder itself and
+                    // prefix-siblings); strictlyInside keeps only true descendants.
+                    if strictlyInside(byteOffsets[i], byteLengths[i], prefix), applyAllFilters(i), depthOK(i) { cands.append(i) }
                     idx &+= 1
                 }
                 pxi &+= 1
@@ -2175,16 +2206,7 @@ final class SearchEngine: @unchecked Sendable {
                             var matched = false
                             var pi = 0
                             while pi < prefixes.count {
-                                let prefix = prefixes[pi]
-                                if len >= prefix.count {
-                                    var ok = true
-                                    var j = 0
-                                    while j < prefix.count {
-                                        if allBytes[off + j] != prefix[j] { ok = false; break }
-                                        j &+= 1
-                                    }
-                                    if ok { matched = true; break }
-                                }
+                                if strictlyInside(off, len, prefixes[pi]) { matched = true; break }
                                 pi &+= 1
                             }
                             if !matched { i &+= 1; continue }

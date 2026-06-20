@@ -982,6 +982,9 @@ struct ContentView: View {
 
     @State private var showFullHistory = false
     @State private var showSyntaxHelp = false
+    // Right-arrow drills into a folder (query becomes `in:<folder>`); left-arrow walks back out.
+    @State private var queryDrillStack: [String] = []
+    @State private var lastDrillSetQuery: String?
     @State private var showNeedsProPopover = false
     @State private var isAddingFolderFilter = false
     @State private var folderFilterID = ""
@@ -1236,6 +1239,28 @@ struct ContentView: View {
                     focused = .search
                     return .handled
                 }
+                .onKeyPress(.rightArrow) {
+                    // Drill into the selected folder: replace the query with `in:<folder>`.
+                    guard focused == .list, selectedResults.count == 1,
+                          let folder = selectedResults.first, folder.memoz.isDir
+                    else { return .ignored }
+                    let drilled = drillIntoFolderQuery(folder)
+                    // A fresh drill (query isn't one we set) starts a new back-stack.
+                    if fuzzy.query != lastDrillSetQuery { queryDrillStack.removeAll() }
+                    queryDrillStack.append(fuzzy.query)
+                    fuzzy.query = drilled
+                    lastDrillSetQuery = drilled
+                    return .handled
+                }
+                .onKeyPress(.leftArrow) {
+                    // Walk back out, but only while the query is still the untouched one we drilled into.
+                    guard focused == .list, !queryDrillStack.isEmpty, fuzzy.query == lastDrillSetQuery
+                    else { return .ignored }
+                    let previous = queryDrillStack.removeLast()
+                    fuzzy.query = previous
+                    lastDrillSetQuery = previous
+                    return .handled
+                }
                 .focused($focused, equals: .list)
                 .transparentTableBackground()
                 .padding(6)
@@ -1481,6 +1506,20 @@ struct ContentView: View {
         default:
             break
         }
+    }
+
+    /// Build an `in:` query that scopes the search into `folder`. Home is abbreviated to `~`, and a
+    /// path containing spaces is wrapped in double quotes so the query tokenizer keeps it intact.
+    private func drillIntoFolderQuery(_ folder: FilePath) -> String {
+        let p = folder.string
+        let home = NSHomeDirectory()
+        var shown = p
+        if p == home {
+            shown = "~"
+        } else if p.hasPrefix(home + "/") {
+            shown = "~" + p.dropFirst(home.count)
+        }
+        return shown.contains(" ") ? "in:\"\(shown)\"" : "in:\(shown)"
     }
 
     private func selectFirstResult() {
