@@ -1,5 +1,7 @@
 import Foundation
 
+// MARK: - FilterMatch
+
 /// How a filter restricts results by entry kind. `folders` maps to the directories-only search
 /// parameter (it has no query token); `both`/`files` are expressible as tokens.
 enum FilterMatch: String, Codable, CaseIterable {

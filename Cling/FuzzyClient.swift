@@ -413,30 +413,6 @@ class FuzzyClient {
         indexStaleExternalVolumes()
     }}
 
-    /// Records freshly-seen volumes. In opt-in mode (`disableAutomaticVolumeIndexing`), a volume seen for
-    /// the first time that has never been indexed starts out disabled, so it shows up toggled-off in
-    /// Settings until the user enables it. Guarded by `knownVolumes` so it runs exactly once per volume:
-    /// it never re-disables a volume the user has already enabled, and never touches already-known or
-    /// previously-indexed volumes (those keep auto-reindexing).
-    func registerNewVolumes() {
-        let known = Set(Defaults[.knownVolumes])
-        let unseen = externalVolumes.filter { !known.contains($0) }
-        guard !unseen.isEmpty else { return }
-        Defaults[.knownVolumes].append(contentsOf: unseen)
-
-        guard Defaults[.disableAutomaticVolumeIndexing] else { return }
-        let indexed = Set(Defaults[.indexedVolumePaths])
-        let toDisable = unseen.filter { !indexed.contains($0) && !disabledVolumes.contains($0) }
-        guard !toDisable.isEmpty else { return }
-
-        Defaults[.disabledVolumes].append(contentsOf: toDisable)
-        disabledVolumes.append(contentsOf: toDisable)
-        let mounted = Set(externalVolumes)
-        disconnectedVolumes = Set(Defaults[.indexedVolumePaths].filter { !mounted.contains($0) && !disabledVolumes.contains($0) })
-        enabledVolumes = computeEnabledVolumes(mounted: externalVolumes, disabled: disabledVolumes)
-        externalIndexes = getExternalIndexes()
-    }
-
     var volumeFilter: FilePath? {
         didSet {
             guard volumeFilter != oldValue, !updatingFilters else { return }
@@ -606,6 +582,30 @@ class FuzzyClient {
         filtered.sort(by: >)
         var seen = Set<String>()
         return filtered.prefix(maxResults * 2).filter { seen.insert($0.path).inserted }.prefix(maxResults).map { $0 }
+    }
+
+    /// Records freshly-seen volumes. In opt-in mode (`disableAutomaticVolumeIndexing`), a volume seen for
+    /// the first time that has never been indexed starts out disabled, so it shows up toggled-off in
+    /// Settings until the user enables it. Guarded by `knownVolumes` so it runs exactly once per volume:
+    /// it never re-disables a volume the user has already enabled, and never touches already-known or
+    /// previously-indexed volumes (those keep auto-reindexing).
+    func registerNewVolumes() {
+        let known = Set(Defaults[.knownVolumes])
+        let unseen = externalVolumes.filter { !known.contains($0) }
+        guard !unseen.isEmpty else { return }
+        Defaults[.knownVolumes].append(contentsOf: unseen)
+
+        guard Defaults[.disableAutomaticVolumeIndexing] else { return }
+        let indexed = Set(Defaults[.indexedVolumePaths])
+        let toDisable = unseen.filter { !indexed.contains($0) && !disabledVolumes.contains($0) }
+        guard !toDisable.isEmpty else { return }
+
+        Defaults[.disabledVolumes].append(contentsOf: toDisable)
+        disabledVolumes.append(contentsOf: toDisable)
+        let mounted = Set(externalVolumes)
+        disconnectedVolumes = Set(Defaults[.indexedVolumePaths].filter { !mounted.contains($0) && !disabledVolumes.contains($0) })
+        enabledVolumes = computeEnabledVolumes(mounted: externalVolumes, disabled: disabledVolumes)
+        externalIndexes = getExternalIndexes()
     }
 
     func setOperation(_ value: String) {
@@ -1981,6 +1981,27 @@ class FuzzyClient {
         logActivity("Compacted live changes: collapsed \(removed) duplicate event\(removed == 1 ? "" : "s")")
     }
 
+    /// Approximate count of results a query would return across all active engines.
+    /// Runs on a detached utility task so it never blocks the main thread.
+    func matchCount(query: String, dirsOnly: Bool, folders: [FilePath], maxDepth: Int?, cap: Int = 5000) async -> Int {
+        let engines = activeEngines
+        let prefixes = folders.isEmpty ? nil : folders.map(\.string)
+        return await Task.detached(priority: .utility) {
+            var total = 0
+            for (eng, _, _) in engines {
+                total += eng.search(
+                    query: query,
+                    maxResults: max(0, cap - total),
+                    folderPrefixes: prefixes,
+                    dirsOnly: dirsOnly,
+                    maxDepth: maxDepth
+                ).count
+                if total >= cap { break }
+            }
+            return min(total, cap)
+        }.value
+    }
+
     @ObservationIgnored private var _lastOperationUpdate: CFAbsoluteTime = 0
     @ObservationIgnored private var _operationThrottle: Task<Void, Never>?
 
@@ -2129,22 +2150,6 @@ class FuzzyClient {
                 .filter { FileManager.default.fileExists(atPath: $0) }
                 .map { ($0, nil, false) }
         }
-    }
-
-    /// Approximate count of results a query would return across all active engines.
-    /// Runs on a detached utility task so it never blocks the main thread.
-    func matchCount(query: String, dirsOnly: Bool, folders: [FilePath], maxDepth: Int?, cap: Int = 5000) async -> Int {
-        let engines = activeEngines
-        let prefixes = folders.isEmpty ? nil : folders.map(\.string)
-        return await Task.detached(priority: .utility) {
-            var total = 0
-            for (eng, _, _) in engines {
-                total += eng.search(query: query, maxResults: max(0, cap - total), folderPrefixes: prefixes,
-                                    dirsOnly: dirsOnly, maxDepth: maxDepth).count
-                if total >= cap { break }
-            }
-            return min(total, cap)
-        }.value
     }
 
 }

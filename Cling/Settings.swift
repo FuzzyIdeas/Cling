@@ -137,9 +137,19 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         match = migratedFilterMatch(dirsOnly: dirsOnly, match: decodedMatch)
     }
 
-    init(id: String, extensions: String?, preQuery: String?, postQuery: String? = nil,
-         dirsOnly: Bool, folders: [FilePath]? = nil, key: Character?, maxDepth: Int? = nil,
-         exclude: String? = nil, rawQuery: String? = nil, match: FilterMatch = .both) {
+    init(
+        id: String,
+        extensions: String?,
+        preQuery: String?,
+        postQuery: String? = nil,
+        dirsOnly: Bool,
+        folders: [FilePath]? = nil,
+        key: Character?,
+        maxDepth: Int? = nil,
+        exclude: String? = nil,
+        rawQuery: String? = nil,
+        match: FilterMatch = .both
+    ) {
         self.id = id; self.extensions = extensions; self.preQuery = preQuery; self.postQuery = postQuery
         self.dirsOnly = dirsOnly; self.folders = folders; self.key = key; self.maxDepth = maxDepth
         self.exclude = exclude; self.rawQuery = rawQuery; self.match = match
@@ -191,24 +201,6 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         return parts.joined(separator: ", ")
     }
 
-    func withKey(_ key: Character?) -> QuickFilter {
-        QuickFilter(id: id, extensions: extensions, preQuery: preQuery, postQuery: postQuery,
-                    dirsOnly: dirsOnly, folders: folders, key: key, maxDepth: maxDepth,
-                    exclude: exclude, rawQuery: rawQuery, match: match)
-    }
-
-    /// The filter's contribution to the search query. Raw override wins; otherwise legacy pre-query,
-    /// the compiled structured query, and legacy post-query are joined (legacy pre/post are nil for
-    /// filters created or re-saved in the new editor).
-    /// Structured fields compiled to query tokens, with home abbreviated to `~` in folder scopes.
-    private var compiledCore: String {
-        let home = NSHomeDirectory()
-        return compileFilterQuery(
-            extensions: extensions, exclude: exclude, match: match,
-            folders: folders?.map { abbreviateHome($0.string, home: home) } ?? [], maxDepth: maxDepth
-        )
-    }
-
     /// The part of the query that goes BEFORE the user's typed search: the raw query when set,
     /// otherwise the compiled structured tokens followed by the Prepend text.
     var queryPrefix: String {
@@ -239,6 +231,22 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     /// Extensions to pre-narrow the candidate pool. Raw filters skip the pool.
     var poolExtensions: String? { rawQuery == nil ? extensions : nil }
 
+    func withKey(_ key: Character?) -> QuickFilter {
+        QuickFilter(
+            id: id,
+            extensions: extensions,
+            preQuery: preQuery,
+            postQuery: postQuery,
+            dirsOnly: dirsOnly,
+            folders: folders,
+            key: key,
+            maxDepth: maxDepth,
+            exclude: exclude,
+            rawQuery: rawQuery,
+            match: match
+        )
+    }
+
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
@@ -258,6 +266,18 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         case id, extensions, preQuery, postQuery, dirsOnly, folders, key, maxDepth
         case exclude, rawQuery, match
         case suffix, query // legacy keys for decoding only
+    }
+
+    /// The filter's contribution to the search query. Raw override wins; otherwise legacy pre-query,
+    /// the compiled structured query, and legacy post-query are joined (legacy pre/post are nil for
+    /// filters created or re-saved in the new editor).
+    /// Structured fields compiled to query tokens, with home abbreviated to `~` in folder scopes.
+    private var compiledCore: String {
+        let home = NSHomeDirectory()
+        return compileFilterQuery(
+            extensions: extensions, exclude: exclude, match: match,
+            folders: folders?.map { abbreviateHome($0.string, home: home) } ?? [], maxDepth: maxDepth
+        )
     }
 
 }

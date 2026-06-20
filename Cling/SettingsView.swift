@@ -81,14 +81,17 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - SettingsView
+// MARK: - SettingsNavigation
 
 /// Drives the Settings sidebar selection so it can be set programmatically — e.g. focusing the
 /// About item before presenting the Paddle licence sheet.
 @MainActor final class SettingsNavigation: ObservableObject {
     static let shared = SettingsNavigation()
+
     @Published var selection: SettingsCategory = .general
 }
+
+// MARK: - SettingsView
 
 struct SettingsView: View {
     @ObservedObject private var nav = SettingsNavigation.shared
@@ -800,8 +803,6 @@ private struct SearchSettingsPane: View {
 // MARK: - VolumesSettingsPane
 
 private struct VolumesSettingsPane: View {
-    @Default(.disableAutomaticVolumeIndexing) private var disableAutomaticVolumeIndexing
-
     var body: some View {
         Form {
             Section {
@@ -826,6 +827,9 @@ private struct VolumesSettingsPane: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
     }
+
+    @Default(.disableAutomaticVolumeIndexing) private var disableAutomaticVolumeIndexing
+
 }
 
 // MARK: - FiltersSettingsPane

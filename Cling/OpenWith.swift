@@ -261,7 +261,7 @@ struct OpenWithActionButtons: View {
                 }
             }
         }
-        .help("Open with: \(apps.map { $0.lastPathComponent.ns.deletingPathExtension }.joined(separator: ", "))")
+        .help("Open with: \(apps.map(\.lastPathComponent.ns.deletingPathExtension).joined(separator: ", "))")
     }
 
     var body: some View {

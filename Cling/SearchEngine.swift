@@ -1599,18 +1599,18 @@ final class SearchEngine: @unchecked Sendable {
         // Positive token buckets (existing semantics)
         var inPrefixes: [String] = []
         var queryDepths: [Int] = []
-        var extStrings: [String] = []       // ".pdf"
-        var dirSegStrings: [String] = []    // "rcmd/"
+        var extStrings: [String] = [] // ".pdf"
+        var dirSegStrings: [String] = [] // "rcmd/"
         var fuzzyTokens: [String] = []
         // Operator buckets (fzf-style)
-        var litSubstrings: [OpNeedle] = []   // 'foo  → required contiguous substring
-        var anchorStarts: [OpNeedle] = []    // ^foo or /foo → required substring "/foo"
-        var anchorEnds: [OpNeedle] = []      // foo$ → name ends with foo (extension optional)
-        var negSubstrings: [OpNeedle] = []   // !foo, !foo/, !/x/ → reject if substring present
-        var negExtStrings: [String] = []     // !.py → reject by extension
+        var litSubstrings: [OpNeedle] = [] // 'foo  → required contiguous substring
+        var anchorStarts: [OpNeedle] = [] // ^foo or /foo → required substring "/foo"
+        var anchorEnds: [OpNeedle] = [] // foo$ → name ends with foo (extension optional)
+        var negSubstrings: [OpNeedle] = [] // !foo, !foo/, !/x/ → reject if substring present
+        var negExtStrings: [String] = [] // !.py → reject by extension
         var negAnchorStarts: [OpNeedle] = []
         var negAnchorEnds: [OpNeedle] = []
-        var filesOnly = false                // !/ → exclude directories
+        var filesOnly = false // !/ → exclude directories
 
         for rawTok in tokenizeQuery(qLower) {
             var t = String(rawTok)
@@ -1659,7 +1659,7 @@ final class SearchEngine: @unchecked Sendable {
             } else if t.hasPrefix("/") {
                 let rest = String(t.dropFirst())
                 if !rest.isEmpty, !rest.contains("/") {
-                    anchorStart = true; t = rest                 // single-segment /foo → start anchor
+                    anchorStart = true; t = rest // single-segment /foo → start anchor
                 } else {
                     while t.hasPrefix("/") { t = String(t.dropFirst()) } // legacy: strip leading slashes
                 }
@@ -1758,9 +1758,15 @@ final class SearchEngine: @unchecked Sendable {
         // prefilter mask. needleMask() uses the NFC∩NFD intersection so an accented needle never
         // prunes a path that differs only by normalization. ('/' contributes no bits.)
         var opMask: UInt64 = 0
-        for lit in litSubstrings { opMask |= needleMask(lit) }
-        for a in anchorStarts { opMask |= needleMask(a) }
-        for a in anchorEnds { opMask |= needleMask(a) }
+        for lit in litSubstrings {
+            opMask |= needleMask(lit)
+        }
+        for a in anchorStarts {
+            opMask |= needleMask(a)
+        }
+        for a in anchorEnds {
+            opMask |= needleMask(a)
+        }
         let combinedMask = qMask | extMask | dirMask | opMask
         // Per-needle letter masks gate the negation substring scan: a path can only contain
         // the needle if its whole-path mask has every needle letter, so the scan is skipped
@@ -2084,7 +2090,9 @@ final class SearchEngine: @unchecked Sendable {
             if !negExtIDs.isEmpty {
                 let eid = extIDs[i]
                 var ni = 0
-                while ni < negExtIDs.count { if eid == negExtIDs[ni] { return false }; ni &+= 1 }
+                while ni < negExtIDs.count {
+                    if eid == negExtIDs[ni] { return false }; ni &+= 1
+                }
             }
             if !negExtUnknownBytes.isEmpty {
                 var ni = 0
@@ -2093,7 +2101,9 @@ final class SearchEngine: @unchecked Sendable {
                     if len >= ext.count {
                         var match = true
                         var j = 0
-                        while j < ext.count { if allBase[off + len - ext.count + j] != ext[j] { match = false; break }; j &+= 1 }
+                        while j < ext.count {
+                            if allBase[off + len - ext.count + j] != ext[j] { match = false; break }; j &+= 1
+                        }
                         if match { return false }
                     }
                     ni &+= 1
