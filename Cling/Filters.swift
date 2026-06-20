@@ -743,16 +743,16 @@ struct QuickFilterRow: View {
             if rawQuery == nil {
                 TextField("Extensions", text: $extensions, prompt: Text("e.g.: .png .jpg .pdf"))
                     .textFieldStyle(.roundedBorder)
-                    .onChange(of: extensions) { save() }
+                    .onChange(of: extensions) { save(); refreshCount() }
                 TextField("Exclude", text: $exclude, prompt: Text("e.g.: draft .zip node_modules/"))
                     .textFieldStyle(.roundedBorder)
-                    .onChange(of: exclude) { save() }
+                    .onChange(of: exclude) { save(); refreshCount() }
             } else {
                 TextField("Query", text: Binding(get: { rawQuery ?? "" }, set: { rawQuery = $0 }),
                           prompt: Text("Full query, e.g.: .png in:~/Desktop !draft"))
                     .textFieldStyle(.roundedBorder)
                     .font(.mono(12))
-                    .onChange(of: rawQuery) { save() }
+                    .onChange(of: rawQuery) { save(); refreshCount() }
             }
         } header: {
             HStack {
@@ -776,20 +776,26 @@ struct QuickFilterRow: View {
                     Text("Folders").tag(FilterMatch.folders)
                 }
                 .pickerStyle(.segmented)
-                .onChange(of: match) { save() }
+                .onChange(of: match) { save(); refreshCount() }
             }
             LabeledContent("Runs as") {
                 HStack {
                     Text(currentFilter.queryString.isEmpty ? "everything" : currentFilter.queryString)
                         .font(.mono(11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    if !matchCountText.isEmpty {
+                        Text(matchCountText)
+                            .font(.mono(11))
+                            .foregroundStyle(.tertiary)
+                    }
                     Spacer()
                     if rawQuery == nil {
-                        Button("Edit as query") { rawQuery = currentFilter.queryString; save() }.font(.caption)
+                        Button("Edit as query") { rawQuery = currentFilter.queryString; save(); refreshCount() }.font(.caption)
                     } else {
-                        Button("Use fields") { rawQuery = nil; save() }.font(.caption)
+                        Button("Use fields") { rawQuery = nil; save(); refreshCount() }.font(.caption)
                     }
                 }
             }
+            .task { refreshCount() }
             Stepper(value: $maxDepth, in: -1 ... 100) {
                 HStack {
                     Text("Max depth")
@@ -799,7 +805,7 @@ struct QuickFilterRow: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .onChange(of: maxDepth) { save() }
+            .onChange(of: maxDepth) { save(); refreshCount() }
             .help("Limit results to entries at most N folders below the search root. -1 = unlimited.")
             LabeledContent("Hotkey") {
                 HStack(spacing: 4) {
@@ -811,7 +817,7 @@ struct QuickFilterRow: View {
                 }
             }
             LabeledContent("Search in") {
-                folderEditor(folders: $folders, emptyText: "All locations", onChange: save, onAdd: addFolder)
+                folderEditor(folders: $folders, emptyText: "All locations", onChange: { save(); refreshCount() }, onAdd: addFolder)
             }
         }
     }
@@ -826,6 +832,8 @@ struct QuickFilterRow: View {
     @State private var recording = false
     @State private var maxDepth: Int
     @FocusState private var nameFocused: Bool
+    @State private var matchCountText = ""
+    @State private var countTask: Task<Void, Never>?
 
     @Default(.quickFilters) private var quickFilters
 
@@ -838,6 +846,19 @@ struct QuickFilterRow: View {
                     exclude: exclude.trimmed.isEmpty ? nil : exclude.trimmed,
                     rawQuery: rawQuery?.trimmed.isEmpty == true ? nil : rawQuery?.trimmed,
                     match: match)
+    }
+
+    private func refreshCount() {
+        countTask?.cancel()
+        let f = currentFilter
+        countTask = Task {
+            try? await Task.sleep(for: .milliseconds(200))
+            if Task.isCancelled { return }
+            let n = await FUZZY.matchCount(query: f.queryString, dirsOnly: f.searchDirsOnly,
+                                           folders: f.folders ?? [], maxDepth: f.maxDepth)
+            if Task.isCancelled { return }
+            await MainActor.run { matchCountText = n >= 5000 ? "~5000+" : "~\(n)" }
+        }
     }
 
     private func save() {

@@ -2130,6 +2130,22 @@ class FuzzyClient {
         }
     }
 
+    /// Approximate count of results a query would return across all active engines.
+    /// Runs on a detached utility task so it never blocks the main thread.
+    func matchCount(query: String, dirsOnly: Bool, folders: [FilePath], maxDepth: Int?, cap: Int = 5000) async -> Int {
+        let engines = activeEngines
+        let prefixes = folders.isEmpty ? nil : folders.map(\.string)
+        return await Task.detached(priority: .utility) {
+            var total = 0
+            for (eng, _, _) in engines {
+                total += eng.search(query: query, maxResults: cap, folderPrefixes: prefixes,
+                                    dirsOnly: dirsOnly, maxDepth: maxDepth).count
+                if total >= cap { break }
+            }
+            return min(total, cap)
+        }.value
+    }
+
 }
 
 // MARK: - Helpers
