@@ -31,3 +31,8 @@ func compileFilterQuery(extensions: String?, exclude: String?, match: FilterMatc
 
     return tokens.joined(separator: " ")
 }
+
+/// Migration: an old filter stored `dirsOnly: Bool`. Map it to `FilterMatch` when `match` is absent.
+func migratedFilterMatch(dirsOnly: Bool, match: FilterMatch?) -> FilterMatch {
+    match ?? (dirsOnly ? .folders : .both)
+}

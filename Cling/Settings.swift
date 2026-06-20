@@ -98,6 +98,8 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         postQuery = try container.decodeIfPresent(String.self, forKey: .postQuery)
         folders = try container.decodeIfPresent([FilePath].self, forKey: .folders)
         maxDepth = try container.decodeIfPresent(Int.self, forKey: .maxDepth)
+        exclude = try container.decodeIfPresent(String.self, forKey: .exclude)
+        rawQuery = try container.decodeIfPresent(String.self, forKey: .rawQuery)
 
         if container.contains(.extensions) {
             extensions = try container.decodeIfPresent(String.self, forKey: .extensions)
@@ -130,17 +132,17 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
             preQuery = nil
             dirsOnly = false
         }
+
+        let decodedMatch = try container.decodeIfPresent(FilterMatch.self, forKey: .match)
+        match = migratedFilterMatch(dirsOnly: dirsOnly, match: decodedMatch)
     }
 
-    init(id: String, extensions: String?, preQuery: String?, postQuery: String? = nil, dirsOnly: Bool, folders: [FilePath]? = nil, key: Character?, maxDepth: Int? = nil) {
-        self.id = id
-        self.extensions = extensions
-        self.preQuery = preQuery
-        self.postQuery = postQuery
-        self.dirsOnly = dirsOnly
-        self.folders = folders
-        self.key = key
-        self.maxDepth = maxDepth
+    init(id: String, extensions: String?, preQuery: String?, postQuery: String? = nil,
+         dirsOnly: Bool, folders: [FilePath]? = nil, key: Character?, maxDepth: Int? = nil,
+         exclude: String? = nil, rawQuery: String? = nil, match: FilterMatch = .both) {
+        self.id = id; self.extensions = extensions; self.preQuery = preQuery; self.postQuery = postQuery
+        self.dirsOnly = dirsOnly; self.folders = folders; self.key = key; self.maxDepth = maxDepth
+        self.exclude = exclude; self.rawQuery = rawQuery; self.match = match
     }
 
     let id: String
@@ -151,6 +153,9 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     let folders: [FilePath]? // auto-applied folder filter when this quick filter is enabled
     let key: Character?
     let maxDepth: Int?
+    let exclude: String?
+    let rawQuery: String?
+    let match: FilterMatch
 
     var keyEquivalent: KeyEquivalent? {
         key.map { KeyEquivalent($0) }
@@ -171,7 +176,12 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
                 .split(separator: " ").filter { $0.hasPrefix(".") }.map { "*\($0)" }
             parts.append(exts.joined(separator: " "))
         }
-        if dirsOnly { parts.append("dirs only") }
+        switch match {
+        case .files: parts.append("files only")
+        case .folders: parts.append("folders only")
+        case .both: break
+        }
+        if let exclude, !exclude.isEmpty { parts.append("not " + exclude) }
         if let preQuery { parts.append(preQuery) }
         if let postQuery { parts.append("...\(postQuery)") }
         if let folders, !folders.isEmpty {
@@ -182,8 +192,29 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     }
 
     func withKey(_ key: Character?) -> QuickFilter {
-        QuickFilter(id: id, extensions: extensions, preQuery: preQuery, postQuery: postQuery, dirsOnly: dirsOnly, folders: folders, key: key, maxDepth: maxDepth)
+        QuickFilter(id: id, extensions: extensions, preQuery: preQuery, postQuery: postQuery,
+                    dirsOnly: dirsOnly, folders: folders, key: key, maxDepth: maxDepth,
+                    exclude: exclude, rawQuery: rawQuery, match: match)
     }
+
+    /// The filter's contribution to the search query. Raw override wins; otherwise legacy pre-query,
+    /// the compiled structured query, and legacy post-query are joined (legacy pre/post are nil for
+    /// filters created or re-saved in the new editor).
+    var queryString: String {
+        if let raw = rawQuery?.trimmingCharacters(in: .whitespaces), !raw.isEmpty { return raw }
+        let core = compileFilterQuery(extensions: extensions, exclude: exclude, match: match,
+                                      folders: folders?.map(\.string) ?? [], maxDepth: maxDepth)
+        return [preQuery, core, postQuery]
+            .compactMap { $0?.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    /// Directories-only is the one facet with no query token, so it stays a search parameter.
+    var searchDirsOnly: Bool { rawQuery == nil && match == .folders }
+
+    /// Extensions to pre-narrow the candidate pool. Raw filters skip the pool.
+    var poolExtensions: String? { rawQuery == nil ? extensions : nil }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -195,10 +226,14 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         try container.encodeIfPresent(folders, forKey: .folders)
         try container.encodeIfPresent(key, forKey: .key)
         try container.encodeIfPresent(maxDepth, forKey: .maxDepth)
+        try container.encodeIfPresent(exclude, forKey: .exclude)
+        try container.encodeIfPresent(rawQuery, forKey: .rawQuery)
+        try container.encode(match, forKey: .match)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, extensions, preQuery, postQuery, dirsOnly, folders, key, maxDepth
+        case exclude, rawQuery, match
         case suffix, query // legacy keys for decoding only
     }
 
