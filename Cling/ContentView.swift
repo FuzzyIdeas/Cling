@@ -714,7 +714,8 @@ struct ContentView: View {
         .buttonStyle(.plain)
         .foregroundColor(showSyntaxHelp ? .accentColor : .secondary)
         .focusable(false)
-        .help("Search syntax reference")
+        .help("Search syntax reference (⌘/)")
+        .keyboardShortcut("/", modifiers: .command)
         .popover(isPresented: $showSyntaxHelp, arrowEdge: .bottom) {
             QuerySyntaxCheatsheet()
         }
