@@ -112,6 +112,11 @@ struct QuerySyntaxCheatsheet: View {
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
+                        .padding(.top, 1)
                 }
             }
             Spacer(minLength: 0)

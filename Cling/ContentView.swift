@@ -1141,11 +1141,11 @@ struct ContentView: View {
         "Example: **`config/ .toml .yaml`** *(finds configuration files)*",
         "Example: **`.mkv .mp4 in:~/Movies`** *(shows common video files)*",
         "Example: **`.md in:~/Notes`** *(finds Markdown notes)*",
-        "Example: **`.py plot !/packages/`** *(excludes anything under packages)*",
-        "Example: **`^release`** *(matches a folder named like release)*",
-        "Example: **`icon.png$`** *(matches paths ending in icon.png)*",
-        "Example: **`screenshot !.mov`** *(drops the .mov screen recordings)*",
-        "Example: **`'NTSC`** *(exact text, not fuzzy)*",
+        "Example: **`.js !node_modules/`** *(code, without dependencies)*",
+        "Example: **`report !draft`** *(reports, skipping drafts)*",
+        "Example: **`.png !screenshot`** *(PNGs that aren't screenshots)*",
+        "Example: **`notes$`** *(names ending in notes)*",
+        "Example: **`'cat`** *(exact text: finds Cats or vacation, not contact)*",
         "Example: **`brew python`** *(shows installed Python versions)*",
     ]
 
