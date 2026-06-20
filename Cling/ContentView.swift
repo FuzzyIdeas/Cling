@@ -801,25 +801,16 @@ struct ContentView: View {
             return
         }
 
+        // Always open in structured mode: extensions/folders/match map to fields, and any
+        // free-text or operator tokens go into Prepend so nothing is lost.
         filterDraft = QuickFilterDraft()
-
-        // If there are free-text tokens (or operator chars not mapping to fields),
-        // fall back to raw-query mode so nothing is lost.
-        if !fuzzyTokens.isEmpty {
-            let name = fuzzyTokens.joined(separator: " ")
-            filterDraft.name = name.prefix(1).uppercased() + name.dropFirst()
-            filterDraft.hotkey = getFilterKey(id: filterDraft.name)
-            filterDraft.rawQuery = q
-            isAddingQuickFilter = true
-            return
-        }
-
-        // Pure extensions / in: / trailing-slash: use structured fields.
         filterDraft.extensions = extTokens.map { $0.hasPrefix("*.") ? "." + $0.dropFirst(2) : String($0) }.joined(separator: " ")
         filterDraft.match = q.hasSuffix("/") ? .folders : .both
         filterDraft.folders = inTokens
+        filterDraft.prepend = fuzzyTokens.joined(separator: " ")
 
-        let name = extTokens.map(String.init).joined(separator: " ")
+        let nameSource = fuzzyTokens.isEmpty ? extTokens : fuzzyTokens
+        let name = nameSource.map(String.init).joined(separator: " ")
         filterDraft.name = name.prefix(1).uppercased() + name.dropFirst()
         filterDraft.hotkey = getFilterKey(id: filterDraft.name)
 

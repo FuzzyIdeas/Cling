@@ -692,21 +692,10 @@ private func folderEditor(folders: Binding<[FilePath]>, emptyText: String, onCha
     }
 }
 
-// MARK: - QuickFilterRow
+// MARK: - QuickFilterDraft
 
 /// Mutable working copy of a `QuickFilter`'s fields, edited by `QuickFilterEditor`.
 struct QuickFilterDraft {
-    var name = ""
-    var extensions = ""
-    var exclude = ""
-    var match: FilterMatch = .both
-    var prepend = ""   // added before the user's typed search (preQuery)
-    var append = ""    // added after the user's typed search (postQuery)
-    var rawQuery: String?  // nil = structured mode
-    var folders: [FilePath] = []
-    var hotkey: SauceKey = .escape
-    var maxDepth: Int = -1
-
     init() {}
     init(from f: QuickFilter) {
         name = f.id
@@ -720,6 +709,17 @@ struct QuickFilterDraft {
         hotkey = f.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape
         maxDepth = f.maxDepth ?? -1
     }
+
+    var name = ""
+    var extensions = ""
+    var exclude = ""
+    var match: FilterMatch = .both
+    var prepend = "" // added before the user's typed search (preQuery)
+    var append = "" // added after the user's typed search (postQuery)
+    var rawQuery: String? // nil = structured mode
+    var folders: [FilePath] = []
+    var hotkey: SauceKey = .escape
+    var maxDepth: Int = -1
 
     var asFilter: QuickFilter {
         QuickFilter(
@@ -738,35 +738,17 @@ struct QuickFilterDraft {
     }
 }
 
+// MARK: - QuickFilterEditor
+
 /// Shared Quick Filter editor (used by the Settings list row and the add sheet). Renders three
 /// Form sections: a pinned edit-mode section, the name + structured fields, and hotkey + scope.
 struct QuickFilterEditor: View {
     @Binding var draft: QuickFilterDraft
-    var matchCountText: String = ""
+
+    var matchCountText = ""
     var onEdit: () -> Void = {}
     var onAddFolder: () -> Void = {}
     var onDelete: (() -> Void)? = nil
-
-    @State private var recording = false
-
-    private enum Mode: Hashable { case fields, raw }
-
-    private var modeBinding: Binding<Mode> {
-        Binding(
-            get: { draft.rawQuery == nil ? .fields : .raw },
-            set: { newMode in
-                if newMode == .raw {
-                    draft.rawQuery = draft.asFilter.queryString
-                } else {
-                    draft.rawQuery = nil
-                }
-                onEdit()
-            }
-        )
-    }
-
-    private var fieldsMode: Bool { draft.rawQuery == nil }
-    private var preview: String { draft.asFilter.queryString }
 
     var body: some View {
         // Pinned at top so switching modes only changes the sections below it.
@@ -781,6 +763,17 @@ struct QuickFilterEditor: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             rawQueryRow
+        } header: {
+            HStack {
+                Text(draft.name.isEmpty ? "Quick Filter" : draft.name).font(.headline)
+                Spacer()
+                if let onDelete {
+                    Button(action: onDelete) { Image(systemName: "trash") }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.red)
+                        .help("Delete filter")
+                }
+            }
         }
 
         Section {
@@ -807,17 +800,6 @@ struct QuickFilterEditor: View {
                 TextField("Append", text: $draft.append, prompt: Text("Added after your search"))
                     .textFieldStyle(.roundedBorder)
                     .onChange(of: draft.append) { onEdit() }
-            }
-        } header: {
-            HStack {
-                Text(draft.name.isEmpty ? "Quick Filter" : draft.name).font(.headline)
-                Spacer()
-                if let onDelete {
-                    Button(action: onDelete) { Image(systemName: "trash") }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.red)
-                        .help("Delete filter")
-                }
             }
         }
 
@@ -850,6 +832,27 @@ struct QuickFilterEditor: View {
         }
     }
 
+    private enum Mode: Hashable { case fields, raw }
+
+    @State private var recording = false
+
+    private var modeBinding: Binding<Mode> {
+        Binding(
+            get: { draft.rawQuery == nil ? .fields : .raw },
+            set: { newMode in
+                if newMode == .raw {
+                    draft.rawQuery = draft.asFilter.queryString
+                } else {
+                    draft.rawQuery = nil
+                }
+                onEdit()
+            }
+        )
+    }
+
+    private var fieldsMode: Bool { draft.rawQuery == nil }
+    private var preview: String { draft.asFilter.queryString }
+
     @ViewBuilder private var rawQueryRow: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
@@ -867,17 +870,26 @@ struct QuickFilterEditor: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
             } else {
-                TextField("", text: Binding(get: { draft.rawQuery ?? "" }, set: { draft.rawQuery = $0 }),
-                          prompt: Text("Full query, e.g.: .png in:~/Desktop !draft"), axis: .vertical)
-                    .lineLimit(1 ... 8)
-                    .font(.mono(12))
-                    .textFieldStyle(.roundedBorder)
-                    .onChange(of: draft.rawQuery) { onEdit() }
+                // Single-line editable field, like the search bar (multiline is for reading only).
+                TextField(
+                    "",
+                    text: Binding(get: { draft.rawQuery ?? "" }, set: { draft.rawQuery = $0 }),
+                    prompt: Text("Full query, e.g.: .png in:~/Desktop !draft")
+                )
+                .font(.mono(12))
+                .textFieldStyle(.roundedBorder)
+                .onChange(of: draft.rawQuery) { onEdit() }
             }
         }
     }
 }
+
+// MARK: - QuickFilterRow
 
 struct QuickFilterRow: View {
     init(filter: QuickFilter) {
@@ -912,10 +924,14 @@ struct QuickFilterRow: View {
         countTask = Task {
             try? await Task.sleep(for: .milliseconds(200))
             if Task.isCancelled { return }
-            let n = await FUZZY.matchCount(query: f.queryString, dirsOnly: f.searchDirsOnly,
-                                           folders: f.folders ?? [], maxDepth: f.maxDepth)
+            let n = await FUZZY.matchCount(
+                query: f.queryString,
+                dirsOnly: f.searchDirsOnly,
+                folders: f.folders ?? [],
+                maxDepth: f.maxDepth
+            )
             if Task.isCancelled { return }
-            await MainActor.run { matchCountText = n >= 5000 ? "~5000+" : "~\(n)" }
+            await MainActor.run { matchCountText = n >= 5000 ? "~5000+ results" : "~\(n) results" }
         }
     }
 
@@ -1038,10 +1054,14 @@ struct FolderFilterRow: View {
         countTask = Task {
             try? await Task.sleep(for: .milliseconds(200))
             if Task.isCancelled { return }
-            let n = await FUZZY.matchCount(query: "", dirsOnly: false,
-                                           folders: currentFolders, maxDepth: currentMaxDepth < 0 ? nil : currentMaxDepth)
+            let n = await FUZZY.matchCount(
+                query: "",
+                dirsOnly: false,
+                folders: currentFolders,
+                maxDepth: currentMaxDepth < 0 ? nil : currentMaxDepth
+            )
             if Task.isCancelled { return }
-            await MainActor.run { matchCountText = n >= 5000 ? "~5000+" : "~\(n)" }
+            await MainActor.run { matchCountText = n >= 5000 ? "~5000+ results" : "~\(n) results" }
         }
     }
 
