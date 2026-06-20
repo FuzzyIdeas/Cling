@@ -677,7 +677,7 @@ class FuzzyClient {
     }
 
     func recomputeQuickFilterPool() {
-        guard let qf = quickFilter, qf.extensions != nil || qf.dirsOnly else {
+        guard let qf = quickFilter, qf.poolExtensions != nil || qf.searchDirsOnly else {
             quickFilterPool = nil
             quickFilterPools.removeAll()
             filteredSubsetCount = nil
@@ -691,7 +691,7 @@ class FuzzyClient {
             var pools: [String: [Int]] = [:]
             var totalCount = 0
             for (eng, label, _) in engines {
-                let pool = eng.prefilter(extensions: qf.extensions, dirsOnly: qf.dirsOnly)
+                let pool = eng.prefilter(extensions: qf.poolExtensions, dirsOnly: qf.searchDirsOnly)
                 pools[label] = pool
                 totalCount += pool.count
             }
@@ -1304,13 +1304,11 @@ class FuzzyClient {
 
         guard validReq(), !indexing || indexedCount > 0 else { return }
 
-        // Combine user query with QuickFilter's preQuery/postQuery
+        // Combine user query with QuickFilter's queryString
         var query = constructQuery(self.query)
-        if let pre = quickFilter?.preQuery, !pre.isEmpty {
-            query = query.isEmpty ? pre : "\(pre) \(query)"
-        }
-        if let post = quickFilter?.postQuery, !post.isEmpty {
-            query = query.isEmpty ? post : "\(query) \(post)"
+        if let qf = quickFilter {
+            let contribution = qf.queryString
+            if !contribution.isEmpty { query = query.isEmpty ? contribution : "\(contribution) \(query)" }
         }
 
         // Skip if nothing changed since last search
