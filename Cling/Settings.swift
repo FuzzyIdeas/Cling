@@ -210,8 +210,10 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
             .joined(separator: " ")
     }
 
-    /// Directories-only is the one facet with no query token, so it stays a search parameter.
-    var searchDirsOnly: Bool { rawQuery == nil && match == .folders }
+    /// Directories-only is the one facet with no query token, so it is preserved even in raw mode
+    /// (where the Match picker is hidden). Raw filters created fresh default to `.both`, so they
+    /// are unaffected; only explicitly-Folders or legacy-migrated filters carry `.folders`.
+    var searchDirsOnly: Bool { match == .folders }
 
     /// Extensions to pre-narrow the candidate pool. Raw filters skip the pool.
     var poolExtensions: String? { rawQuery == nil ? extensions : nil }

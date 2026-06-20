@@ -2138,7 +2138,7 @@ class FuzzyClient {
         return await Task.detached(priority: .utility) {
             var total = 0
             for (eng, _, _) in engines {
-                total += eng.search(query: query, maxResults: cap, folderPrefixes: prefixes,
+                total += eng.search(query: query, maxResults: max(0, cap - total), folderPrefixes: prefixes,
                                     dirsOnly: dirsOnly, maxDepth: maxDepth).count
                 if total >= cap { break }
             }
