@@ -8,6 +8,9 @@ struct ExcludeRuleLine: TokenizedRuleLine, Equatable {
     let dirSlash: Bool
     var tokens: [RuleToken]
     let chipEligible: Bool
+    /// Whether this rule is applied. Disabled rules stay visible (and re-enableable) but are dropped from what
+    /// apply writes and from the selection / count signals.
+    var enabled: Bool = true
 
     func serialize() -> String {
         (hasBang ? "!" : "") + (anchored ? "/" : "") + tokens.map(\.display).joined(separator: "/") + (dirSlash ? "/" : "")
@@ -44,10 +47,24 @@ struct ExcludeEdit: Equatable {
 
     mutating func commitRaw() {
         guard let raw = rawText else { return }
-        lines = zip(lines, raw).map { line, text in ExcludeRuleLine.parse(text, chipEligible: line.chipEligible) }
+        lines = zip(lines, raw).map { line, text in
+            var parsed = ExcludeRuleLine.parse(text, chipEligible: line.chipEligible)
+            parsed.enabled = line.enabled
+            return parsed
+        }
         rawText = nil
     }
 
+    /// Enable or disable one line (by index into `lines`).
+    mutating func setEnabled(_ index: Int, _ on: Bool) {
+        guard lines.indices.contains(index) else { return }
+        lines[index].enabled = on
+    }
+
+    func isEnabled(_ index: Int) -> Bool { lines.indices.contains(index) ? lines[index].enabled : false }
+
+    /// Serialized lines, raw override applied. Parallel to `lines` (includes disabled ones) so callers can
+    /// index by position; filter with `isEnabled` for what apply should write.
     func effectiveLines() -> [String] {
         lines.enumerated().map { i, line in rawText?[i] ?? line.serialize() }
     }

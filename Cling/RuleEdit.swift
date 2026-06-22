@@ -147,6 +147,9 @@ struct RuleLine: Equatable, TokenizedRuleLine {
     let anchored: Bool
     let dirSlash: Bool
     var tokens: [RuleToken]
+    /// Whether this rule is applied. Disabled rules are still shown (so the user can re-enable them) but are
+    /// excluded from what apply writes and from the coverage check.
+    var enabled: Bool = true
 
     var isFsignore: Bool { kind.isFsignore }
     var chipEligible: Bool { isFsignore }
@@ -199,23 +202,41 @@ struct RuleEdit: Equatable {
     /// Re-parse the raw override back into tokenized lines (preserving each line's kind) and clear the override.
     mutating func commitRaw() {
         guard let raw = rawText else { return }
-        lines = zip(lines, raw).map { line, text in RuleLine.parse(text, kind: line.kind) }
+        lines = zip(lines, raw).map { line, text in
+            var parsed = RuleLine.parse(text, kind: line.kind)
+            parsed.enabled = line.enabled
+            return parsed
+        }
         rawText = nil
     }
 
-    /// Serialized lines in apply order, raw override applied.
+    /// Enable or disable one line (by index into `lines`).
+    mutating func setEnabled(_ index: Int, _ on: Bool) {
+        guard lines.indices.contains(index) else { return }
+        lines[index].enabled = on
+    }
+
+    /// Serialized lines in apply order, raw override applied. Parallel to `lines` (includes disabled ones), so
+    /// callers can index by position; use `enabledEffectiveLines()` for what apply should actually write.
     func effectiveLines() -> [(kind: RuleLineKind, text: String)] {
         lines.enumerated().map { i, line in
             (line.kind, rawText?[i] ?? line.serialize())
         }
     }
 
-    /// Lines that positively cover the target (used by the ✓/✗ probe): blocklist exceptions and fsignore
-    /// re-includes, with the leading `!` stripped. Re-exclude lines are not coverage, and a line that has
-    /// lost its `!` (e.g. a raw edit deleting it) is no longer a re-inclusion, so it does not count as
+    /// Only the enabled lines, serialized in apply order.
+    func enabledEffectiveLines() -> [(kind: RuleLineKind, text: String)] {
+        lines.indices.compactMap { i in
+            lines[i].enabled ? (lines[i].kind, rawText?[i] ?? lines[i].serialize()) : nil
+        }
+    }
+
+    /// Lines that positively cover the target (used by the ✓/✗ probe): enabled blocklist exceptions and
+    /// fsignore re-includes, with the leading `!` stripped. Re-exclude lines are not coverage, and a line that
+    /// has lost its `!` (e.g. a raw edit deleting it) is no longer a re-inclusion, so it does not count as
     /// coverage either, keeping the badge honest about what apply would actually write.
     func reincludeLinesForValidation() -> [(kind: RuleLineKind, text: String)] {
-        effectiveLines().compactMap { kind, text in
+        enabledEffectiveLines().compactMap { kind, text in
             guard kind != .fsignoreReExclude, text.hasPrefix("!") else { return nil }
             return (kind, String(text.dropFirst()))
         }

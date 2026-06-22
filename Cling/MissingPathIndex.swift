@@ -690,6 +690,8 @@ struct MissingPathSheet: View {
     @State private var rawMode = false
     @State private var coverage: Bool? = nil
     @State private var ruleAreaWidth: CGFloat = 0
+    /// Blocklist-removal hits the user toggled off (kept by id so apply skips them).
+    @State private var disabledRemovals: Set<UUID> = []
 
     /// Faint drop affordance shown before a path has been checked. The icon brightens and swaps while a
     /// file is dragged over the sheet.
@@ -850,7 +852,7 @@ struct MissingPathSheet: View {
                 }
                 .controlSize(.regular)
                 .buttonStyle(.borderedProminent)
-                .disabled(selectedID == nil || FUZZY.backgroundIndexing)
+                .disabled(selectedID == nil || FUZZY.backgroundIndexing || nothingToApply(d))
             }
             .padding(.top, 4)
         }
@@ -866,6 +868,7 @@ struct MissingPathSheet: View {
                 selectedID = option.id
                 edit = makeEdit(for: option)
                 rawMode = false
+                disabledRemovals = []
                 recomputeCoverage(d)
             }) {
                 HStack(alignment: .top, spacing: 8) {
@@ -900,23 +903,39 @@ struct MissingPathSheet: View {
         case let .scope(s): "\(s.label) ignore"
         }
         VStack(alignment: .leading, spacing: 6) {
-            // Deletions (not editable).
+            // Deletions of existing blocklist rules. Editable text isn't meaningful here, but each can be
+            // toggled off so apply keeps the rule.
             ForEach(option.removeBlocklist) { hit in
-                changeLine(sign: "−", color: .red, label: "Remove from blocklist", value: hit.rule)
+                let on = !disabledRemovals.contains(hit.id)
+                HStack(spacing: 6) {
+                    enableToggle(on) { if on { disabledRemovals.insert(hit.id) } else { disabledRemovals.remove(hit.id) } }
+                    changeLine(sign: "−", color: .red, label: "Remove from blocklist", value: hit.rule)
+                        .opacity(on ? 1 : 0.4)
+                }
             }
 
             if let edit {
                 let cols = edit.togglableColumns()
                 if rawMode {
                     ForEach(Array(edit.lines.enumerated()), id: \.offset) { i, line in
-                        rawLineField(i, line: line, ignoreLabel: ignoreLabel, diagnosis: d)
+                        HStack(spacing: 6) {
+                            enableToggle(line.enabled) { self.edit?.setEnabled(i, !line.enabled); recomputeCoverage(d) }
+                            rawLineField(i, line: line, ignoreLabel: ignoreLabel, diagnosis: d)
+                                .opacity(line.enabled ? 1 : 0.4)
+                        }
                     }
                 } else {
                     ForEach(Array(edit.lines.enumerated()), id: \.offset) { i, line in
-                        if line.isFsignore {
-                            chipLine(i, line: line, columns: cols, ignoreLabel: ignoreLabel, diagnosis: d)
-                        } else {
-                            blocklistLine(line: line)
+                        HStack(spacing: 6) {
+                            enableToggle(line.enabled) { self.edit?.setEnabled(i, !line.enabled); recomputeCoverage(d) }
+                            Group {
+                                if line.isFsignore {
+                                    chipLine(i, line: line, columns: cols, ignoreLabel: ignoreLabel, diagnosis: d, enabled: line.enabled)
+                                } else {
+                                    blocklistLine(line: line)
+                                }
+                            }
+                            .opacity(line.enabled ? 1 : 0.4)
                         }
                     }
                 }
@@ -939,8 +958,19 @@ struct MissingPathSheet: View {
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }, action: { ruleAreaWidth = $0 })
     }
 
+    /// Small checkbox toggling whether a rule row is applied.
+    private func enableToggle(_ on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: on ? "checkmark.square.fill" : "square")
+                .font(.system(size: 11))
+                .foregroundStyle(on ? Color.accentColor : .secondary)
+        }
+        .buttonStyle(.plain)
+        .help(on ? "Disable this rule" : "Enable this rule")
+    }
+
     @ViewBuilder
-    private func chipLine(_ i: Int, line: RuleLine, columns: Set<Int>, ignoreLabel: String, diagnosis d: PathDiagnosis) -> some View {
+    private func chipLine(_ i: Int, line: RuleLine, columns: Set<Int>, ignoreLabel: String, diagnosis d: PathDiagnosis, enabled: Bool) -> some View {
         let signColor: Color = line.kind == .fsignoreReExclude ? .secondary : .green
         // Show segments in full when the row fits; trim only the longest when it would overflow the sheet.
         let displays = line.tokens.map(\.display)
@@ -951,7 +981,7 @@ struct MissingPathSheet: View {
                 if line.hasBang { tokenChip("!", tint: .secondary, interactive: false) }
                 ForEach(Array(line.tokens.enumerated()), id: \.offset) { c, token in
                     if c > 0 { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
-                    if token.isLiteral, columns.contains(c) {
+                    if token.isLiteral, columns.contains(c), enabled {
                         Button(action: {
                             edit?.cycle(column: c)
                             recomputeCoverage(d)
@@ -1083,14 +1113,25 @@ struct MissingPathSheet: View {
     }
 
     private func effectiveOption(_ option: InclusionOption) -> InclusionOption {
-        guard let edit, selectedID == option.id else { return option }
+        guard selectedID == option.id else { return option }
         var copy = option
-        let eff = edit.effectiveLines()
-        copy.addBlocklistPrefixes = eff.filter { $0.kind == .blocklistPrefix }.map(\.text)
-        copy.addBlocklistContains = eff.filter { $0.kind == .blocklistContains }.map(\.text)
-        copy.reExcludeFsignore = eff.filter { $0.kind == .fsignoreReExclude }.map(\.text)
-        copy.reIncludeFsignore = eff.filter { $0.kind == .fsignoreReInclude }.map(\.text)
+        copy.removeBlocklist = option.removeBlocklist.filter { !disabledRemovals.contains($0.id) }
+        if let edit {
+            let eff = edit.enabledEffectiveLines()
+            copy.addBlocklistPrefixes = eff.filter { $0.kind == .blocklistPrefix }.map(\.text)
+            copy.addBlocklistContains = eff.filter { $0.kind == .blocklistContains }.map(\.text)
+            copy.reExcludeFsignore = eff.filter { $0.kind == .fsignoreReExclude }.map(\.text)
+            copy.reIncludeFsignore = eff.filter { $0.kind == .fsignoreReInclude }.map(\.text)
+        }
         return copy
+    }
+
+    /// Whether the selected option, after enable/disable edits, would write nothing.
+    private func nothingToApply(_ d: PathDiagnosis) -> Bool {
+        guard let option = d.options.first(where: { $0.id == selectedID }) else { return true }
+        let eo = effectiveOption(option)
+        return eo.addBlocklistPrefixes.isEmpty && eo.addBlocklistContains.isEmpty
+            && eo.reExcludeFsignore.isEmpty && eo.reIncludeFsignore.isEmpty && eo.removeBlocklist.isEmpty
     }
 
     private func changeLine(sign: String, color: Color, label: String, value: String) -> some View {
@@ -1139,6 +1180,7 @@ struct MissingPathSheet: View {
         if let first = result.options.first {
             edit = makeEdit(for: first)
             rawMode = false
+            disabledRemovals = []
             recomputeCoverage(result)
         }
     }

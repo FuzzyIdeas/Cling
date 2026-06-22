@@ -487,7 +487,7 @@ struct ExcludeFromIndexSheet: View {
                 Button("Exclude & Apply") { apply(analysis) }
                     .controlSize(.regular)
                     .buttonStyle(.borderedProminent)
-                    .disabled(selectedID == nil || FUZZY.backgroundIndexing)
+                    .disabled(selectedID == nil || FUZZY.backgroundIndexing || nothingToApply(analysis))
             }
             .padding(.top, 4)
         }
@@ -610,14 +610,22 @@ struct ExcludeFromIndexSheet: View {
         return ExcludeEdit(rules: rules.map { ($0.line, $0.mechanism.supportsGlobs) })
     }
 
-    /// Rebuild concrete rules from the edited text, preserving each rule's original mechanism and prefix flag.
+    /// Rebuild concrete rules from the edited text, preserving each rule's original mechanism and prefix flag,
+    /// and dropping any rule the user toggled off.
     private func effectiveRules(for option: ExcludeOption) -> [ExcludeRule] {
         let orig = rulesFor(option)
         guard let edit else { return orig }
         let lines = edit.effectiveLines()
-        return orig.enumerated().map { i, r in
-            ExcludeRule(mechanism: r.mechanism, line: i < lines.count ? lines[i] : r.line, blocklistPrefix: r.blocklistPrefix)
+        return orig.indices.compactMap { i in
+            guard edit.isEnabled(i) else { return nil }
+            return ExcludeRule(mechanism: orig[i].mechanism, line: i < lines.count ? lines[i] : orig[i].line, blocklistPrefix: orig[i].blocklistPrefix)
         }
+    }
+
+    /// Whether the selected option, after enable/disable edits, would write no rules.
+    private func nothingToApply(_ analysis: ExcludeAnalysis) -> Bool {
+        guard let option = analysis.options.first(where: { $0.id == selectedID }) else { return true }
+        return effectiveRules(for: option).isEmpty
     }
 
     private func reseed(_ option: ExcludeOption) {
@@ -694,15 +702,25 @@ struct ExcludeFromIndexSheet: View {
             let single = edit.lines.count == 1
             VStack(alignment: .leading, spacing: 3) {
                 if rawMode {
-                    ForEach(Array(edit.lines.enumerated()), id: \.offset) { i, _ in
-                        rawLineField(i, storeLabel: i < rules.count ? rules[i].storeLabel : "")
+                    ForEach(Array(edit.lines.enumerated()), id: \.offset) { i, line in
+                        HStack(spacing: 6) {
+                            enableToggle(line.enabled) { self.edit?.setEnabled(i, !line.enabled); recomputeSignalsForSelected() }
+                            rawLineField(i, storeLabel: i < rules.count ? rules[i].storeLabel : "")
+                                .opacity(line.enabled ? 1 : 0.4)
+                        }
                     }
                 } else {
                     ForEach(Array(edit.lines.enumerated()), id: \.offset) { i, line in
-                        if single, line.chipEligible, !cols.isEmpty {
-                            chipLine(i, line: line, columns: cols, storeLabel: rules[i].storeLabel)
-                        } else {
-                            staticRuleLine(text: edit.effectiveLines()[i], storeLabel: i < rules.count ? rules[i].storeLabel : "", literalNote: !line.chipEligible)
+                        HStack(spacing: 6) {
+                            enableToggle(line.enabled) { self.edit?.setEnabled(i, !line.enabled); recomputeSignalsForSelected() }
+                            Group {
+                                if single, line.chipEligible, !cols.isEmpty {
+                                    chipLine(i, line: line, columns: cols, storeLabel: rules[i].storeLabel, enabled: line.enabled)
+                                } else {
+                                    staticRuleLine(text: edit.effectiveLines()[i], storeLabel: i < rules.count ? rules[i].storeLabel : "", literalNote: !line.chipEligible)
+                                }
+                            }
+                            .opacity(line.enabled ? 1 : 0.4)
                         }
                     }
                 }
@@ -724,7 +742,18 @@ struct ExcludeFromIndexSheet: View {
         }
     }
 
-    private func chipLine(_ i: Int, line: ExcludeRuleLine, columns: Set<Int>, storeLabel: String) -> some View {
+    /// Small checkbox toggling whether a rule row is applied.
+    private func enableToggle(_ on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: on ? "checkmark.square.fill" : "square")
+                .font(.system(size: 11))
+                .foregroundStyle(on ? Color.accentColor : .secondary)
+        }
+        .buttonStyle(.plain)
+        .help(on ? "Disable this rule" : "Enable this rule")
+    }
+
+    private func chipLine(_ i: Int, line: ExcludeRuleLine, columns: Set<Int>, storeLabel: String, enabled: Bool) -> some View {
         // Show segments in full when the row fits; trim only the longest when it would overflow the sheet.
         let displays = line.tokens.map(\.display)
         let fitted = RuleGrid.fitSegments(displays, budget: pathBudget(segments: displays.count))
@@ -734,7 +763,7 @@ struct ExcludeFromIndexSheet: View {
                 if line.anchored { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
                 ForEach(Array(line.tokens.enumerated()), id: \.offset) { c, token in
                     if c > 0 { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
-                    if token.isLiteral, columns.contains(c) {
+                    if token.isLiteral, columns.contains(c), enabled {
                         Button(action: { edit?.cycle(column: c); recomputeSignalsForSelected() }) {
                             tokenChip(fitted[c], tint: chipTint(token), interactive: true)
                         }
