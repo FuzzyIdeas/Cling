@@ -234,7 +234,8 @@ extension SendManager {
                 let client = WarpDropClient()
                 return try await client.send(
                     files: prepared,
-                    keep: true,
+                    multi: true, // serve every receiver at once instead of one-at-a-time
+                    maxReceivers: 20, // 0 = server default (256); old backends ignore multi and fall back to sequential
                     onRoomCreated: { roomID in
                         roomIDRef.value = roomID
                         Task { @MainActor in

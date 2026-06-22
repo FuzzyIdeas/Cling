@@ -76,6 +76,17 @@ enum PreviewKind {
             return
         }
 
+        // Extensionless configs (Caddyfile, Procfile, Dockerfile-less repos, …)
+        // and other files the system only types as plain `public.data` are
+        // often really text. QuickLook would show them as an un-inset text page,
+        // so sniff the bytes and route genuine text into our own inset,
+        // line-numbered code view instead. RTF/HTML conform to `.text` and are
+        // deliberately left to QuickLook's rendered preview, so they're excluded.
+        if type?.conforms(to: .text) != true, TextSniffer.isProbablyText(url) {
+            self = .text
+            return
+        }
+
         self = .quicklook
     }
 }
@@ -90,6 +101,50 @@ extension URL {
     }
 }
 
+// MARK: - TextSniffer
+
+/// Decides whether a file the system didn't type as text is actually readable
+/// text, so `public.data` files (extensionless configs like Caddyfile, logs,
+/// source without a known extension) can take the inset code preview instead of
+/// QuickLook. Results are cached by path+mtime since `PreviewKind` is recomputed
+/// on every panel re-render.
+enum TextSniffer {
+    @MainActor
+    static func isProbablyText(_ url: URL) -> Bool {
+        let mtime = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let key = "\(url.path)|\(mtime)"
+        if let cached = cache[key] { return cached }
+
+        let result = sniff(url)
+        cache[key] = result
+        cacheOrder.append(key)
+        if cacheOrder.count > 64 { cache.removeValue(forKey: cacheOrder.removeFirst()) }
+        return result
+    }
+
+    @MainActor private static var cache: [String: Bool] = [:]
+    @MainActor private static var cacheOrder: [String] = []
+
+    /// Reads a bounded prefix and applies the classic heuristic: a NUL byte in
+    /// the head means binary (git/`file(1)` use the same tell). Otherwise it has
+    /// to decode as UTF-8, tolerating a multibyte sequence clipped by the read
+    /// boundary by trimming up to three trailing bytes before giving up.
+    private static func sniff(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        var data = (try? handle.read(upToCount: 8 * 1024)) ?? Data()
+        guard !data.isEmpty else { return false }
+        if data.contains(0) { return false }
+        for _ in 0 ..< 4 {
+            if String(data: data, encoding: .utf8) != nil { return true }
+            if data.isEmpty { break }
+            data.removeLast()
+        }
+        return false
+    }
+
+}
+
 // MARK: - FilePreviewPanel
 
 struct FilePreviewPanel: View {
@@ -99,12 +154,13 @@ struct FilePreviewPanel: View {
         ZStack(alignment: .top) {
             if let path = current {
                 let kind = PreviewKind(for: path.url)
-                content(for: path, kind: kind)
+                content(for: path, kind: kind, topInset: headerHeight, bottomInset: footerHeight)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 VStack(spacing: 0) {
                     header(for: path)
                         .glassBar()
                         .overlay(alignment: .bottom) { Divider().opacity(0.4) }
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
                     Spacer(minLength: 0)
                     VStack(spacing: 0) {
                         FileInfoBar(path: path, kind: kind)
@@ -112,6 +168,7 @@ struct FilePreviewPanel: View {
                     }
                     .glassBar()
                     .overlay(alignment: .top) { Divider().opacity(0.4) }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
                 }
             } else {
                 emptyState
@@ -150,6 +207,11 @@ struct FilePreviewPanel: View {
 
     @State private var index = 0
     @State private var hintHovering = false
+    // Live heights of the floating glass bars, reserved as content insets on the
+    // scrollable previews so a text file's (or list's) first and last lines rest
+    // clear of the header/footer instead of being hidden beneath them.
+    @State private var headerHeight: CGFloat = 0
+    @State private var footerHeight: CGFloat = 0
     @Default(.filePreviewHintSeenCount) private var hintSeenCount
 
     /// The footer retires once the panel has been opened this many times; after that the user
@@ -257,20 +319,24 @@ struct FilePreviewPanel: View {
     }
 
     @ViewBuilder
-    private func content(for path: FilePath, kind: PreviewKind) -> some View {
+    private func content(for path: FilePath, kind: PreviewKind, topInset: CGFloat, bottomInset: CGFloat) -> some View {
         switch kind {
         case .folder:
             FolderPreview(path: path)
+                .contentMargins(.top, topInset, for: .scrollContent)
+                .contentMargins(.bottom, bottomInset, for: .scrollContent)
         case .archive:
             ArchivePreview(path: path)
+                .contentMargins(.top, topInset, for: .scrollContent)
+                .contentMargins(.bottom, bottomInset, for: .scrollContent)
         case .image:
             ImageScrollPreview(url: path.url)
         case .pdf:
-            PDFKitPreview(url: path.url)
+            PDFKitPreview(url: path.url, topInset: topInset, bottomInset: bottomInset)
         case .video, .audio:
             AVPreview(url: path.url)
         case .text:
-            CodePreviewView(url: path.url)
+            CodePreviewView(url: path.url, topInset: topInset, bottomInset: bottomInset)
         case .quicklook:
             QuickLookPreview(url: path.url)
         }
@@ -318,8 +384,31 @@ struct FilePreviewPanel: View {
 // MARK: - PDFKitPreview
 
 struct PDFKitPreview: NSViewRepresentable {
+    /// `PDFView` exposes no content-inset API, so we reach into its embedded
+    /// scroll view and re-pin the insets on every layout: PDFView rebuilds and
+    /// re-lays-out that scroll view during scaling/relayout, which would
+    /// otherwise wipe a one-time inset. The equality guard keeps this from
+    /// looping (a no-op layout pass doesn't reassign the insets).
+    final class InsetPDFView: PDFView {
+        var contentInsetsOverride = NSEdgeInsetsZero {
+            didSet { needsLayout = true }
+        }
+
+        override func layout() {
+            super.layout()
+            guard let scroll = findViews(ofType: NSScrollView.self).first else { return }
+            scroll.automaticallyAdjustsContentInsets = false
+            let want = contentInsetsOverride, have = scroll.contentInsets
+            if have.top != want.top || have.bottom != want.bottom
+                || have.left != want.left || have.right != want.right
+            {
+                scroll.contentInsets = want
+            }
+        }
+    }
+
     final class Coordinator {
-        weak var view: PDFView?
+        weak var view: InsetPDFView?
 
         func load(_ url: URL) {
             guard loadedURL != url else { return }
@@ -339,19 +428,23 @@ struct PDFKitPreview: NSViewRepresentable {
     }
 
     let url: URL
+    var topInset: CGFloat = 0
+    var bottomInset: CGFloat = 0
 
-    func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
+    func makeNSView(context: Context) -> InsetPDFView {
+        let view = InsetPDFView()
         view.autoScales = true
         view.displayMode = .singlePageContinuous
         view.displaysPageBreaks = true
         view.backgroundColor = .clear
+        view.contentInsetsOverride = NSEdgeInsets(top: topInset, left: 0, bottom: bottomInset, right: 0)
         context.coordinator.view = view
         context.coordinator.load(url)
         return view
     }
 
-    func updateNSView(_ nsView: PDFView, context: Context) {
+    func updateNSView(_ nsView: InsetPDFView, context: Context) {
+        nsView.contentInsetsOverride = NSEdgeInsets(top: topInset, left: 0, bottom: bottomInset, right: 0)
         context.coordinator.load(url)
     }
 

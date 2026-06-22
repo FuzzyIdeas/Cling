@@ -144,10 +144,33 @@ struct CodePreviewView: NSViewRepresentable {
                 SyntaxHighlighter.shared.highlight(text, language: language, font: font, lineNumbers: true) { attributed in
                     guard self.loadedURL == url, let textView = self.textView else { return }
                     textView.textStorage?.setAttributedString(attributed)
-                    textView.scroll(.zero)
+                    self.scrollToTop()
                     self.scroll?.backgroundColor = SyntaxHighlighter.shared.backgroundColor
                 }
             }
+        }
+
+        /// Scroll to the document's start, landing the first line just below the
+        /// top content inset (the floating header bar) rather than under it.
+        func scrollToTop() {
+            guard let scroll else { return }
+            let clip = scroll.contentView
+            clip.scroll(to: NSPoint(x: 0, y: -scroll.contentInsets.top))
+            scroll.reflectScrolledClipView(clip)
+        }
+
+        /// Reserve room at the top and bottom for the translucent header/footer
+        /// bars that float over the panel, so the first and last lines stay clear
+        /// of them. Re-pins to the top only when the view was already resting
+        /// there, so a grown inset never leaves the opening line hidden and a
+        /// scrolled-down reader isn't yanked back up.
+        func applyInsets(top: CGFloat, bottom: CGFloat) {
+            guard let scroll else { return }
+            guard scroll.contentInsets.top != top || scroll.contentInsets.bottom != bottom else { return }
+            let wasAtTop = scroll.contentView.bounds.origin.y <= -scroll.contentInsets.top + 1
+            scroll.automaticallyAdjustsContentInsets = false
+            scroll.contentInsets = NSEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
+            if wasAtTop { scrollToTop() }
         }
 
         private var loadedURL: URL?
@@ -156,6 +179,8 @@ struct CodePreviewView: NSViewRepresentable {
 
     let url: URL
     var fontSize: CGFloat = 11
+    var topInset: CGFloat = 0
+    var bottomInset: CGFloat = 0
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -164,17 +189,20 @@ struct CodePreviewView: NSViewRepresentable {
         scroll.borderType = .noBorder
         scroll.drawsBackground = true
         scroll.backgroundColor = SyntaxHighlighter.shared.backgroundColor
+        scroll.automaticallyAdjustsContentInsets = false
 
         if let textView = scroll.documentView as? NSTextView {
             configureCodeTextView(textView, editable: false)
             context.coordinator.textView = textView
             context.coordinator.scroll = scroll
         }
+        context.coordinator.applyInsets(top: topInset, bottom: bottomInset)
         context.coordinator.load(url, fontSize: fontSize)
         return scroll
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
+        context.coordinator.applyInsets(top: topInset, bottom: bottomInset)
         context.coordinator.load(url, fontSize: fontSize)
     }
 
