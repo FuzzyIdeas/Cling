@@ -686,6 +686,9 @@ struct MissingPathSheet: View {
     @State private var diagnosis: PathDiagnosis?
     @State private var selectedID: UUID?
     @State private var dropTargeted = false
+    @State private var edit: RuleEdit?
+    @State private var rawMode = false
+    @State private var coverage: Bool? = nil
 
     /// Faint drop affordance shown before a path has been checked. The icon brightens and swaps while a
     /// file is dragged over the sheet.
@@ -857,49 +860,195 @@ struct MissingPathSheet: View {
 
     private func optionRow(_ option: InclusionOption, diagnosis d: PathDiagnosis) -> some View {
         let selected = selectedID == option.id
-        return Button(action: { selectedID = option.id }) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : .secondary)
-                    .font(.system(size: 13))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(option.title).font(.system(size: 12, weight: .medium))
-                    Text(option.summary).font(.system(size: 10)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if selected {
-                        changeList(option, diagnosis: d)
+        return VStack(alignment: .leading, spacing: 6) {
+            Button(action: {
+                selectedID = option.id
+                edit = makeEdit(for: option)
+                rawMode = false
+                recomputeCoverage(d)
+            }) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                        .foregroundStyle(selected ? Color.accentColor : .secondary)
+                        .font(.system(size: 13))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(option.title).font(.system(size: 12, weight: .medium))
+                        Text(option.summary).font(.system(size: 10)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    Spacer()
                 }
-                Spacer()
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
-            .padding(8)
-            .background(selected ? Color.accentColor.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .buttonStyle(.plain)
+
+            if selected {
+                editor(option, diagnosis: d)
+                    .padding(.leading, 21)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(8)
+        .background(selected ? Color.accentColor.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6))
     }
 
-    private func changeList(_ option: InclusionOption, diagnosis d: PathDiagnosis) -> some View {
+    @ViewBuilder
+    private func editor(_ option: InclusionOption, diagnosis d: PathDiagnosis) -> some View {
         let ignoreLabel = switch option.ignoreDest {
         case .home: "~/.fsignore"
         case let .volume(v): "\(v.name.string)/.fsignore"
         case let .scope(s): "\(s.label) ignore"
         }
-        return VStack(alignment: .leading, spacing: 3) {
-            ForEach(Array((option.addBlocklistPrefixes + option.addBlocklistContains).enumerated()), id: \.offset) { _, line in
-                changeLine(sign: "+", color: .green, label: "Add to blocklist", value: line)
-            }
+        VStack(alignment: .leading, spacing: 6) {
+            // Deletions (not editable).
             ForEach(option.removeBlocklist) { hit in
                 changeLine(sign: "−", color: .red, label: "Remove from blocklist", value: hit.rule)
             }
-            ForEach(Array(option.reExcludeFsignore.enumerated()), id: \.offset) { _, line in
-                changeLine(sign: "+", color: .secondary, label: "Add to \(ignoreLabel)", value: line)
-            }
-            ForEach(Array(option.reIncludeFsignore.enumerated()), id: \.offset) { _, line in
-                changeLine(sign: "+", color: .green, label: "Add to \(ignoreLabel)", value: line)
+
+            if let edit {
+                let cols = edit.togglableColumns()
+                if rawMode {
+                    ForEach(Array(edit.lines.enumerated()), id: \.offset) { i, line in
+                        rawLineField(i, line: line, ignoreLabel: ignoreLabel, diagnosis: d)
+                    }
+                } else {
+                    ForEach(Array(edit.lines.enumerated()), id: \.offset) { i, line in
+                        if line.isFsignore {
+                            chipLine(i, line: line, columns: cols, ignoreLabel: ignoreLabel, diagnosis: d)
+                        } else {
+                            blocklistLine(line: line)
+                        }
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    Button(rawMode ? "Done editing text" : "Edit as text") {
+                        if rawMode { self.edit?.commitRaw() }
+                        rawMode.toggle()
+                        recomputeCoverage(d)
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.link)
+                    coverageBadge(d)
+                    Spacer()
+                }
+                .padding(.top, 2)
             }
         }
-        .padding(.top, 4)
+        .padding(.top, 2)
+    }
+
+    @ViewBuilder
+    private func chipLine(_ i: Int, line: RuleLine, columns: Set<Int>, ignoreLabel: String, diagnosis d: PathDiagnosis) -> some View {
+        let signColor: Color = line.kind == .fsignoreReExclude ? .secondary : .green
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(signColor)
+            HStack(spacing: 2) {
+                if line.hasBang { tokenChip("!", tint: .secondary, interactive: false) }
+                ForEach(Array(line.tokens.enumerated()), id: \.offset) { c, token in
+                    if c > 0 { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
+                    if token.isLiteral, columns.contains(c) {
+                        Button(action: {
+                            edit?.toggle(column: c)
+                            recomputeCoverage(d)
+                        }) {
+                            tokenChip(token.display, tint: token.wildcarded ? .accentColor : .primary, interactive: true)
+                        }
+                        .buttonStyle(.plain)
+                        .help(token.wildcarded ? "Wildcard. Click to use the literal name." : "Click to match any folder name here.")
+                    } else {
+                        tokenChip(token.display, tint: .secondary, interactive: false)
+                    }
+                }
+            }
+            Text("Add to \(ignoreLabel)").font(.system(size: 9)).foregroundStyle(.tertiary)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func tokenChip(_ text: String, tint: Color, interactive: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 10, design: .monospaced))
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(tint.opacity(interactive ? 0.16 : 0.08), in: RoundedRectangle(cornerRadius: 3))
+            .overlay(interactive ? RoundedRectangle(cornerRadius: 3).strokeBorder(tint.opacity(0.4)) : nil)
+            .foregroundStyle(interactive ? tint : Color.secondary)
+    }
+
+    private func blocklistLine(line: RuleLine) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.green)
+            Text(line.serialize())
+                .font(.system(size: 10, design: .monospaced))
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background(.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+            Text("Add to blocklist").font(.system(size: 9)).foregroundStyle(.tertiary)
+            Text("literal match, wildcards not supported here").font(.system(size: 9)).foregroundStyle(.tertiary).italic()
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func rawLineField(_ i: Int, line: RuleLine, ignoreLabel: String, diagnosis d: PathDiagnosis) -> some View {
+        let label = line.isFsignore ? "Add to \(ignoreLabel)" : "Add to blocklist"
+        return HStack(spacing: 6) {
+            TextField("", text: Binding(
+                get: { edit?.effectiveLines()[i].text ?? "" },
+                set: { edit?.setRaw(i, $0); recomputeCoverage(d) }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 10, design: .monospaced))
+            Text(label).font(.system(size: 9)).foregroundStyle(.tertiary)
+        }
+    }
+
+    @ViewBuilder
+    private func coverageBadge(_ d: PathDiagnosis) -> some View {
+        switch coverage {
+        case .some(true):
+            Label("still covers this path", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 10)).foregroundStyle(.green)
+        case .some(false):
+            Label("no longer matches the target path", systemImage: "xmark.circle.fill")
+                .font(.system(size: 10)).foregroundStyle(.red)
+        case .none:
+            EmptyView()
+        }
+    }
+
+    private func makeEdit(for option: InclusionOption) -> RuleEdit? {
+        let e = RuleEdit(
+            blocklistPrefixes: option.addBlocklistPrefixes,
+            blocklistContains: option.addBlocklistContains,
+            reExclude: option.reExcludeFsignore,
+            reInclude: option.reIncludeFsignore
+        )
+        return e.lines.isEmpty ? nil : e
+    }
+
+    private func recomputeCoverage(_ d: PathDiagnosis) {
+        guard let edit, let root = d.rootContext else { coverage = nil; return }
+        let lines = edit.reincludeLinesForValidation()
+        guard !lines.isEmpty else { coverage = nil; return }
+        coverage = lines.contains { kind, text in
+            switch kind {
+            case .fsignoreReInclude, .fsignoreReExclude:
+                return IndexInclusionAnalyzer.isIgnoredRooted(path: d.path, root: root.rootPath, content: text)
+            case .blocklistPrefix:
+                return IndexInclusionAnalyzer.prefixMatches(path: d.path, prefix: text)
+            case .blocklistContains:
+                return IndexInclusionAnalyzer.containsMatches(path: d.path, component: text)
+            }
+        }
+    }
+
+    private func effectiveOption(_ option: InclusionOption) -> InclusionOption {
+        guard let edit, selectedID == option.id else { return option }
+        var copy = option
+        let eff = edit.effectiveLines()
+        copy.addBlocklistPrefixes = eff.filter { $0.kind == .blocklistPrefix }.map(\.text)
+        copy.addBlocklistContains = eff.filter { $0.kind == .blocklistContains }.map(\.text)
+        copy.reExcludeFsignore = eff.filter { $0.kind == .fsignoreReExclude }.map(\.text)
+        copy.reIncludeFsignore = eff.filter { $0.kind == .fsignoreReInclude }.map(\.text)
+        return copy
     }
 
     private func changeLine(sign: String, color: Color, label: String, value: String) -> some View {
@@ -941,6 +1090,11 @@ struct MissingPathSheet: View {
         let result = IndexInclusionAnalyzer.diagnose(rawPath: raw, snapshot: snapshot)
         diagnosis = result
         selectedID = result.options.first?.id
+        if let first = result.options.first {
+            edit = makeEdit(for: first)
+            rawMode = false
+            recomputeCoverage(result)
+        }
     }
 
     private func choose() {
@@ -957,7 +1111,7 @@ struct MissingPathSheet: View {
 
     private func apply(_ d: PathDiagnosis) {
         guard let id = selectedID, let option = d.options.first(where: { $0.id == id }) else { return }
-        FUZZY.includeInIndex(d.plan(for: option))
+        FUZZY.includeInIndex(d.plan(for: effectiveOption(option)))
         dismiss()
     }
 
