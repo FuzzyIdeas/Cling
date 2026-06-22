@@ -159,7 +159,7 @@ enum ExcludeAnalyzer {
                 rules: rules,
                 needsReindex: false
             )
-            return ExcludeAnalysis(infos: infos, options: [option], note: "\(infos.count) paths selected — smart suggestions are off for large selections. Each path is excluded exactly.")
+            return ExcludeAnalysis(infos: infos, options: [option], note: "\(infos.count) paths selected. Smart suggestions are off for large selections, so each path is excluded exactly.")
         }
 
         var options: [ExcludeOption] = [exactOption(infos)]
@@ -591,7 +591,9 @@ struct ExcludeFromIndexSheet: View {
     private func apply(_ analysis: ExcludeAnalysis) {
         guard let id = selectedID, let option = analysis.options.first(where: { $0.id == id }) else { return }
         let rules = effectiveRules(for: option)
-        let edited = edit?.effectiveLines() != rulesFor(option).map(\.line)
+        // Only large/bulk options have no editor (edit == nil); those are never "edited", so don't force a
+        // reindex on them (an optional `!=` against a non-optional array would always read as edited).
+        let edited = edit.map { $0.effectiveLines() != rulesFor(option).map(\.line) } ?? false
         FUZZY.excludeFromIndex(rules: rules, paths: Set(paths), reindex: option.needsReindex || edited)
         dismiss()
     }
@@ -637,6 +639,7 @@ struct ExcludeFromIndexSheet: View {
     private func recomputeCount(_ rules: [ExcludeRule], infos: [ExcludePathInfo]) {
         countTask?.cancel()
         affectedCount = nil
+        countCapped = false
         guard edit != nil else { return }
         let root = infos.first?.root
         let queries: [ExcludeCountQuery] = rules.compactMap {
