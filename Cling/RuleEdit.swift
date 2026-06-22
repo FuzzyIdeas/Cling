@@ -113,13 +113,13 @@ struct RuleEdit: Equatable {
     }
 
     /// Lines that positively cover the target (used by the ✓/✗ probe): blocklist exceptions and fsignore
-    /// re-includes, with the leading `!` stripped. Re-exclude lines are not coverage.
+    /// re-includes, with the leading `!` stripped. Re-exclude lines are not coverage, and a line that has
+    /// lost its `!` (e.g. a raw edit deleting it) is no longer a re-inclusion, so it does not count as
+    /// coverage either, keeping the badge honest about what apply would actually write.
     func reincludeLinesForValidation() -> [(kind: RuleLineKind, text: String)] {
         effectiveLines().compactMap { kind, text in
-            guard kind != .fsignoreReExclude else { return nil }
-            var t = text
-            if t.hasPrefix("!") { t.removeFirst() }
-            return (kind, t)
+            guard kind != .fsignoreReExclude, text.hasPrefix("!") else { return nil }
+            return (kind, String(text.dropFirst()))
         }
     }
 }
