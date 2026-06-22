@@ -1087,7 +1087,7 @@ private struct LicenseAndUpdatesSettingsPane: View {
         VStack(spacing: 0) {
             if let pro = PM.pro, let updater = updateManager.updater {
                 Form {
-                    LicenseAndUpdatesView(pro: pro, updater: updater, appName: "Cling")
+                    LicenseAndUpdatesView(pro: pro, updater: updater, appName: "Cling", changelogURL: URL(string: "https://files.lowtechguys.com/cling/changelog.html"))
                 }
                 .formStyle(.grouped)
                 .scrollContentBackground(.hidden)
@@ -1117,7 +1117,8 @@ private struct AboutSettingsPane: View {
                 updater: UM.updater,
                 websiteURL: URL(string: "https://lowtechguys.com/cling"),
                 contactURL: URL(string: "https://lowtechguys.com/contact?app=Cling"),
-                discordURL: URL(string: "https://discord.gg/ERxsH9Ek3q")
+                discordURL: URL(string: "https://discord.gg/ERxsH9Ek3q"),
+                changelogURL: URL(string: "https://files.lowtechguys.com/cling/changelog.html")
             )
 
             #if DEBUG
