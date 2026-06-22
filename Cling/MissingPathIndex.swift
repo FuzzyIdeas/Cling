@@ -689,6 +689,7 @@ struct MissingPathSheet: View {
     @State private var edit: RuleEdit?
     @State private var rawMode = false
     @State private var coverage: Bool? = nil
+    @State private var ruleAreaWidth: CGFloat = 0
 
     /// Faint drop affordance shown before a path has been checked. The icon brightens and swaps while a
     /// file is dragged over the sheet.
@@ -935,11 +936,15 @@ struct MissingPathSheet: View {
             }
         }
         .padding(.top, 2)
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }, action: { ruleAreaWidth = $0 })
     }
 
     @ViewBuilder
     private func chipLine(_ i: Int, line: RuleLine, columns: Set<Int>, ignoreLabel: String, diagnosis d: PathDiagnosis) -> some View {
         let signColor: Color = line.kind == .fsignoreReExclude ? .secondary : .green
+        // Show segments in full when the row fits; trim only the longest when it would overflow the sheet.
+        let displays = line.tokens.map(\.display)
+        let fitted = RuleGrid.fitSegments(displays, budget: pathBudget(segments: displays.count))
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(signColor)
             HStack(spacing: 2) {
@@ -951,12 +956,12 @@ struct MissingPathSheet: View {
                             edit?.cycle(column: c)
                             recomputeCoverage(d)
                         }) {
-                            tokenChip(token.display, tint: chipTint(token), interactive: true)
+                            tokenChip(fitted[c], tint: chipTint(token), interactive: true)
                         }
                         .buttonStyle(.plain)
                         .help(chipHelp(token))
                     } else {
-                        tokenChip(token.display, tint: .secondary, interactive: false)
+                        tokenChip(fitted[c], tint: .secondary, interactive: false)
                     }
                 }
             }
@@ -965,8 +970,16 @@ struct MissingPathSheet: View {
         }
     }
 
+    /// Characters available to a rule path on one row, derived from the measured editor width (monospaced, so
+    /// width per character is constant). `.max` until measured, so nothing is truncated on the first frame.
+    private func pathBudget(segments: Int) -> Int {
+        guard ruleAreaWidth > 1 else { return .max }
+        let avail = ruleAreaWidth - 130 - CGFloat(segments) * 11 // sign + store label + per-chip padding
+        return max(8, Int(avail / 6.0))
+    }
+
     private func tokenChip(_ text: String, tint: Color, interactive: Bool) -> some View {
-        Text(Self.middleTruncated(text))
+        Text(text)
             .lineLimit(1)
             .truncationMode(.middle)
             .font(.system(size: 10, design: .monospaced))
@@ -999,21 +1012,11 @@ struct MissingPathSheet: View {
         }
     }
 
-    /// Collapse an over-long segment to a single line by eliding its middle, so the chip row never wraps.
-    /// The full value stays available via the chip's tooltip.
-    static func middleTruncated(_ s: String, max: Int = 28) -> String {
-        guard s.count > max else { return s }
-        let keep = max - 1
-        let head = keep - keep / 2
-        let tail = keep / 2
-        return "\(s.prefix(head))…\(s.suffix(tail))"
-    }
-
     private func blocklistLine(line: RuleLine) -> some View {
         let full = line.serialize()
         return HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.green)
-            Text(Self.middleTruncated(full))
+            Text(full)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .font(.system(size: 10, design: .monospaced))
@@ -1093,7 +1096,7 @@ struct MissingPathSheet: View {
     private func changeLine(sign: String, color: Color, label: String, value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(sign).font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(color)
-            Text(Self.middleTruncated(value))
+            Text(value)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .font(.system(size: 10, design: .monospaced))
@@ -1101,6 +1104,7 @@ struct MissingPathSheet: View {
                 .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
                 .help(value)
             Text(label).font(.system(size: 9)).foregroundStyle(.tertiary)
+            Spacer(minLength: 0)
         }
     }
 

@@ -107,6 +107,37 @@ enum RuleGrid {
             else { lines[i].tokens[c].state = target! }
         }
     }
+
+    /// Middle-truncate a string to roughly `max` characters (eliding the centre with `…`). Returns it unchanged
+    /// when it already fits.
+    static func middleTruncated(_ s: String, max: Int) -> String {
+        guard s.count > max else { return s }
+        guard max >= 3 else { return String(s.prefix(max)) }
+        let keep = max - 1
+        return "\(s.prefix(keep - keep / 2))…\(s.suffix(keep / 2))"
+    }
+
+    /// Fit path segments into a character `budget` (joined by `/`) by middle-truncating the LONGEST segments
+    /// first, just enough to fit, leaving shorter segments untouched. Returns the segments unchanged when they
+    /// already fit, so a short path that fits the row is never truncated. `minSeg` is the floor a segment is
+    /// trimmed to before the next-longest is trimmed instead.
+    static func fitSegments(_ segs: [String], budget: Int, minSeg: Int = 6) -> [String] {
+        guard budget > 0, !segs.isEmpty else { return segs }
+        let separators = segs.count - 1
+        func total(_ s: [String]) -> Int { s.reduce(0) { $0 + $1.count } + separators }
+        guard total(segs) > budget else { return segs }
+        var out = segs
+        var loops = 0
+        while total(out) > budget, loops < 500 {
+            loops += 1
+            guard let idx = out.indices
+                .filter({ out[$0].count > minSeg })
+                .max(by: { out[$0].count < out[$1].count }) else { break }
+            let over = total(out) - budget
+            out[idx] = middleTruncated(out[idx], max: Swift.max(minSeg, out[idx].count - over))
+        }
+        return out
+    }
 }
 
 /// A single editable rule line: optional leading `!`, optional `/` anchor, path tokens, optional trailing `/`.

@@ -91,6 +91,10 @@ func excludeCountQuery(line: String, supportsGlobs: Bool, blocklistPrefix: Bool,
         let firstWild = tokens.firstIndex(where: isWild)!
         let prefix = tokens.prefix(firstWild).joined(separator: "/")
         let folder = prefix.isEmpty ? root : root + "/" + prefix
+        // A trailing `*.ext` (e.g. /Music/nano/*.m4a) counts files of that type inside the prefix folder.
+        if let last = tokens.last, last.hasPrefix("*."), last.count > 2 {
+            return ExcludeCountQuery(query: ".\(last.dropFirst(2))", folders: [folder], dirsOnly: false)
+        }
         if let name = tokens.suffix(from: firstWild + 1).last(where: { !isWild($0) }) {
             return ExcludeCountQuery(query: f.dirSlash ? "\(name)/" : "\(name)$", folders: [folder], dirsOnly: f.dirSlash)
         }

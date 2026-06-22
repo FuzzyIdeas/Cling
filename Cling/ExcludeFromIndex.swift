@@ -1,6 +1,7 @@
 import AppKit
 import Defaults
 import Foundation
+import Ignore
 import Lowtech
 import OSLog
 import SwiftUI
@@ -424,6 +425,7 @@ struct ExcludeFromIndexSheet: View {
     @State private var affectedCount: Int? = nil
     @State private var countCapped = false
     @State private var countTask: Task<Void, Never>? = nil
+    @State private var ruleAreaWidth: CGFloat = 0
 
     private var header: some View {
         HStack {
@@ -627,13 +629,31 @@ struct ExcludeFromIndexSheet: View {
     private func recomputeSignals(_ option: ExcludeOption) {
         guard let analysis else { selectionOK = nil; affectedCount = nil; return }
         let rules = effectiveRules(for: option)
-        // Reliable selection check: every selected path still matched by some rule.
-        if edit == nil {
-            selectionOK = nil
-        } else {
-            selectionOK = analysis.infos.allSatisfy { info in rules.contains { ExcludeAnalyzer.matches($0, info) } }
-        }
+        // Reliable selection check: every selected path is still excluded by the edited rule set.
+        selectionOK = edit == nil ? nil : selectionMatches(rules, infos: analysis.infos)
         recomputeCount(rules, infos: analysis.infos)
+    }
+
+    /// Whether every selected path is still excluded by `rules`. fsignore rules are tested with the real
+    /// gitignore matcher (so wildcards, anchoring and dir contents behave exactly like the index walker);
+    /// blocklist rules use the literal byte matcher. Using the engine's own matcher is why a wildcarded rule
+    /// like `/Music/nano/*.m4a` correctly reports as still matching `/Music/nano/uke-gdbf.m4a`.
+    private func selectionMatches(_ rules: [ExcludeRule], infos: [ExcludePathInfo]) -> Bool {
+        let blockRules = rules.filter { $0.mechanism == .blocklist }
+        let fsLines = rules.filter { $0.mechanism != .blocklist }.map(\.line).filter { !$0.isEmpty }
+        let content = fsLines.joined(separator: "\n")
+        var tmp: String?
+        if !content.isEmpty {
+            let path = NSTemporaryDirectory() + "cling-exclude-probe-" + UUID().uuidString + ".fsignore"
+            if (try? content.write(toFile: path, atomically: true, encoding: .utf8)) != nil { tmp = path }
+        }
+        defer { if let tmp { try? FileManager.default.removeItem(atPath: tmp) } }
+        bust_gitignore_cache()
+        return infos.allSatisfy { info in
+            if blockRules.contains(where: { ExcludeAnalyzer.matches($0, info) }) { return true }
+            if let tmp, let root = info.root { return info.abs.isIgnored(in: tmp, root: root) }
+            return false
+        }
     }
 
     private func recomputeCount(_ rules: [ExcludeRule], infos: [ExcludePathInfo]) {
@@ -700,11 +720,15 @@ struct ExcludeFromIndexSheet: View {
                 .padding(.top, 2)
             }
             .padding(.top, 4)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }, action: { ruleAreaWidth = $0 })
         }
     }
 
     private func chipLine(_ i: Int, line: ExcludeRuleLine, columns: Set<Int>, storeLabel: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        // Show segments in full when the row fits; trim only the longest when it would overflow the sheet.
+        let displays = line.tokens.map(\.display)
+        let fitted = RuleGrid.fitSegments(displays, budget: pathBudget(segments: displays.count))
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.red)
             HStack(spacing: 2) {
                 if line.anchored { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
@@ -712,11 +736,11 @@ struct ExcludeFromIndexSheet: View {
                     if c > 0 { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
                     if token.isLiteral, columns.contains(c) {
                         Button(action: { edit?.cycle(column: c); recomputeSignalsForSelected() }) {
-                            tokenChip(token.display, tint: chipTint(token), interactive: true)
+                            tokenChip(fitted[c], tint: chipTint(token), interactive: true)
                         }
                         .buttonStyle(.plain).help(chipHelp(token))
                     } else {
-                        tokenChip(token.display, tint: .secondary, interactive: false)
+                        tokenChip(fitted[c], tint: .secondary, interactive: false)
                     }
                 }
                 if line.dirSlash { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
@@ -726,8 +750,16 @@ struct ExcludeFromIndexSheet: View {
         }
     }
 
+    /// Characters available to a rule path on one row, from the measured editor width (monospaced font, so
+    /// constant width per character). `.max` until measured, so nothing is truncated on the first frame.
+    private func pathBudget(segments: Int) -> Int {
+        guard ruleAreaWidth > 1 else { return .max }
+        let avail = ruleAreaWidth - 130 - CGFloat(segments) * 11
+        return max(8, Int(avail / 6.0))
+    }
+
     private func tokenChip(_ text: String, tint: Color, interactive: Bool) -> some View {
-        Text(Self.middleTruncated(text))
+        Text(text)
             .lineLimit(1).truncationMode(.middle)
             .font(.system(size: 10, design: .monospaced))
             .padding(.horizontal, 5).padding(.vertical, 1)
@@ -753,7 +785,7 @@ struct ExcludeFromIndexSheet: View {
     private func staticRuleLine(text: String, storeLabel: String, literalNote: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.red)
-            Text(Self.middleTruncated(text))
+            Text(text)
                 .lineLimit(1).truncationMode(.middle)
                 .font(.system(size: 10, design: .monospaced))
                 .padding(.horizontal, 5).padding(.vertical, 1)
@@ -797,12 +829,6 @@ struct ExcludeFromIndexSheet: View {
                     .font(.system(size: 10)).foregroundStyle(.orange)
             }
         }
-    }
-
-    static func middleTruncated(_ s: String, max: Int = 28) -> String {
-        guard s.count > max else { return s }
-        let keep = max - 1
-        return "\(s.prefix(keep - keep / 2))…\(s.suffix(keep / 2))"
     }
 
 }
