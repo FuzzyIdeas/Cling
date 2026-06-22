@@ -583,6 +583,152 @@ struct ExcludeFromIndexSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    // MARK: Editor
+
+    @ViewBuilder
+    private func editor(_ option: ExcludeOption) -> some View {
+        if let edit {
+            let rules = rulesFor(option)
+            let cols = edit.togglableColumns()
+            let single = edit.lines.count == 1
+            VStack(alignment: .leading, spacing: 3) {
+                if rawMode {
+                    ForEach(Array(edit.lines.enumerated()), id: \.offset) { i, line in
+                        HStack(spacing: 6) {
+                            enableToggle(line.enabled) { self.edit?.setEnabled(i, !line.enabled); recomputeSignalsForSelected() }
+                            rawLineField(i, storeLabel: i < rules.count ? rules[i].storeLabel : "")
+                                .opacity(line.enabled ? 1 : 0.4)
+                        }
+                    }
+                } else {
+                    ForEach(Array(edit.lines.enumerated()), id: \.offset) { i, line in
+                        HStack(spacing: 6) {
+                            enableToggle(line.enabled) { self.edit?.setEnabled(i, !line.enabled); recomputeSignalsForSelected() }
+                            Group {
+                                if single, line.chipEligible, !cols.isEmpty {
+                                    chipLine(i, line: line, columns: cols, storeLabel: rules[i].storeLabel, enabled: line.enabled)
+                                } else {
+                                    staticRuleLine(text: edit.effectiveLines()[i], storeLabel: i < rules.count ? rules[i].storeLabel : "", literalNote: !line.chipEligible)
+                                }
+                            }
+                            .opacity(line.enabled ? 1 : 0.4)
+                        }
+                    }
+                }
+                HStack(spacing: 10) {
+                    Button(rawMode ? "Done editing text" : "Edit as text") {
+                        if rawMode { self.edit?.commitRaw() }
+                        rawMode.toggle()
+                        recomputeSignals(option)
+                    }
+                    .controlSize(.small).buttonStyle(.link)
+                    selectionBadge()
+                    countBadge()
+                    Spacer()
+                }
+                .padding(.top, 2)
+            }
+            .padding(.top, 4)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }, action: { ruleAreaWidth = $0 })
+        }
+    }
+
+    /// Small checkbox toggling whether a rule row is applied.
+    private func enableToggle(_ on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: on ? "checkmark.square.fill" : "square")
+                .font(.system(size: 11))
+                .foregroundStyle(on ? Color.accentColor : .secondary)
+        }
+        .buttonStyle(.plain)
+        .help(on ? "Disable this rule" : "Enable this rule")
+    }
+
+    private func chipLine(_ i: Int, line: ExcludeRuleLine, columns: Set<Int>, storeLabel: String, enabled: Bool) -> some View {
+        // Show segments in full when the row fits; trim only the longest when it would overflow the sheet.
+        let displays = line.tokens.map(\.display)
+        let fitted = RuleGrid.fitSegments(displays, budget: pathBudget(segments: displays.count))
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.red)
+            HStack(spacing: 2) {
+                if line.anchored { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
+                ForEach(Array(line.tokens.enumerated()), id: \.offset) { c, token in
+                    if c > 0 { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
+                    if token.isLiteral, columns.contains(c), enabled {
+                        Button(action: { edit?.cycle(column: c); recomputeSignalsForSelected() }) {
+                            tokenChip(fitted[c], tint: chipTint(token), interactive: true)
+                        }
+                        .buttonStyle(.plain).help(chipHelp(token))
+                    } else {
+                        tokenChip(fitted[c], tint: .secondary, interactive: false)
+                    }
+                }
+                if line.dirSlash { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
+            }
+            Text("Add to \(storeLabel)").font(.system(size: 9)).foregroundStyle(.tertiary)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func tokenChip(_ text: String, tint: Color, interactive: Bool) -> some View {
+        Text(text)
+            .lineLimit(1).truncationMode(.middle)
+            .font(.system(size: 10, design: .monospaced))
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(tint.opacity(interactive ? 0.16 : 0.08), in: RoundedRectangle(cornerRadius: 3))
+            .overlay(interactive ? RoundedRectangle(cornerRadius: 3).strokeBorder(tint.opacity(0.4)) : nil)
+            .foregroundStyle(interactive ? tint : Color.secondary)
+    }
+
+    private func staticRuleLine(text: String, storeLabel: String, literalNote: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.red)
+            Text(text)
+                .lineLimit(1).truncationMode(.middle)
+                .font(.system(size: 10, design: .monospaced))
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background(.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+                .help(text)
+            Text("Add to \(storeLabel)").font(.system(size: 9)).foregroundStyle(.tertiary)
+            if literalNote {
+                Text("literal match, wildcards not supported here").font(.system(size: 9)).foregroundStyle(.tertiary).italic()
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func rawLineField(_ i: Int, storeLabel: String) -> some View {
+        HStack(spacing: 6) {
+            TextField("", text: Binding(
+                get: { edit.map { i < $0.effectiveLines().count ? $0.effectiveLines()[i] : "" } ?? "" },
+                set: { edit?.setRaw(i, $0); recomputeSignalsForSelected() }
+            ))
+            .textFieldStyle(.roundedBorder).font(.system(size: 10, design: .monospaced))
+            Text("Add to \(storeLabel)").font(.system(size: 9)).foregroundStyle(.tertiary)
+        }
+    }
+
+    @ViewBuilder
+    private func selectionBadge() -> some View {
+        switch selectionOK {
+        case .some(true): Label("matches your selection", systemImage: "checkmark.circle.fill").font(.system(size: 10)).foregroundStyle(.green)
+        case .some(false): Label("no longer matches your selection", systemImage: "xmark.circle.fill").font(.system(size: 10)).foregroundStyle(.red)
+        case .none: EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func countBadge() -> some View {
+        if let n = affectedCount {
+            if n <= paths.count {
+                Label("only your selection", systemImage: "info.circle").font(.system(size: 10)).foregroundStyle(.secondary)
+            } else {
+                Label("would exclude ~\(countCapped ? "5000+" : String(n)) indexed items", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10)).foregroundStyle(.orange)
+            }
+        }
+    }
+
     private func rulesFor(_ option: ExcludeOption) -> [ExcludeRule] {
         if let segments = option.folderSegments, !segments.isEmpty {
             return [segments[min(folderSegmentIndex, segments.count - 1)].rule]
@@ -692,109 +838,12 @@ struct ExcludeFromIndexSheet: View {
         recomputeSignals(option)
     }
 
-    // MARK: Editor
-
-    @ViewBuilder
-    private func editor(_ option: ExcludeOption) -> some View {
-        if let edit {
-            let rules = rulesFor(option)
-            let cols = edit.togglableColumns()
-            let single = edit.lines.count == 1
-            VStack(alignment: .leading, spacing: 3) {
-                if rawMode {
-                    ForEach(Array(edit.lines.enumerated()), id: \.offset) { i, line in
-                        HStack(spacing: 6) {
-                            enableToggle(line.enabled) { self.edit?.setEnabled(i, !line.enabled); recomputeSignalsForSelected() }
-                            rawLineField(i, storeLabel: i < rules.count ? rules[i].storeLabel : "")
-                                .opacity(line.enabled ? 1 : 0.4)
-                        }
-                    }
-                } else {
-                    ForEach(Array(edit.lines.enumerated()), id: \.offset) { i, line in
-                        HStack(spacing: 6) {
-                            enableToggle(line.enabled) { self.edit?.setEnabled(i, !line.enabled); recomputeSignalsForSelected() }
-                            Group {
-                                if single, line.chipEligible, !cols.isEmpty {
-                                    chipLine(i, line: line, columns: cols, storeLabel: rules[i].storeLabel, enabled: line.enabled)
-                                } else {
-                                    staticRuleLine(text: edit.effectiveLines()[i], storeLabel: i < rules.count ? rules[i].storeLabel : "", literalNote: !line.chipEligible)
-                                }
-                            }
-                            .opacity(line.enabled ? 1 : 0.4)
-                        }
-                    }
-                }
-                HStack(spacing: 10) {
-                    Button(rawMode ? "Done editing text" : "Edit as text") {
-                        if rawMode { self.edit?.commitRaw() }
-                        rawMode.toggle()
-                        recomputeSignals(option)
-                    }
-                    .controlSize(.small).buttonStyle(.link)
-                    selectionBadge()
-                    countBadge()
-                    Spacer()
-                }
-                .padding(.top, 2)
-            }
-            .padding(.top, 4)
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }, action: { ruleAreaWidth = $0 })
-        }
-    }
-
-    /// Small checkbox toggling whether a rule row is applied.
-    private func enableToggle(_ on: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: on ? "checkmark.square.fill" : "square")
-                .font(.system(size: 11))
-                .foregroundStyle(on ? Color.accentColor : .secondary)
-        }
-        .buttonStyle(.plain)
-        .help(on ? "Disable this rule" : "Enable this rule")
-    }
-
-    private func chipLine(_ i: Int, line: ExcludeRuleLine, columns: Set<Int>, storeLabel: String, enabled: Bool) -> some View {
-        // Show segments in full when the row fits; trim only the longest when it would overflow the sheet.
-        let displays = line.tokens.map(\.display)
-        let fitted = RuleGrid.fitSegments(displays, budget: pathBudget(segments: displays.count))
-        return HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.red)
-            HStack(spacing: 2) {
-                if line.anchored { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
-                ForEach(Array(line.tokens.enumerated()), id: \.offset) { c, token in
-                    if c > 0 { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
-                    if token.isLiteral, columns.contains(c), enabled {
-                        Button(action: { edit?.cycle(column: c); recomputeSignalsForSelected() }) {
-                            tokenChip(fitted[c], tint: chipTint(token), interactive: true)
-                        }
-                        .buttonStyle(.plain).help(chipHelp(token))
-                    } else {
-                        tokenChip(fitted[c], tint: .secondary, interactive: false)
-                    }
-                }
-                if line.dirSlash { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
-            }
-            Text("Add to \(storeLabel)").font(.system(size: 9)).foregroundStyle(.tertiary)
-            Spacer(minLength: 0)
-        }
-    }
-
     /// Characters available to a rule path on one row, from the measured editor width (monospaced font, so
     /// constant width per character). `.max` until measured, so nothing is truncated on the first frame.
     private func pathBudget(segments: Int) -> Int {
         guard ruleAreaWidth > 1 else { return .max }
         let avail = ruleAreaWidth - 130 - CGFloat(segments) * 11
         return max(8, Int(avail / 6.0))
-    }
-
-    private func tokenChip(_ text: String, tint: Color, interactive: Bool) -> some View {
-        Text(text)
-            .lineLimit(1).truncationMode(.middle)
-            .font(.system(size: 10, design: .monospaced))
-            .padding(.horizontal, 5).padding(.vertical, 1)
-            .background(tint.opacity(interactive ? 0.16 : 0.08), in: RoundedRectangle(cornerRadius: 3))
-            .overlay(interactive ? RoundedRectangle(cornerRadius: 3).strokeBorder(tint.opacity(0.4)) : nil)
-            .foregroundStyle(interactive ? tint : Color.secondary)
     }
 
     private func chipTint(_ token: RuleToken) -> Color {
@@ -808,55 +857,6 @@ struct ExcludeFromIndexSheet: View {
             return "\(token.original). Click to exclude any name here."
         case .extWildcard: return "Excludes any .\(token.ext ?? "") file here. Click to exclude any name."
         case .fullWildcard: return "Excludes any name here. Click to use the literal name again."
-        }
-    }
-
-    private func staticRuleLine(text: String, storeLabel: String, literalNote: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.red)
-            Text(text)
-                .lineLimit(1).truncationMode(.middle)
-                .font(.system(size: 10, design: .monospaced))
-                .padding(.horizontal, 5).padding(.vertical, 1)
-                .background(.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-                .help(text)
-            Text("Add to \(storeLabel)").font(.system(size: 9)).foregroundStyle(.tertiary)
-            if literalNote {
-                Text("literal match, wildcards not supported here").font(.system(size: 9)).foregroundStyle(.tertiary).italic()
-            }
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func rawLineField(_ i: Int, storeLabel: String) -> some View {
-        HStack(spacing: 6) {
-            TextField("", text: Binding(
-                get: { edit.map { i < $0.effectiveLines().count ? $0.effectiveLines()[i] : "" } ?? "" },
-                set: { edit?.setRaw(i, $0); recomputeSignalsForSelected() }
-            ))
-            .textFieldStyle(.roundedBorder).font(.system(size: 10, design: .monospaced))
-            Text("Add to \(storeLabel)").font(.system(size: 9)).foregroundStyle(.tertiary)
-        }
-    }
-
-    @ViewBuilder
-    private func selectionBadge() -> some View {
-        switch selectionOK {
-        case .some(true): Label("matches your selection", systemImage: "checkmark.circle.fill").font(.system(size: 10)).foregroundStyle(.green)
-        case .some(false): Label("no longer matches your selection", systemImage: "xmark.circle.fill").font(.system(size: 10)).foregroundStyle(.red)
-        case .none: EmptyView()
-        }
-    }
-
-    @ViewBuilder
-    private func countBadge() -> some View {
-        if let n = affectedCount {
-            if n <= paths.count {
-                Label("only your selection", systemImage: "info.circle").font(.system(size: 10)).foregroundStyle(.secondary)
-            } else {
-                Label("would exclude ~\(countCapped ? "5000+" : String(n)) indexed items", systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10)).foregroundStyle(.orange)
-            }
         }
     }
 

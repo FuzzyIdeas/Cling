@@ -1,5 +1,7 @@
 import Foundation
 
+// MARK: - RuleLineKind
+
 /// Where an editable rule line will be written. Drives matching semantics: fsignore lines are gitignore
 /// patterns (wildcards honored); blocklist lines are literal byte matches (wildcards are dead text).
 enum RuleLineKind: Equatable {
@@ -10,6 +12,8 @@ enum RuleLineKind: Equatable {
 
     var isFsignore: Bool { self == .fsignoreReExclude || self == .fsignoreReInclude }
 }
+
+// MARK: - RuleToken
 
 /// One `/`-separated path component of a rule. A literal token cycles through wildcard states on click;
 /// tokens that were already wildcards in the generated rule (`**`, `*.ext`) are fixed and never cycle.
@@ -37,6 +41,15 @@ struct RuleToken: Equatable {
     /// Whether a literal token is currently showing a wildcard (drives the chip tint).
     var isWildcarded: Bool { isLiteral && state != .literal }
 
+    /// Detect a file extension on a literal segment, mirroring `IndexInclusionAnalyzer.fileExtension`
+    /// (a dot not at the start, a short non-empty extension, no spaces or wildcards). Case is preserved.
+    static func detectExt(_ s: String) -> String? {
+        guard let dot = s.lastIndex(of: "."), dot != s.startIndex else { return nil }
+        let ext = String(s[s.index(after: dot)...])
+        guard !ext.isEmpty, ext.count <= 12, !ext.contains(" "), !ext.contains("*") else { return nil }
+        return ext
+    }
+
     /// Advance to the next state in the cycle. No-op for fixed-wildcard tokens.
     mutating func cycle() {
         guard isLiteral else { return }
@@ -47,21 +60,17 @@ struct RuleToken: Equatable {
         }
     }
 
-    /// Detect a file extension on a literal segment, mirroring `IndexInclusionAnalyzer.fileExtension`
-    /// (a dot not at the start, a short non-empty extension, no spaces or wildcards). Case is preserved.
-    static func detectExt(_ s: String) -> String? {
-        guard let dot = s.lastIndex(of: "."), dot != s.startIndex else { return nil }
-        let ext = String(s[s.index(after: dot)...])
-        guard !ext.isEmpty, ext.count <= 12, !ext.contains(" "), !ext.contains("*") else { return nil }
-        return ext
-    }
 }
+
+// MARK: - TokenizedRuleLine
 
 /// A rule line whose path tokens can be wildcard-cycled. `chipEligible` is true when its store honors globs.
 protocol TokenizedRuleLine {
     var tokens: [RuleToken] { get set }
     var chipEligible: Bool { get }
 }
+
+// MARK: - RuleGrid
 
 /// Shared, store-agnostic grid logic over a set of aligned rule lines: which columns can cycle, and cycling
 /// them in lockstep. Used by both the reindex (`RuleEdit`) and exclude (`ExcludeEdit`) editors.
@@ -86,7 +95,7 @@ enum RuleGrid {
     static func togglableColumns(_ lines: [some TokenizedRuleLine]) -> Set<Int> {
         let eligible = lines.filter(\.chipEligible)
         guard !eligible.isEmpty else { return [] }
-        let maxLen = eligible.map { $0.tokens.count }.max() ?? 0
+        let maxLen = eligible.map(\.tokens.count).max() ?? 0
         var cols = Set<Int>()
         for c in 0 ..< maxLen {
             var hasLiteral = false, hasFixedWildcard = false
@@ -100,7 +109,7 @@ enum RuleGrid {
 
     /// Advance the wildcard state of every chip-eligible line's literal token at `column`, all to the same
     /// new state. The first cycles naturally; the rest are forced to match so the lines stay in lockstep.
-    static func cycle<L: TokenizedRuleLine>(_ lines: inout [L], column c: Int) {
+    static func cycle(_ lines: inout [some TokenizedRuleLine], column c: Int) {
         var target: RuleToken.State?
         for i in lines.indices where lines[i].chipEligible && c < lines[i].tokens.count && lines[i].tokens[c].isLiteral {
             if target == nil { lines[i].tokens[c].cycle(); target = lines[i].tokens[c].state }
@@ -140,6 +149,8 @@ enum RuleGrid {
     }
 }
 
+// MARK: - RuleLine
+
 /// A single editable rule line: optional leading `!`, optional `/` anchor, path tokens, optional trailing `/`.
 struct RuleLine: Equatable, TokenizedRuleLine {
     let kind: RuleLineKind
@@ -149,30 +160,27 @@ struct RuleLine: Equatable, TokenizedRuleLine {
     var tokens: [RuleToken]
     /// Whether this rule is applied. Disabled rules are still shown (so the user can re-enable them) but are
     /// excluded from what apply writes and from the coverage check.
-    var enabled: Bool = true
+    var enabled = true
 
     var isFsignore: Bool { kind.isFsignore }
     var chipEligible: Bool { isFsignore }
-
-    func serialize() -> String {
-        (hasBang ? "!" : "") + (anchored ? "/" : "") + tokens.map(\.display).joined(separator: "/") + (dirSlash ? "/" : "")
-    }
 
     static func parse(_ text: String, kind: RuleLineKind) -> RuleLine {
         let f = RuleGrid.frame(text)
         return RuleLine(kind: kind, hasBang: f.hasBang, anchored: f.anchored, dirSlash: f.dirSlash, tokens: f.tokens)
     }
+
+    func serialize() -> String {
+        (hasBang ? "!" : "") + (anchored ? "/" : "") + tokens.map(\.display).joined(separator: "/") + (dirSlash ? "/" : "")
+    }
+
 }
+
+// MARK: - RuleEdit
 
 /// Editable state for one inclusion option's generated add-lines. Pure: parses, column-aligns and toggles
 /// fsignore tokens, supports a raw-text override, and serializes back into kind-tagged lines.
 struct RuleEdit: Equatable {
-    var lines: [RuleLine]
-    /// When non-nil, a raw-edit override parallel to `lines` (one entry per line). Bypasses the token grid.
-    private(set) var rawText: [String]?
-
-    var isRaw: Bool { rawText != nil }
-
     init(blocklistPrefixes: [String], blocklistContains: [String], reExclude: [String], reInclude: [String]) {
         var ls: [RuleLine] = []
         ls += blocklistPrefixes.map { RuleLine.parse($0, kind: .blocklistPrefix) }
@@ -182,6 +190,12 @@ struct RuleEdit: Equatable {
         lines = ls
         rawText = nil
     }
+
+    var lines: [RuleLine]
+    /// When non-nil, a raw-edit override parallel to `lines` (one entry per line). Bypasses the token grid.
+    private(set) var rawText: [String]?
+
+    var isRaw: Bool { rawText != nil }
 
     /// Column indices (over fsignore lines only) that hold at least one literal token and no fixed wildcard,
     /// so a click can cycle them in lockstep.

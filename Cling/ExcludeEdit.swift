@@ -1,5 +1,7 @@
 import Foundation
 
+// MARK: - ExcludeRuleLine
+
 /// One editable exclusion rule line. Mechanism-agnostic: `chipEligible` (whether its store honors globs) is
 /// supplied by the caller, which also maps the serialized text back to a concrete rule by index.
 struct ExcludeRuleLine: TokenizedRuleLine, Equatable {
@@ -10,30 +12,33 @@ struct ExcludeRuleLine: TokenizedRuleLine, Equatable {
     let chipEligible: Bool
     /// Whether this rule is applied. Disabled rules stay visible (and re-enableable) but are dropped from what
     /// apply writes and from the selection / count signals.
-    var enabled: Bool = true
-
-    func serialize() -> String {
-        (hasBang ? "!" : "") + (anchored ? "/" : "") + tokens.map(\.display).joined(separator: "/") + (dirSlash ? "/" : "")
-    }
+    var enabled = true
 
     static func parse(_ line: String, chipEligible: Bool) -> ExcludeRuleLine {
         let f = RuleGrid.frame(line)
         return ExcludeRuleLine(hasBang: f.hasBang, anchored: f.anchored, dirSlash: f.dirSlash, tokens: f.tokens, chipEligible: chipEligible)
     }
+
+    func serialize() -> String {
+        (hasBang ? "!" : "") + (anchored ? "/" : "") + tokens.map(\.display).joined(separator: "/") + (dirSlash ? "/" : "")
+    }
+
 }
+
+// MARK: - ExcludeEdit
 
 /// Editable state for an exclude option's generated rules. Pure: cycles literal tokens, supports a raw-text
 /// override, and serializes back. The caller rebuilds concrete rules from `effectiveLines()` by index.
 struct ExcludeEdit: Equatable {
-    var lines: [ExcludeRuleLine]
-    private(set) var rawText: [String]?
-
-    var isRaw: Bool { rawText != nil }
-
     init(rules: [(line: String, chipEligible: Bool)]) {
         lines = rules.map { ExcludeRuleLine.parse($0.line, chipEligible: $0.chipEligible) }
         rawText = nil
     }
+
+    var lines: [ExcludeRuleLine]
+    private(set) var rawText: [String]?
+
+    var isRaw: Bool { rawText != nil }
 
     func togglableColumns() -> Set<Int> { RuleGrid.togglableColumns(lines) }
 
@@ -69,6 +74,8 @@ struct ExcludeEdit: Equatable {
         lines.enumerated().map { i, line in rawText?[i] ?? line.serialize() }
     }
 }
+
+// MARK: - ExcludeCountQuery
 
 /// A countable approximation of an exclusion rule: a Cling search query plus optional folder scope.
 struct ExcludeCountQuery: Equatable {

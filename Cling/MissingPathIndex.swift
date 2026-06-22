@@ -1000,14 +1000,6 @@ struct MissingPathSheet: View {
         }
     }
 
-    /// Characters available to a rule path on one row, derived from the measured editor width (monospaced, so
-    /// width per character is constant). `.max` until measured, so nothing is truncated on the first frame.
-    private func pathBudget(segments: Int) -> Int {
-        guard ruleAreaWidth > 1 else { return .max }
-        let avail = ruleAreaWidth - 130 - CGFloat(segments) * 11 // sign + store label + per-chip padding
-        return max(8, Int(avail / 6.0))
-    }
-
     private func tokenChip(_ text: String, tint: Color, interactive: Bool) -> some View {
         Text(text)
             .lineLimit(1)
@@ -1017,29 +1009,6 @@ struct MissingPathSheet: View {
             .background(tint.opacity(interactive ? 0.16 : 0.08), in: RoundedRectangle(cornerRadius: 3))
             .overlay(interactive ? RoundedRectangle(cornerRadius: 3).strokeBorder(tint.opacity(0.4)) : nil)
             .foregroundStyle(interactive ? tint : Color.secondary)
-    }
-
-    /// Chip tint by wildcard state: literal is neutral, the extension-keeping wildcard is the accent, and the
-    /// full `*` wildcard is warmer to signal it matches everything at that spot.
-    private func chipTint(_ token: RuleToken) -> Color {
-        switch token.state {
-        case .literal: .primary
-        case .extWildcard: .accentColor
-        case .fullWildcard: .orange
-        }
-    }
-
-    /// Tooltip describing the current state and what the next click does.
-    private func chipHelp(_ token: RuleToken) -> String {
-        switch token.state {
-        case .literal:
-            if let ext = token.ext { return "\(token.original). Click to match any .\(ext) file here." }
-            return "\(token.original). Click to match any name here."
-        case .extWildcard:
-            return "Matches any .\(token.ext ?? "") file here. Click to match any name."
-        case .fullWildcard:
-            return "Matches any name here. Click to use the literal name again."
-        }
     }
 
     private func blocklistLine(line: RuleLine) -> some View {
@@ -1086,54 +1055,6 @@ struct MissingPathSheet: View {
         }
     }
 
-    private func makeEdit(for option: InclusionOption) -> RuleEdit? {
-        let e = RuleEdit(
-            blocklistPrefixes: option.addBlocklistPrefixes,
-            blocklistContains: option.addBlocklistContains,
-            reExclude: option.reExcludeFsignore,
-            reInclude: option.reIncludeFsignore
-        )
-        return e.lines.isEmpty ? nil : e
-    }
-
-    private func recomputeCoverage(_ d: PathDiagnosis) {
-        guard let edit, let root = d.rootContext else { coverage = nil; return }
-        let lines = edit.reincludeLinesForValidation()
-        guard !lines.isEmpty else { coverage = nil; return }
-        coverage = lines.contains { kind, text in
-            switch kind {
-            case .fsignoreReInclude, .fsignoreReExclude:
-                return IndexInclusionAnalyzer.isIgnoredRooted(path: d.path, root: root.rootPath, content: text)
-            case .blocklistPrefix:
-                return IndexInclusionAnalyzer.prefixMatches(path: d.path, prefix: text)
-            case .blocklistContains:
-                return IndexInclusionAnalyzer.containsMatches(path: d.path, component: text)
-            }
-        }
-    }
-
-    private func effectiveOption(_ option: InclusionOption) -> InclusionOption {
-        guard selectedID == option.id else { return option }
-        var copy = option
-        copy.removeBlocklist = option.removeBlocklist.filter { !disabledRemovals.contains($0.id) }
-        if let edit {
-            let eff = edit.enabledEffectiveLines()
-            copy.addBlocklistPrefixes = eff.filter { $0.kind == .blocklistPrefix }.map(\.text)
-            copy.addBlocklistContains = eff.filter { $0.kind == .blocklistContains }.map(\.text)
-            copy.reExcludeFsignore = eff.filter { $0.kind == .fsignoreReExclude }.map(\.text)
-            copy.reIncludeFsignore = eff.filter { $0.kind == .fsignoreReInclude }.map(\.text)
-        }
-        return copy
-    }
-
-    /// Whether the selected option, after enable/disable edits, would write nothing.
-    private func nothingToApply(_ d: PathDiagnosis) -> Bool {
-        guard let option = d.options.first(where: { $0.id == selectedID }) else { return true }
-        let eo = effectiveOption(option)
-        return eo.addBlocklistPrefixes.isEmpty && eo.addBlocklistContains.isEmpty
-            && eo.reExcludeFsignore.isEmpty && eo.reIncludeFsignore.isEmpty && eo.removeBlocklist.isEmpty
-    }
-
     private func changeLine(sign: String, color: Color, label: String, value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(sign).font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(color)
@@ -1161,6 +1082,85 @@ struct MissingPathSheet: View {
         }
         .padding(12)
         .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Characters available to a rule path on one row, derived from the measured editor width (monospaced, so
+    /// width per character is constant). `.max` until measured, so nothing is truncated on the first frame.
+    private func pathBudget(segments: Int) -> Int {
+        guard ruleAreaWidth > 1 else { return .max }
+        let avail = ruleAreaWidth - 130 - CGFloat(segments) * 11 // sign + store label + per-chip padding
+        return max(8, Int(avail / 6.0))
+    }
+
+    /// Chip tint by wildcard state: literal is neutral, the extension-keeping wildcard is the accent, and the
+    /// full `*` wildcard is warmer to signal it matches everything at that spot.
+    private func chipTint(_ token: RuleToken) -> Color {
+        switch token.state {
+        case .literal: .primary
+        case .extWildcard: .accentColor
+        case .fullWildcard: .orange
+        }
+    }
+
+    /// Tooltip describing the current state and what the next click does.
+    private func chipHelp(_ token: RuleToken) -> String {
+        switch token.state {
+        case .literal:
+            if let ext = token.ext { return "\(token.original). Click to match any .\(ext) file here." }
+            return "\(token.original). Click to match any name here."
+        case .extWildcard:
+            return "Matches any .\(token.ext ?? "") file here. Click to match any name."
+        case .fullWildcard:
+            return "Matches any name here. Click to use the literal name again."
+        }
+    }
+
+    private func makeEdit(for option: InclusionOption) -> RuleEdit? {
+        let e = RuleEdit(
+            blocklistPrefixes: option.addBlocklistPrefixes,
+            blocklistContains: option.addBlocklistContains,
+            reExclude: option.reExcludeFsignore,
+            reInclude: option.reIncludeFsignore
+        )
+        return e.lines.isEmpty ? nil : e
+    }
+
+    private func recomputeCoverage(_ d: PathDiagnosis) {
+        guard let edit, let root = d.rootContext else { coverage = nil; return }
+        let lines = edit.reincludeLinesForValidation()
+        guard !lines.isEmpty else { coverage = nil; return }
+        coverage = lines.contains { kind, text in
+            switch kind {
+            case .fsignoreReInclude, .fsignoreReExclude:
+                IndexInclusionAnalyzer.isIgnoredRooted(path: d.path, root: root.rootPath, content: text)
+            case .blocklistPrefix:
+                IndexInclusionAnalyzer.prefixMatches(path: d.path, prefix: text)
+            case .blocklistContains:
+                IndexInclusionAnalyzer.containsMatches(path: d.path, component: text)
+            }
+        }
+    }
+
+    private func effectiveOption(_ option: InclusionOption) -> InclusionOption {
+        guard selectedID == option.id else { return option }
+        var copy = option
+        copy.removeBlocklist = option.removeBlocklist.filter { !disabledRemovals.contains($0.id) }
+        if let edit {
+            let eff = edit.enabledEffectiveLines()
+            copy.addBlocklistPrefixes = eff.filter { $0.kind == .blocklistPrefix }.map(\.text)
+            copy.addBlocklistContains = eff.filter { $0.kind == .blocklistContains }.map(\.text)
+            copy.reExcludeFsignore = eff.filter { $0.kind == .fsignoreReExclude }.map(\.text)
+            copy.reIncludeFsignore = eff.filter { $0.kind == .fsignoreReInclude }.map(\.text)
+        }
+        return copy
+    }
+
+    /// Whether the selected option, after enable/disable edits, would write nothing.
+    private func nothingToApply(_ d: PathDiagnosis) -> Bool {
+        guard let option = d.options.first(where: { $0.id == selectedID }) else { return true }
+        let eo = effectiveOption(option)
+        return eo.addBlocklistPrefixes.isEmpty && eo.addBlocklistContains.isEmpty
+            && eo.reExcludeFsignore.isEmpty && eo.reIncludeFsignore.isEmpty && eo.removeBlocklist.isEmpty
     }
 
     private func handleDrop(_ urls: [URL]) -> Bool {
