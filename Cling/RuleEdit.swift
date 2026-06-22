@@ -57,28 +57,76 @@ struct RuleToken: Equatable {
     }
 }
 
-/// A single editable rule line: an optional leading `!`, then path tokens.
-struct RuleLine: Equatable {
-    let kind: RuleLineKind
-    let hasBang: Bool
-    var tokens: [RuleToken]
+/// A rule line whose path tokens can be wildcard-cycled. `chipEligible` is true when its store honors globs.
+protocol TokenizedRuleLine {
+    var tokens: [RuleToken] { get set }
+    var chipEligible: Bool { get }
+}
 
-    var isFsignore: Bool { kind.isFsignore }
-
-    func serialize() -> String {
-        (hasBang ? "!" : "") + tokens.map(\.display).joined(separator: "/")
-    }
-
-    static func parse(_ text: String, kind: RuleLineKind) -> RuleLine {
-        var s = text
-        let bang = s.hasPrefix("!")
-        if bang { s.removeFirst() }
-        let parts = s.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+/// Shared, store-agnostic grid logic over a set of aligned rule lines: which columns can cycle, and cycling
+/// them in lockstep. Used by both the reindex (`RuleEdit`) and exclude (`ExcludeEdit`) editors.
+enum RuleGrid {
+    /// Parse a rule line into its framing (leading `!`, leading `/` anchor, trailing `/` dir marker) and its
+    /// `/`-split path tokens. A token containing `*` is a fixed wildcard; others are literal (with a detected
+    /// extension when file-like).
+    static func frame(_ line: String) -> (hasBang: Bool, anchored: Bool, dirSlash: Bool, tokens: [RuleToken]) {
+        var s = line
+        let bang = s.hasPrefix("!"); if bang { s.removeFirst() }
+        let anchored = s.hasPrefix("/"); if anchored { s.removeFirst() }
+        let dirSlash = s.count > 1 && s.hasSuffix("/"); if dirSlash { s.removeLast() }
+        let parts = s.isEmpty ? [] : s.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         let tokens = parts.map { part -> RuleToken in
             let literal = !part.contains("*")
             return RuleToken(original: part, isLiteral: literal, ext: literal ? RuleToken.detectExt(part) : nil)
         }
-        return RuleLine(kind: kind, hasBang: bang, tokens: tokens)
+        return (bang, anchored, dirSlash, tokens)
+    }
+
+    /// Columns (over chip-eligible lines only) with at least one literal token and no fixed wildcard.
+    static func togglableColumns(_ lines: [some TokenizedRuleLine]) -> Set<Int> {
+        let eligible = lines.filter(\.chipEligible)
+        guard !eligible.isEmpty else { return [] }
+        let maxLen = eligible.map { $0.tokens.count }.max() ?? 0
+        var cols = Set<Int>()
+        for c in 0 ..< maxLen {
+            var hasLiteral = false, hasFixedWildcard = false
+            for line in eligible where c < line.tokens.count {
+                if line.tokens[c].isLiteral { hasLiteral = true } else { hasFixedWildcard = true }
+            }
+            if hasLiteral, !hasFixedWildcard { cols.insert(c) }
+        }
+        return cols
+    }
+
+    /// Advance the wildcard state of every chip-eligible line's literal token at `column`, all to the same
+    /// new state. The first cycles naturally; the rest are forced to match so the lines stay in lockstep.
+    static func cycle<L: TokenizedRuleLine>(_ lines: inout [L], column c: Int) {
+        var target: RuleToken.State?
+        for i in lines.indices where lines[i].chipEligible && c < lines[i].tokens.count && lines[i].tokens[c].isLiteral {
+            if target == nil { lines[i].tokens[c].cycle(); target = lines[i].tokens[c].state }
+            else { lines[i].tokens[c].state = target! }
+        }
+    }
+}
+
+/// A single editable rule line: optional leading `!`, optional `/` anchor, path tokens, optional trailing `/`.
+struct RuleLine: Equatable, TokenizedRuleLine {
+    let kind: RuleLineKind
+    let hasBang: Bool
+    let anchored: Bool
+    let dirSlash: Bool
+    var tokens: [RuleToken]
+
+    var isFsignore: Bool { kind.isFsignore }
+    var chipEligible: Bool { isFsignore }
+
+    func serialize() -> String {
+        (hasBang ? "!" : "") + (anchored ? "/" : "") + tokens.map(\.display).joined(separator: "/") + (dirSlash ? "/" : "")
+    }
+
+    static func parse(_ text: String, kind: RuleLineKind) -> RuleLine {
+        let f = RuleGrid.frame(text)
+        return RuleLine(kind: kind, hasBang: f.hasBang, anchored: f.anchored, dirSlash: f.dirSlash, tokens: f.tokens)
     }
 }
 
@@ -103,36 +151,12 @@ struct RuleEdit: Equatable {
 
     /// Column indices (over fsignore lines only) that hold at least one literal token and no fixed wildcard,
     /// so a click can cycle them in lockstep.
-    func togglableColumns() -> Set<Int> {
-        let fs = lines.filter(\.isFsignore)
-        guard !fs.isEmpty else { return [] }
-        let maxLen = fs.map { $0.tokens.count }.max() ?? 0
-        var cols = Set<Int>()
-        for c in 0 ..< maxLen {
-            var hasLiteral = false
-            var hasFixedWildcard = false
-            for line in fs where c < line.tokens.count {
-                if line.tokens[c].isLiteral { hasLiteral = true } else { hasFixedWildcard = true }
-            }
-            if hasLiteral, !hasFixedWildcard { cols.insert(c) }
-        }
-        return cols
-    }
+    func togglableColumns() -> Set<Int> { RuleGrid.togglableColumns(lines) }
 
     /// Advance the wildcard state of every fsignore line's literal token at `column`, all to the same new
     /// state. The first matching token cycles naturally; the rest are forced to match so the lines stay in
     /// lockstep even if they ever held different originals.
-    mutating func cycle(column c: Int) {
-        var target: RuleToken.State?
-        for i in lines.indices where lines[i].isFsignore && c < lines[i].tokens.count && lines[i].tokens[c].isLiteral {
-            if target == nil {
-                lines[i].tokens[c].cycle()
-                target = lines[i].tokens[c].state
-            } else {
-                lines[i].tokens[c].state = target!
-            }
-        }
-    }
+    mutating func cycle(column c: Int) { RuleGrid.cycle(&lines, column: c) }
 
     /// Begin (or continue) a raw-text override and set one line's text.
     mutating func setRaw(_ index: Int, _ text: String) {
