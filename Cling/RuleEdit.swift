@@ -11,14 +11,50 @@ enum RuleLineKind: Equatable {
     var isFsignore: Bool { self == .fsignoreReExclude || self == .fsignoreReInclude }
 }
 
-/// One `/`-separated path component of a rule. Literal tokens can be toggled to `*`; tokens that were
-/// already wildcards in the generated rule (`**`, `*.ext`) are fixed.
+/// One `/`-separated path component of a rule. A literal token cycles through wildcard states on click;
+/// tokens that were already wildcards in the generated rule (`**`, `*.ext`) are fixed and never cycle.
 struct RuleToken: Equatable {
+    /// Wildcard state of a literal token. A file-like segment (one with an extension) gains an extra
+    /// "keep the extension" step: literal -> `*.ext` -> `*` -> literal. A plain segment skips it:
+    /// literal -> `*` -> literal.
+    enum State: Equatable { case literal, extWildcard, fullWildcard }
+
     let original: String
     let isLiteral: Bool
-    var wildcarded: Bool = false
+    /// Extension of a file-like literal segment (e.g. "mp4" for "video.mp4"), else nil.
+    let ext: String?
+    var state: State = .literal
 
-    var display: String { isLiteral ? (wildcarded ? "*" : original) : original }
+    var display: String {
+        guard isLiteral else { return original }
+        switch state {
+        case .literal: return original
+        case .extWildcard: return ext.map { "*.\($0)" } ?? "*"
+        case .fullWildcard: return "*"
+        }
+    }
+
+    /// Whether a literal token is currently showing a wildcard (drives the chip tint).
+    var isWildcarded: Bool { isLiteral && state != .literal }
+
+    /// Advance to the next state in the cycle. No-op for fixed-wildcard tokens.
+    mutating func cycle() {
+        guard isLiteral else { return }
+        switch state {
+        case .literal: state = (ext != nil) ? .extWildcard : .fullWildcard
+        case .extWildcard: state = .fullWildcard
+        case .fullWildcard: state = .literal
+        }
+    }
+
+    /// Detect a file extension on a literal segment, mirroring `IndexInclusionAnalyzer.fileExtension`
+    /// (a dot not at the start, a short non-empty extension, no spaces or wildcards). Case is preserved.
+    static func detectExt(_ s: String) -> String? {
+        guard let dot = s.lastIndex(of: "."), dot != s.startIndex else { return nil }
+        let ext = String(s[s.index(after: dot)...])
+        guard !ext.isEmpty, ext.count <= 12, !ext.contains(" "), !ext.contains("*") else { return nil }
+        return ext
+    }
 }
 
 /// A single editable rule line: an optional leading `!`, then path tokens.
@@ -39,7 +75,8 @@ struct RuleLine: Equatable {
         if bang { s.removeFirst() }
         let parts = s.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         let tokens = parts.map { part -> RuleToken in
-            RuleToken(original: part, isLiteral: !part.contains("*"), wildcarded: false)
+            let literal = !part.contains("*")
+            return RuleToken(original: part, isLiteral: literal, ext: literal ? RuleToken.detectExt(part) : nil)
         }
         return RuleLine(kind: kind, hasBang: bang, tokens: tokens)
     }
@@ -65,7 +102,7 @@ struct RuleEdit: Equatable {
     }
 
     /// Column indices (over fsignore lines only) that hold at least one literal token and no fixed wildcard,
-    /// so a click can toggle them in lockstep.
+    /// so a click can cycle them in lockstep.
     func togglableColumns() -> Set<Int> {
         let fs = lines.filter(\.isFsignore)
         guard !fs.isEmpty else { return [] }
@@ -82,12 +119,18 @@ struct RuleEdit: Equatable {
         return cols
     }
 
-    /// Flip literal↔`*` for every fsignore line that has a literal token at `column`, all to the same new state.
-    mutating func toggle(column c: Int) {
-        var newVal: Bool?
+    /// Advance the wildcard state of every fsignore line's literal token at `column`, all to the same new
+    /// state. The first matching token cycles naturally; the rest are forced to match so the lines stay in
+    /// lockstep even if they ever held different originals.
+    mutating func cycle(column c: Int) {
+        var target: RuleToken.State?
         for i in lines.indices where lines[i].isFsignore && c < lines[i].tokens.count && lines[i].tokens[c].isLiteral {
-            if newVal == nil { newVal = !lines[i].tokens[c].wildcarded }
-            lines[i].tokens[c].wildcarded = newVal!
+            if target == nil {
+                lines[i].tokens[c].cycle()
+                target = lines[i].tokens[c].state
+            } else {
+                lines[i].tokens[c].state = target!
+            }
         }
     }
 

@@ -948,13 +948,13 @@ struct MissingPathSheet: View {
                     if c > 0 { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
                     if token.isLiteral, columns.contains(c) {
                         Button(action: {
-                            edit?.toggle(column: c)
+                            edit?.cycle(column: c)
                             recomputeCoverage(d)
                         }) {
-                            tokenChip(token.display, tint: token.wildcarded ? .accentColor : .primary, interactive: true)
+                            tokenChip(token.display, tint: chipTint(token), interactive: true)
                         }
                         .buttonStyle(.plain)
-                        .help(token.wildcarded ? "Wildcard. Click to use the literal name." : "Click to match any folder name here.")
+                        .help(chipHelp(token))
                     } else {
                         tokenChip(token.display, tint: .secondary, interactive: false)
                     }
@@ -966,7 +966,9 @@ struct MissingPathSheet: View {
     }
 
     private func tokenChip(_ text: String, tint: Color, interactive: Bool) -> some View {
-        Text(text)
+        Text(Self.middleTruncated(text))
+            .lineLimit(1)
+            .truncationMode(.middle)
             .font(.system(size: 10, design: .monospaced))
             .padding(.horizontal, 5).padding(.vertical, 1)
             .background(tint.opacity(interactive ? 0.16 : 0.08), in: RoundedRectangle(cornerRadius: 3))
@@ -974,13 +976,50 @@ struct MissingPathSheet: View {
             .foregroundStyle(interactive ? tint : Color.secondary)
     }
 
+    /// Chip tint by wildcard state: literal is neutral, the extension-keeping wildcard is the accent, and the
+    /// full `*` wildcard is warmer to signal it matches everything at that spot.
+    private func chipTint(_ token: RuleToken) -> Color {
+        switch token.state {
+        case .literal: .primary
+        case .extWildcard: .accentColor
+        case .fullWildcard: .orange
+        }
+    }
+
+    /// Tooltip describing the current state and what the next click does.
+    private func chipHelp(_ token: RuleToken) -> String {
+        switch token.state {
+        case .literal:
+            if let ext = token.ext { return "\(token.original). Click to match any .\(ext) file here." }
+            return "\(token.original). Click to match any name here."
+        case .extWildcard:
+            return "Matches any .\(token.ext ?? "") file here. Click to match any name."
+        case .fullWildcard:
+            return "Matches any name here. Click to use the literal name again."
+        }
+    }
+
+    /// Collapse an over-long segment to a single line by eliding its middle, so the chip row never wraps.
+    /// The full value stays available via the chip's tooltip.
+    static func middleTruncated(_ s: String, max: Int = 28) -> String {
+        guard s.count > max else { return s }
+        let keep = max - 1
+        let head = keep - keep / 2
+        let tail = keep / 2
+        return "\(s.prefix(head))…\(s.suffix(tail))"
+    }
+
     private func blocklistLine(line: RuleLine) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        let full = line.serialize()
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.green)
-            Text(line.serialize())
+            Text(Self.middleTruncated(full))
+                .lineLimit(1)
+                .truncationMode(.middle)
                 .font(.system(size: 10, design: .monospaced))
                 .padding(.horizontal, 5).padding(.vertical, 1)
                 .background(.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+                .help(full)
             Text("Add to blocklist").font(.system(size: 9)).foregroundStyle(.tertiary)
             Text("literal match, wildcards not supported here").font(.system(size: 9)).foregroundStyle(.tertiary).italic()
             Spacer(minLength: 0)
@@ -1054,10 +1093,13 @@ struct MissingPathSheet: View {
     private func changeLine(sign: String, color: Color, label: String, value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(sign).font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(color)
-            Text(value)
+            Text(Self.middleTruncated(value))
+                .lineLimit(1)
+                .truncationMode(.middle)
                 .font(.system(size: 10, design: .monospaced))
                 .padding(.horizontal, 5).padding(.vertical, 1)
                 .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+                .help(value)
             Text(label).font(.system(size: 9)).foregroundStyle(.tertiary)
         }
     }
