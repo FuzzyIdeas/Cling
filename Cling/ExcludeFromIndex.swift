@@ -410,6 +410,7 @@ struct ExcludeFromIndexSheet: View {
             if let segments = result.options.compactMap(\.folderSegments).first {
                 folderSegmentIndex = segments.count - 1 // default to the deepest folder
             }
+            if let first = result.options.first { reseed(first) }
         }
     }
 
@@ -417,6 +418,12 @@ struct ExcludeFromIndexSheet: View {
     @State private var analysis: ExcludeAnalysis?
     @State private var selectedID: UUID?
     @State private var folderSegmentIndex = 0
+    @State private var edit: ExcludeEdit?
+    @State private var rawMode = false
+    @State private var selectionOK: Bool? = nil
+    @State private var affectedCount: Int? = nil
+    @State private var countCapped = false
+    @State private var countTask: Task<Void, Never>? = nil
 
     private var header: some View {
         HStack {
@@ -489,29 +496,43 @@ struct ExcludeFromIndexSheet: View {
 
     private func optionRow(_ option: ExcludeOption) -> some View {
         let selected = selectedID == option.id
-        return Button(action: { selectedID = option.id }) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : .secondary)
-                    .font(.system(size: 13))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(option.title).font(.system(size: 12, weight: .medium))
-                    Text(option.summary).font(.system(size: 10)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if selected {
-                        if let segments = option.folderSegments {
-                            folderBreadcrumb(segments)
-                        }
-                        changeList(rulesFor(option))
+        return VStack(alignment: .leading, spacing: 6) {
+            Button(action: {
+                selectedID = option.id
+                if let segments = option.folderSegments { folderSegmentIndex = segments.count - 1 }
+                reseed(option)
+            }) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                        .foregroundStyle(selected ? Color.accentColor : .secondary)
+                        .font(.system(size: 13))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(option.title).font(.system(size: 12, weight: .medium))
+                        Text(option.summary).font(.system(size: 10)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if selected {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let segments = option.folderSegments {
+                        folderBreadcrumb(segments)
+                    }
+                    if edit != nil {
+                        editor(option)
+                    } else {
+                        changeList(rulesFor(option)) // read-only fallback for large sets
                     }
                 }
-                Spacer()
+                .padding(.leading, 21)
             }
-            .contentShape(Rectangle())
-            .padding(8)
-            .background(selected ? Color.accentColor.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6))
         }
-        .buttonStyle(.plain)
+        .padding(8)
+        .background(selected ? Color.accentColor.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6))
     }
 
     private func changeList(_ rules: [ExcludeRule]) -> some View {
@@ -547,7 +568,7 @@ struct ExcludeFromIndexSheet: View {
                     if idx > 0 {
                         Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
                     }
-                    Button(seg.name) { folderSegmentIndex = idx }
+                    Button(seg.name) { folderSegmentIndex = idx; if let o = analysis?.options.first(where: { $0.id == selectedID }) { reseed(o) } }
                         .buttonStyle(.plain)
                         .font(.system(size: 10, weight: idx == selected ? .semibold : .regular, design: .monospaced))
                         .foregroundStyle(idx > selected ? Color.secondary.opacity(0.4) : .primary)
@@ -569,8 +590,216 @@ struct ExcludeFromIndexSheet: View {
 
     private func apply(_ analysis: ExcludeAnalysis) {
         guard let id = selectedID, let option = analysis.options.first(where: { $0.id == id }) else { return }
-        FUZZY.excludeFromIndex(rules: rulesFor(option), paths: Set(paths), reindex: option.needsReindex)
+        let rules = effectiveRules(for: option)
+        let edited = edit?.effectiveLines() != rulesFor(option).map(\.line)
+        FUZZY.excludeFromIndex(rules: rules, paths: Set(paths), reindex: option.needsReindex || edited)
         dismiss()
+    }
+
+    // MARK: Edit state
+
+    /// Build editable state for an option, but only when it shows a small, hand-editable rule set. Large/bulk
+    /// sets fall back to the read-only change list.
+    private func makeEdit(for option: ExcludeOption) -> ExcludeEdit? {
+        let rules = rulesFor(option)
+        guard (1 ... 12).contains(rules.count) else { return nil }
+        return ExcludeEdit(rules: rules.map { ($0.line, $0.mechanism.supportsGlobs) })
+    }
+
+    /// Rebuild concrete rules from the edited text, preserving each rule's original mechanism and prefix flag.
+    private func effectiveRules(for option: ExcludeOption) -> [ExcludeRule] {
+        let orig = rulesFor(option)
+        guard let edit else { return orig }
+        let lines = edit.effectiveLines()
+        return orig.enumerated().map { i, r in
+            ExcludeRule(mechanism: r.mechanism, line: i < lines.count ? lines[i] : r.line, blocklistPrefix: r.blocklistPrefix)
+        }
+    }
+
+    private func reseed(_ option: ExcludeOption) {
+        edit = makeEdit(for: option)
+        rawMode = false
+        recomputeSignals(option)
+    }
+
+    private func recomputeSignals(_ option: ExcludeOption) {
+        guard let analysis else { selectionOK = nil; affectedCount = nil; return }
+        let rules = effectiveRules(for: option)
+        // Reliable selection check: every selected path still matched by some rule.
+        if edit == nil {
+            selectionOK = nil
+        } else {
+            selectionOK = analysis.infos.allSatisfy { info in rules.contains { ExcludeAnalyzer.matches($0, info) } }
+        }
+        recomputeCount(rules, infos: analysis.infos)
+    }
+
+    private func recomputeCount(_ rules: [ExcludeRule], infos: [ExcludePathInfo]) {
+        countTask?.cancel()
+        affectedCount = nil
+        guard edit != nil else { return }
+        let root = infos.first?.root
+        let queries: [ExcludeCountQuery] = rules.compactMap {
+            excludeCountQuery(line: $0.line, supportsGlobs: $0.mechanism.supportsGlobs, blocklistPrefix: $0.blocklistPrefix, root: root)
+        }
+        guard !queries.isEmpty else { return }
+        countTask = Task {
+            var total = 0, capped = false
+            for q in queries {
+                if Task.isCancelled { return }
+                let c = await FUZZY.matchCount(query: q.query, dirsOnly: q.dirsOnly, folders: q.folders.map { FilePath($0) }, maxDepth: nil, cap: 5000)
+                total += c
+                if c >= 5000 { capped = true }
+            }
+            if Task.isCancelled { return }
+            await MainActor.run { affectedCount = total; countCapped = capped }
+        }
+    }
+
+    private func recomputeSignalsForSelected() {
+        guard let analysis, let option = analysis.options.first(where: { $0.id == selectedID }) else { return }
+        recomputeSignals(option)
+    }
+
+    // MARK: Editor
+
+    @ViewBuilder
+    private func editor(_ option: ExcludeOption) -> some View {
+        if let edit {
+            let rules = rulesFor(option)
+            let cols = edit.togglableColumns()
+            let single = edit.lines.count == 1
+            VStack(alignment: .leading, spacing: 3) {
+                if rawMode {
+                    ForEach(Array(edit.lines.enumerated()), id: \.offset) { i, _ in
+                        rawLineField(i, storeLabel: i < rules.count ? rules[i].storeLabel : "")
+                    }
+                } else {
+                    ForEach(Array(edit.lines.enumerated()), id: \.offset) { i, line in
+                        if single, line.chipEligible, !cols.isEmpty {
+                            chipLine(i, line: line, columns: cols, storeLabel: rules[i].storeLabel)
+                        } else {
+                            staticRuleLine(text: edit.effectiveLines()[i], storeLabel: i < rules.count ? rules[i].storeLabel : "", literalNote: !line.chipEligible)
+                        }
+                    }
+                }
+                HStack(spacing: 10) {
+                    Button(rawMode ? "Done editing text" : "Edit as text") {
+                        if rawMode { self.edit?.commitRaw() }
+                        rawMode.toggle()
+                        recomputeSignals(option)
+                    }
+                    .controlSize(.small).buttonStyle(.link)
+                    selectionBadge()
+                    countBadge()
+                    Spacer()
+                }
+                .padding(.top, 2)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private func chipLine(_ i: Int, line: ExcludeRuleLine, columns: Set<Int>, storeLabel: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.red)
+            HStack(spacing: 2) {
+                if line.anchored { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
+                ForEach(Array(line.tokens.enumerated()), id: \.offset) { c, token in
+                    if c > 0 { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
+                    if token.isLiteral, columns.contains(c) {
+                        Button(action: { edit?.cycle(column: c); recomputeSignalsForSelected() }) {
+                            tokenChip(token.display, tint: chipTint(token), interactive: true)
+                        }
+                        .buttonStyle(.plain).help(chipHelp(token))
+                    } else {
+                        tokenChip(token.display, tint: .secondary, interactive: false)
+                    }
+                }
+                if line.dirSlash { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
+            }
+            Text("Add to \(storeLabel)").font(.system(size: 9)).foregroundStyle(.tertiary)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func tokenChip(_ text: String, tint: Color, interactive: Bool) -> some View {
+        Text(Self.middleTruncated(text))
+            .lineLimit(1).truncationMode(.middle)
+            .font(.system(size: 10, design: .monospaced))
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(tint.opacity(interactive ? 0.16 : 0.08), in: RoundedRectangle(cornerRadius: 3))
+            .overlay(interactive ? RoundedRectangle(cornerRadius: 3).strokeBorder(tint.opacity(0.4)) : nil)
+            .foregroundStyle(interactive ? tint : Color.secondary)
+    }
+
+    private func chipTint(_ token: RuleToken) -> Color {
+        switch token.state { case .literal: .primary; case .extWildcard: .accentColor; case .fullWildcard: .orange }
+    }
+
+    private func chipHelp(_ token: RuleToken) -> String {
+        switch token.state {
+        case .literal:
+            if let ext = token.ext { return "\(token.original). Click to exclude any .\(ext) file here." }
+            return "\(token.original). Click to exclude any name here."
+        case .extWildcard: return "Excludes any .\(token.ext ?? "") file here. Click to exclude any name."
+        case .fullWildcard: return "Excludes any name here. Click to use the literal name again."
+        }
+    }
+
+    private func staticRuleLine(text: String, storeLabel: String, literalNote: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.red)
+            Text(Self.middleTruncated(text))
+                .lineLimit(1).truncationMode(.middle)
+                .font(.system(size: 10, design: .monospaced))
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background(.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+                .help(text)
+            Text("Add to \(storeLabel)").font(.system(size: 9)).foregroundStyle(.tertiary)
+            if literalNote {
+                Text("literal match, wildcards not supported here").font(.system(size: 9)).foregroundStyle(.tertiary).italic()
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func rawLineField(_ i: Int, storeLabel: String) -> some View {
+        HStack(spacing: 6) {
+            TextField("", text: Binding(
+                get: { edit.map { i < $0.effectiveLines().count ? $0.effectiveLines()[i] : "" } ?? "" },
+                set: { edit?.setRaw(i, $0); recomputeSignalsForSelected() }
+            ))
+            .textFieldStyle(.roundedBorder).font(.system(size: 10, design: .monospaced))
+            Text("Add to \(storeLabel)").font(.system(size: 9)).foregroundStyle(.tertiary)
+        }
+    }
+
+    @ViewBuilder
+    private func selectionBadge() -> some View {
+        switch selectionOK {
+        case .some(true): Label("matches your selection", systemImage: "checkmark.circle.fill").font(.system(size: 10)).foregroundStyle(.green)
+        case .some(false): Label("no longer matches your selection", systemImage: "xmark.circle.fill").font(.system(size: 10)).foregroundStyle(.red)
+        case .none: EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func countBadge() -> some View {
+        if let n = affectedCount {
+            if n <= paths.count {
+                Label("only your selection", systemImage: "info.circle").font(.system(size: 10)).foregroundStyle(.secondary)
+            } else {
+                Label("would exclude ~\(countCapped ? "5000+" : String(n)) indexed items", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10)).foregroundStyle(.orange)
+            }
+        }
+    }
+
+    static func middleTruncated(_ s: String, max: Int = 28) -> String {
+        guard s.count > max else { return s }
+        let keep = max - 1
+        return "\(s.prefix(keep - keep / 2))…\(s.suffix(keep / 2))"
     }
 
 }
