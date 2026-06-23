@@ -3,6 +3,7 @@ import LaunchAtLogin
 import Lowtech
 import LowtechIndie
 import LowtechPro
+import LowtechProSentry
 import SwiftUI
 
 extension Binding<Int> {
@@ -532,6 +533,13 @@ private struct GeneralSettingsPane: View {
                     .disabled(!enableGlobalHotkey)
                     .opacity(enableGlobalHotkey ? 1 : 0.5)
                 }
+            }
+
+            Section("Privacy") {
+                SentryToggleRow(
+                    title: "Send error reports",
+                    subtitle: "Share anonymous crash and error reports so issues can be found and fixed faster."
+                )
             }
         }
         .formStyle(.grouped)

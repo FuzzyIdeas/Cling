@@ -8,6 +8,7 @@ import Defaults
 import Lowtech
 import LowtechIndie
 import LowtechPro
+import LowtechProSentry
 import OSLog
 import Paddle
 import Sparkle
@@ -136,6 +137,11 @@ class AppDelegate: LowtechProAppDelegate {
             productName = "Cling Pro"
             vendorName = "THE LOW TECH GUYS SRL"
             hasFreeFeatures = true
+
+            if Defaults[.enableSentry] {
+                LowtechSentry.sentryDSN = "https://cb2335583d0612b61abb5d902ac97560@o84592.ingest.us.sentry.io/4511614814060544"
+                LowtechSentry.configureSentry(restartOnHang: false, getUser: LowtechSentry.getSentryUser)
+            }
         }
 
         super.applicationDidFinishLaunching(notification)

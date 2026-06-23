@@ -14,6 +14,7 @@
 		C76172292D50F5D000D78B4F /* Lowtech in Frameworks */ = {isa = PBXBuildFile; productRef = C76172282D50F5D000D78B4F /* Lowtech */; };
 		C761722B2D50F5D000D78B4F /* LowtechIndie in Frameworks */ = {isa = PBXBuildFile; productRef = C761722A2D50F5D000D78B4F /* LowtechIndie */; };
 		C761722D2D50F5D000D78B4F /* LowtechPro in Frameworks */ = {isa = PBXBuildFile; productRef = C761722C2D50F5D000D78B4F /* LowtechPro */; };
+		C7C11A6E0001000000000001 /* LowtechProSentry in Frameworks */ = {isa = PBXBuildFile; productRef = C7C11A6E0001000000000000 /* LowtechProSentry */; };
 		C7C2CDD32FDFE0B6005EC019 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = C7C2CDD22FDFE0B6005EC019 /* KeyboardShortcuts */; };
 		C7C2CDD62FDFE115005EC019 /* WarpDrop in Frameworks */ = {isa = PBXBuildFile; productRef = C7C2CDD52FDFE115005EC019 /* WarpDrop */; };
 		C7FE59F12D635D1500141592 /* ClopSDK in Frameworks */ = {isa = PBXBuildFile; productRef = C7FE59F02D635D1500141592 /* ClopSDK */; };
@@ -98,6 +99,7 @@
 				C7FE59F12D635D1500141592 /* ClopSDK in Frameworks */,
 				C761722B2D50F5D000D78B4F /* LowtechIndie in Frameworks */,
 				C761722D2D50F5D000D78B4F /* LowtechPro in Frameworks */,
+				C7C11A6E0001000000000001 /* LowtechProSentry in Frameworks */,
 				AA11000000000000000000A3 /* Highlighter in Frameworks */,
 				C7C2CDD62FDFE115005EC019 /* WarpDrop in Frameworks */,
 			);
@@ -182,6 +184,7 @@
 				C76172282D50F5D000D78B4F /* Lowtech */,
 				C761722A2D50F5D000D78B4F /* LowtechIndie */,
 				C761722C2D50F5D000D78B4F /* LowtechPro */,
+				C7C11A6E0001000000000000 /* LowtechProSentry */,
 				C74B68A02D50F95800FCDEBA /* Ignore */,
 				C7FE59F02D635D1500141592 /* ClopSDK */,
 				AA11000000000000000000A2 /* Highlighter */,
@@ -625,6 +628,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C76172272D50F5D000D78B4F /* XCRemoteSwiftPackageReference "Lowtech" */;
 			productName = LowtechPro;
+		};
+		C7C11A6E0001000000000000 /* LowtechProSentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C76172272D50F5D000D78B4F /* XCRemoteSwiftPackageReference "Lowtech" */;
+			productName = LowtechProSentry;
 		};
 		C7C2CDD22FDFE0B6005EC019 /* KeyboardShortcuts */ = {
 			isa = XCSwiftPackageProductDependency;
