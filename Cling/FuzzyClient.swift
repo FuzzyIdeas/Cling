@@ -584,6 +584,21 @@ class FuzzyClient {
         return filtered.prefix(maxResults * 2).filter { seen.insert($0.path).inserted }.prefix(maxResults).map { $0 }
     }
 
+    /// True when every whitespace-separated token is a positive extension filter (".m4a", "*.png"),
+    /// i.e. the query has no fuzzy term to rank by. Such queries take SearchEngine's extension-only
+    /// fast path, which is a pure filter — so we widen the result cap to avoid truncating a large
+    /// library (e.g. ".m4a" across a Music folder of thousands of tracks) before the wanted file.
+    nonisolated static func isExtensionOnlyQuery(_ query: String) -> Bool {
+        let tokens = query.split(separator: " ")
+        guard !tokens.isEmpty else { return false }
+        for t in tokens {
+            if t.hasPrefix("."), t.count > 1 { continue }
+            if t.hasPrefix("*."), t.count > 2 { continue }
+            return false
+        }
+        return true
+    }
+
     /// Records freshly-seen volumes. In opt-in mode (`disableAutomaticVolumeIndexing`), a volume seen for
     /// the first time that has never been indexed starts out disabled, so it shows up toggled-off in
     /// Settings until the user enables it. Guarded by `knownVolumes` so it runs exactly once per volume:
@@ -1333,7 +1348,10 @@ class FuzzyClient {
         ].compactMap { $0 }.joined(separator: " ")
         let engineCount = activeEngines.count
         log.debug("performSearch: q=\"\(query)\" engines=\(engineCount) \(filterDesc)")
-        let maxResults = proactive ? Defaults[.maxResultsCount] : min(Defaults[.maxResultsCount], 500)
+        // Extension-only queries (".m4a") are a pure filter with no relevance term, so the
+        // interactive 500 cap can truncate a large library before the wanted file surfaces.
+        let extensionOnly = Self.isExtensionOnlyQuery(query)
+        let maxResults = (proactive || extensionOnly) ? Defaults[.maxResultsCount] : min(Defaults[.maxResultsCount], 500)
         let folderPrefixes = folderFilter?.folders.map(\.string)
         let volumePrefix = volumeFilter?.string
         let removedPaths = removedFiles.union(excludedPaths)

@@ -1814,10 +1814,67 @@ final class SearchEngine: @unchecked Sendable {
         let importantPrefixes = [
             homePrefix + "/documents", homePrefix + "/desktop", homePrefix + "/downloads",
             homePrefix + "/projects", homePrefix + "/temp",
+            homePrefix + "/music", homePrefix + "/movies", homePrefix + "/pictures",
             homePrefix + "/library/mobile documents", // iCloud Drive
             "/applications",
         ].map { Array($0.utf8) }
         let libraryPrefix = Array((homePrefix + "/library").utf8)
+
+        // Path importance (higher = more relevant to the user), shared by the fuzzy scoring loop
+        // and the extension-only fast path:
+        //   4 = important user dir (Documents, Desktop, Downloads, Projects, Music, Movies, Pictures, iCloud, /Applications)
+        //   3 = other home visible
+        //   2 = home Library visible
+        //   1 = system/root visible
+        //   0 = hidden (dotfile/dotdir anywhere in the path)
+        @inline(__always)
+        func computePathImportance(_ allBase: UnsafePointer<UInt8>, _ off: Int, _ len: Int, _ bnOff: Int) -> Int32 {
+            let isHidden: Bool = !queryHasDot && {
+                if bnOff < len, allBase[off + bnOff] == 0x2E { return true }
+                var p = 0
+                while p < len {
+                    if allBase[off + p] == 0x2F, p + 1 < len, allBase[off + p + 1] == 0x2E { return true }
+                    p &+= 1
+                }
+                return false
+            }()
+            if isHidden { return 0 }
+            // Important dirs first.
+            var ipi = 0
+            while ipi < importantPrefixes.count {
+                let pfx = importantPrefixes[ipi]
+                if len >= pfx.count {
+                    var ok = true
+                    var j = 0
+                    while j < pfx.count {
+                        if allBase[off + j] != pfx[j] { ok = false; break }
+                        j &+= 1
+                    }
+                    if ok { return 4 }
+                }
+                ipi &+= 1
+            }
+            // Home path: distinguish Library (lower priority) from other home.
+            if len >= homePrefixBytes.count, {
+                var hp = 0
+                while hp < homePrefixBytes.count {
+                    if allBase[off + hp] != homePrefixBytes[hp] { return false }
+                    hp &+= 1
+                }
+                return true
+            }() {
+                var isLib = len >= libraryPrefix.count
+                if isLib {
+                    var j = 0
+                    while j < libraryPrefix.count {
+                        if allBase[off + j] != libraryPrefix[j] { isLib = false; break }
+                        j &+= 1
+                    }
+                }
+                return isLib ? 2 : 3
+            }
+            return 1
+        }
 
         // Merge in: query tokens with folderPrefixes parameter
         let allFolderPrefixes: [String]? = {
@@ -2360,45 +2417,32 @@ final class SearchEngine: @unchecked Sendable {
                 cands = extFiltered
             }
 
-            // Partial sort: only need top maxResults by (segCount, pathLen)
-            // Bucket by segCount first (typically 1-20), then take shortest paths
-            if cands.count > maxResults * 2 {
-                let maxSeg = 64
-                let segBuckets = UnsafeMutablePointer<[Int]>.allocate(capacity: maxSeg)
-                segBuckets.initialize(repeating: [], count: maxSeg)
-                defer { segBuckets.deinitialize(count: maxSeg); segBuckets.deallocate() }
+            // Rank: important locations first (so user media beats shallow system/app noise),
+            // then shallower paths, then shorter paths. Importance is precomputed once per
+            // candidate and also written into each SearchResult, so the cross-engine merge's
+            // re-sort by rank preserves this ordering instead of collapsing everything to rank 0.
+            var imp = [Int32](repeating: 1, count: cands.count)
+            allBytes.withUnsafeBufferPointer { buf in
+                let allBase = buf.baseAddress!
                 var ci = 0
                 while ci < cands.count {
-                    let seg = min(entries[cands[ci]].segCount, maxSeg - 1)
-                    segBuckets[seg].append(cands[ci])
+                    let id = cands[ci]
+                    imp[ci] = computePathImportance(allBase, byteOffsets[id], byteLengths[id], entries[id].bnStart)
                     ci &+= 1
                 }
-                var sorted = [Int]()
-                sorted.reserveCapacity(maxResults)
-                var si = 0
-                while si < maxSeg, sorted.count < maxResults {
-                    var bucket = segBuckets[si]
-                    if !bucket.isEmpty {
-                        if sorted.count + bucket.count > maxResults {
-                            bucket.sort { byteLengths[$0] < byteLengths[$1] }
-                            sorted.append(contentsOf: bucket.prefix(maxResults - sorted.count))
-                        } else {
-                            sorted.append(contentsOf: bucket)
-                        }
-                    }
-                    si &+= 1
-                }
-                cands = sorted
-            } else {
-                cands.sort {
-                    let aSeg = entries[$0].segCount, bSeg = entries[$1].segCount
-                    if aSeg != bSeg { return aSeg < bSeg }
-                    return byteLengths[$0] < byteLengths[$1]
-                }
             }
-            let results = cands.prefix(maxResults).map { id in
+            // Sort an index permutation so `imp` stays aligned with its candidate.
+            var order = Array(0 ..< cands.count)
+            order.sort { x, y in
+                if imp[x] != imp[y] { return imp[x] > imp[y] }
+                let aSeg = entries[cands[x]].segCount, bSeg = entries[cands[y]].segCount
+                if aSeg != bSeg { return aSeg < bSeg }
+                return byteLengths[cands[x]] < byteLengths[cands[y]]
+            }
+            let results = order.prefix(maxResults).map { oi -> SearchResult in
+                let id = cands[oi]
                 let e = entries[id]
-                return SearchResult(path: e.path, isDir: e.isDir, score: 0, quality: 0, hasBase: false, segmentMatches: 0, pathImportance: 0, prefixMatch: false, depth: e.segCount)
+                return SearchResult(path: e.path, isDir: e.isDir, score: 0, quality: 0, hasBase: false, segmentMatches: 0, pathImportance: Int(imp[oi]), prefixMatch: false, depth: e.segCount)
             }
             let totalMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             slog.debug("search: q=\"\(query)\" \(n) entries, \(cands.count) cands, \(results.count) results in \(totalMs, format: .fixed(precision: 1))ms (filter=\(filterMs, format: .fixed(precision: 1))ms)")
@@ -2546,65 +2590,9 @@ final class SearchEngine: @unchecked Sendable {
 
                             let sHasBase = Int32(hasSlash ? 0 : (hasBase ? 1 : 0))
 
-                            // Path importance (higher = more relevant to user):
-                            //   4 = important user dir (Documents, Desktop, Downloads, Projects, /Applications)
-                            //   3 = other home visible
-                            //   2 = home Library visible
-                            //   1 = system/root visible
-                            //   0 = hidden (dotfile/dotdir in path)
-                            let sPathImportance: Int32
-                            let isHidden: Bool = !queryHasDot && {
-                                let bnOff = e.bnStart
-                                if bnOff < len, allBase[off + bnOff] == 0x2E { return true }
-                                var p = 0
-                                while p < len {
-                                    if allBase[off + p] == 0x2F, p + 1 < len, allBase[off + p + 1] == 0x2E { return true }
-                                    p &+= 1
-                                }
-                                return false
-                            }()
-                            if isHidden {
-                                sPathImportance = 0
-                            } else {
-                                // Check important dirs first
-                                var important = false
-                                var ipi = 0
-                                while ipi < importantPrefixes.count {
-                                    let pfx = importantPrefixes[ipi]
-                                    if len >= pfx.count {
-                                        var ok = true; var j = 0
-                                        while j < pfx.count {
-                                            if allBase[off + j] != pfx[j] { ok = false; break }
-                                            j &+= 1
-                                        }
-                                        if ok { important = true; break }
-                                    }
-                                    ipi &+= 1
-                                }
-                                if important {
-                                    sPathImportance = 4
-                                } else if len >= homePrefixBytes.count, {
-                                    var hp = 0
-                                    while hp < homePrefixBytes.count {
-                                        if allBase[off + hp] != homePrefixBytes[hp] { return false }
-                                        hp &+= 1
-                                    }
-                                    return true
-                                }() {
-                                    // Home path: check if Library (lower priority) or other home
-                                    var isLib = len >= libraryPrefix.count
-                                    if isLib {
-                                        var j = 0
-                                        while j < libraryPrefix.count {
-                                            if allBase[off + j] != libraryPrefix[j] { isLib = false; break }
-                                            j &+= 1
-                                        }
-                                    }
-                                    sPathImportance = isLib ? 2 : 3
-                                } else {
-                                    sPathImportance = 1
-                                }
-                            }
+                            // Path importance (see computePathImportance, defined above): lifts
+                            // user/media dirs above system noise; hidden paths sink to 0.
+                            let sPathImportance = computePathImportance(allBase, off, len, bnOff)
 
                             // Prefix/extension match
                             let sPrefixMatch: Int32
