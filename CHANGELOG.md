@@ -1,3 +1,10 @@
+# 2.6.2
+
+**[Download Cling 2.6.2 →](https://files.lowtechguys.com/releases/Cling-2.6.2.dmg)**
+## Improvements
+
+- Searching by file type alone (like `.m4a`) ranks your own music, movies, and photos above system and app files, and stops large libraries from being cut off before your file shows up
+
 # 2.6.1
 
 **[Download Cling 2.6.1 →](https://files.lowtechguys.com/releases/Cling-2.6.1.dmg)**
