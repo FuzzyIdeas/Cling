@@ -48,7 +48,9 @@ upload:
 	rsync -avz Releases/*.html hetzner:/static/lowtechguys/ReleaseNotes/
 	rsync -avzP Releases/appcast.xml Releases/changelog.html hetzner:/static/lowtechguys/cling/
 	cfcli -d lowtechguys.com purge
+ifeq (, $(BETA))
 	$(MAKE) sentry
+endif
 
 CHANGELOG.md: $(RELEASE_NOTES_FILES)
 	tail -n +1 $$(ls ReleaseNotes/*.md | egrep '/[0-9]+(\.[0-9]+)*\.md$$' $(if $(BETA),| egrep -v '/$(VERSION)\.md$$') | sort -Vr) | sd '==> ReleaseNotes/(.+)\.md <==' '# $$1\n\n**[Download $(NAME) $$1 →](https://files.lowtechguys.com/releases/$(NAME)-$$1.dmg)**' > CHANGELOG.md
