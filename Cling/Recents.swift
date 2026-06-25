@@ -41,33 +41,66 @@ let sortComparator: MDQuerySortComparatorFunction = { values1, values2, context 
     return CFDateCompare(date1, date2, nil).reversed()
 }
 
+/// Serializes the off-main recents filtering so rapid Spotlight updates don't run their (heavy)
+/// ignore checks concurrently or assign results out of order.
+let recentsFilterQueue = DispatchQueue(label: "fyi.lowtechguys.cling.recents-filter", qos: .userInitiated)
+
+/// Main-actor snapshot of the state `filterRecentPaths` needs, so the filtering can run off-main.
+struct RecentsFilterState {
+    let removedFiles: Set<String>
+    let excludedPaths: Set<String>
+    let enabledVolumes: [FilePath]
+
+    @MainActor static func current() -> RecentsFilterState {
+        RecentsFilterState(
+            removedFiles: FUZZY.removedFiles,
+            excludedPaths: FUZZY.excludedPaths,
+            enabledVolumes: FUZZY.enabledVolumes
+        )
+    }
+}
+
 extension MDQuery {
+    /// Pulls the raw result paths off the query. Touches the Spotlight query, so it stays on the
+    /// main actor; the expensive ignore filtering happens separately in `filterRecentPaths`.
     @MainActor
-    func getPaths() -> [FilePath] {
+    func extractPaths() -> [FilePath] {
         MDQueryDisableUpdates(self)
         defer { MDQueryEnableUpdates(self) }
 
         var paths: [FilePath] = []
+        paths.reserveCapacity(MDQueryGetResultCount(self))
         for i in 0 ..< MDQueryGetResultCount(self) {
             guard let rawPtr = MDQueryGetResultAtIndex(self, i) else { continue }
             let item = Unmanaged<MDItem>.fromOpaque(rawPtr).takeUnretainedValue()
             guard let path = MDItemCopyAttribute(item, kMDItemPath) as? String else { continue }
-
-            let filePath = FilePath(path)
-            if FUZZY.removedFiles.contains(filePath.string) || FUZZY.excludedPaths.contains(filePath.string) { continue }
-            if filePath.starts(with: HOME), filePath.string.isIgnored(in: fsignoreString) { continue }
-            var ignoredByVolume = false
-            for volume in FUZZY.enabledVolumes where path.hasPrefix(volume.string + "/") {
-                let vfsignore = volume / ".fsignore"
-                ignoredByVolume = vfsignore.exists && path.isIgnored(in: vfsignore.string)
-                break
-            }
-            if ignoredByVolume { continue }
-            if !isRelevantDefaultPath(path) { continue }
-            paths.append(filePath)
+            paths.append(FilePath(path))
         }
         return paths
     }
+}
+
+/// Filters raw recent paths against ignore rules and per-volume `.fsignore`s. Runs OFF the main
+/// thread: `isIgnored` calls into Rust and can block on a shared mutex, which hung the app for 30s+
+/// when there were many recent files (CLING-8).
+func filterRecentPaths(_ paths: [FilePath], _ state: RecentsFilterState) -> [FilePath] {
+    var result: [FilePath] = []
+    result.reserveCapacity(paths.count)
+    for filePath in paths {
+        let path = filePath.string
+        if state.removedFiles.contains(path) || state.excludedPaths.contains(path) { continue }
+        if filePath.starts(with: HOME), path.isIgnored(in: fsignoreString) { continue }
+        var ignoredByVolume = false
+        for volume in state.enabledVolumes where path.hasPrefix(volume.string + "/") {
+            let vfsignore = volume / ".fsignore"
+            ignoredByVolume = vfsignore.exists && path.isIgnored(in: vfsignore.string)
+            break
+        }
+        if ignoredByVolume { continue }
+        if !isRelevantDefaultPath(path) { continue }
+        result.append(filePath)
+    }
+    return result
 }
 
 @MainActor var recentsSetTask: DispatchWorkItem? {
@@ -81,10 +114,16 @@ let queryFinishCallback: CFNotificationCallback = { notificationCenter, observer
     let query: MDQuery = unsafeBitCast(object, to: MDQuery.self)
 
     mainActor {
-        let mdPaths = query.getPaths()
-        log.debug("MDQuery finish: \(mdPaths.count) paths after filtering")
-        FUZZY.mdQueryRecents = mdPaths
-        FUZZY.updateDefaultResults()
+        let raw = query.extractPaths()
+        let state = RecentsFilterState.current()
+        recentsFilterQueue.async {
+            let mdPaths = filterRecentPaths(raw, state)
+            mainActor {
+                log.debug("MDQuery finish: \(mdPaths.count) paths after filtering")
+                FUZZY.mdQueryRecents = mdPaths
+                FUZZY.updateDefaultResults()
+            }
+        }
     }
 }
 
@@ -101,26 +140,33 @@ let queryUpdateCallback: CFNotificationCallback = { notificationCenter, observer
     let removedPaths: Set<String> = Set((removed ?? []).compactMap { MDItemCopyAttribute($0, kMDItemPath) as? String })
 
     mainActor {
-        var mdPaths = query.getPaths()
+        let raw = query.extractPaths()
+        let state = RecentsFilterState.current()
+        recentsFilterQueue.async {
+            let filtered = filterRecentPaths(raw, state)
+            mainActor {
+                var mdPaths = filtered
 
-        // During heavy Spotlight activity (e.g. volume reindexing), updates can
-        // temporarily report many removals before re-adding them. To avoid
-        // flashing an empty recents list, keep previously known paths that
-        // weren't explicitly removed and still pass filters.
-        if mdPaths.count < FUZZY.mdQueryRecents.count {
-            let newSet = Set(mdPaths.map(\.string))
-            for fp in FUZZY.mdQueryRecents {
-                if !newSet.contains(fp.string), !removedPaths.contains(fp.string),
-                   !FUZZY.removedFiles.contains(fp.string),
-                   fp.exists
-                {
-                    mdPaths.append(fp)
+                // During heavy Spotlight activity (e.g. volume reindexing), updates can
+                // temporarily report many removals before re-adding them. To avoid
+                // flashing an empty recents list, keep previously known paths that
+                // weren't explicitly removed and still pass filters.
+                if mdPaths.count < FUZZY.mdQueryRecents.count {
+                    let newSet = Set(mdPaths.map(\.string))
+                    for fp in FUZZY.mdQueryRecents {
+                        if !newSet.contains(fp.string), !removedPaths.contains(fp.string),
+                           !FUZZY.removedFiles.contains(fp.string),
+                           fp.exists
+                        {
+                            mdPaths.append(fp)
+                        }
+                    }
                 }
+
+                FUZZY.mdQueryRecents = mdPaths
+                FUZZY.updateDefaultResults(debounce: true)
             }
         }
-
-        FUZZY.mdQueryRecents = mdPaths
-        FUZZY.updateDefaultResults(debounce: true)
     }
 }
 

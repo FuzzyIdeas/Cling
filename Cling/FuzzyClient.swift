@@ -1876,7 +1876,7 @@ class FuzzyClient {
             ci -= 1
         }
 
-        // 2. MDQuery recents (already filtered by isRelevantDefaultPath in getPaths)
+        // 2. MDQuery recents (already filtered by isRelevantDefaultPath in filterRecentPaths)
         for fp in mdQueryRecents where !seen.contains(fp.string) {
             seen.insert(fp.string)
             results.append(fp)
@@ -1933,20 +1933,25 @@ class FuzzyClient {
     }
 
     func discoverInstalledApps() {
-        appDiscoveryQuery = queryInstalledApps { [self] apps in
-            let filtered = apps.filter { isAppPathRelevant($0.path.string) }
-            let grouped = Dictionary(grouping: filtered, by: \.bundleIdentifier)
-            let unique = grouped.values.compactMap { $0.max(by: { $0.useCount < $1.useCount }) }
-            let urls = unique.map(\.url).sorted(by: \.lastPathComponent)
+        appDiscoveryQuery = queryInstalledApps { apps in
+            // The metadata callback runs on the main thread; building an NSWorkspace icon for every
+            // installed app there hung the app for 30s+ (CLING-5). Do the grouping and icon
+            // rendering off-main, then assign on the main actor.
+            asyncNow {
+                let filtered = apps.filter { isAppPathRelevant($0.path.string) }
+                let grouped = Dictionary(grouping: filtered, by: \.bundleIdentifier)
+                let unique = grouped.values.compactMap { $0.max(by: { $0.useCount < $1.useCount }) }
+                let urls = unique.map(\.url).sorted(by: \.lastPathComponent)
 
-            var icons: [String: NSImage] = [:]
-            for url in urls {
-                icons[url.path] = appIconThumbnail(forFile: url.path)
-            }
+                var icons: [String: NSImage] = [:]
+                for url in urls {
+                    icons[url.path] = appIconThumbnail(forFile: url.path)
+                }
 
-            mainActor {
-                self.appIconCache = icons
-                self.installedApps = urls
+                mainActor {
+                    FUZZY.appIconCache = icons
+                    FUZZY.installedApps = urls
+                }
             }
         }
     }

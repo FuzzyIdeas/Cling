@@ -36,9 +36,18 @@ final class SearchCoordinator: @unchecked Sendable {
     }
 
     func setEngines(_ engines: [EngineEntry]) {
-        lock.withLock {
+        let retired: [EngineEntry] = lock.withLock {
+            let previous = _engines
             _engines = engines
             _count = engines.reduce(0) { $0 + $1.engine.count }
+            return previous
+        }
+        // Release the previous engines off the main thread: SearchEngine's deinit frees large index
+        // buffers, and doing that on the main thread during an index swap hung the app (CLING-6).
+        // Engines still present in the new set keep a positive refcount, so only truly retired
+        // engines are deallocated here.
+        if !retired.isEmpty {
+            DispatchQueue.global(qos: .utility).async { _ = retired }
         }
     }
 
