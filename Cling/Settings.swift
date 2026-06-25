@@ -70,6 +70,14 @@ struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         key.map { KeyEquivalent($0) }
     }
 
+    /// Folder list for the compact menu, capped so many folders don't stretch the menu.
+    /// The full list stays available via the menu item's tooltip (`.help`).
+    var menuSubtitle: String {
+        let shown = folders.prefix(3).map(\.shellString)
+        let extra = folders.count - shown.count
+        return (extra > 0 ? shown + ["+\(extra) more"] : shown).joined(separator: ", ")
+    }
+
     func withKey(_ key: Character?) -> FolderFilter {
         FolderFilter(id: id, folders: folders, key: key, maxDepth: maxDepth)
     }
@@ -179,11 +187,23 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         return parts.joined(separator: ", ")
     }
 
-    var subtitle: String {
+    var subtitle: String { subtitleText() }
+
+    /// Subtitle for the compact filter menu. Caps the extension and folder lists so a filter with
+    /// dozens of extensions doesn't stretch the menu; native menu titles ignore SwiftUI width/truncation
+    /// modifiers, so the only way to bound the width is to shorten the string. The full text stays
+    /// available via the menu item's tooltip (`.help`).
+    var menuSubtitle: String { subtitleText(maxExtensions: 6, maxFolders: 3) }
+
+    private func subtitleText(maxExtensions: Int? = nil, maxFolders: Int? = nil) -> String {
         var parts = [String]()
         if let extensions {
-            let exts = extensions.replacingOccurrences(of: "|", with: " ").replacingOccurrences(of: ",", with: " ")
+            var exts = extensions.replacingOccurrences(of: "|", with: " ").replacingOccurrences(of: ",", with: " ")
                 .split(separator: " ").filter { $0.hasPrefix(".") }.map { "*\($0)" }
+            if let maxExtensions, exts.count > maxExtensions {
+                let extra = exts.count - maxExtensions
+                exts = Array(exts.prefix(maxExtensions)) + ["+\(extra) more"]
+            }
             parts.append(exts.joined(separator: " "))
         }
         switch match {
@@ -195,7 +215,12 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         if let preQuery { parts.append(preQuery) }
         if let postQuery { parts.append("...\(postQuery)") }
         if let folders, !folders.isEmpty {
-            parts.append("in \(folders.map { FuzzyClient.friendlyName(for: $0) }.joined(separator: ", "))")
+            var names = folders.map { FuzzyClient.friendlyName(for: $0) }
+            if let maxFolders, names.count > maxFolders {
+                let extra = names.count - maxFolders
+                names = Array(names.prefix(maxFolders)) + ["+\(extra) more"]
+            }
+            parts.append("in \(names.joined(separator: ", "))")
         }
         if let maxDepth { parts.append("depth ≤ \(maxDepth)") }
         return parts.joined(separator: ", ")

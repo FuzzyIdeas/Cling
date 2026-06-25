@@ -62,12 +62,14 @@ struct FilterPicker: View {
                     quickFilterPicker
                     volumePicker
 
-                    Button("All files") {
+                    Button("All files (clear filters)") {
                         fuzzy.folderFilter = nil
                         fuzzy.quickFilter = nil
                         fuzzy.volumeFilter = nil
                     }
                     .help("Searches all indexed files without any filters")
+                    // Hint only; the NSEvent monitor does the actual handling.
+                    .keyboardShortcut(.escape, modifiers: [.option])
                 } label: {
                     filterLabel
                 }
@@ -186,6 +188,10 @@ struct FilterPicker: View {
         )
         .tag(filter as FilePath?)
         .help(status == .notIndexed ? "Click to start indexing \(filter.shellString)" : status == .disconnected ? "Volume not connected, searches cached index" : "Searches inside: \(filter.shellString)")
+        // Hint only; the NSEvent monitor does the actual handling.
+        .ifLet(key) { view, key in
+            view.keyboardShortcut(KeyEquivalent(key), modifiers: [.option])
+        }
         .truncationMode(.tail)
         .disabled(status == .indexing)
     }
@@ -193,12 +199,16 @@ struct FilterPicker: View {
     private func filterItem(_ filter: QuickFilter, applyShortcut: Bool = true) -> some View {
         (
             Text("\(filter.id)\n") +
-                Text(filter.subtitle)
+                Text(filter.menuSubtitle)
                 .foregroundStyle(.secondary)
                 .font(.caption)
         )
         .tag(filter as QuickFilter?)
         .help(filter.subtitle)
+        // Hint only; the NSEvent monitor does the actual handling.
+        .ifLet(applyShortcut ? filter.key : nil) { view, key in
+            view.keyboardShortcut(KeyEquivalent(key), modifiers: [.option])
+        }
         .truncationMode(.tail)
     }
 
@@ -206,12 +216,16 @@ struct FilterPicker: View {
         let status = folderFilterStatus(filter)
         return (
             Text("\(filter.id)\(statusSuffix(status))\n") +
-                Text(filter.folders.map(\.shellString).joined(separator: ", "))
+                Text(filter.menuSubtitle)
                 .foregroundStyle(.secondary)
                 .font(.caption)
         )
         .tag(filter as FolderFilter?)
         .help("Searches in \(filter.folders.map(\.shellString).joined(separator: ", "))")
+        // Hint only; the NSEvent monitor does the actual handling.
+        .ifLet(applyShortcut ? filter.key : nil) { view, key in
+            view.keyboardShortcut(KeyEquivalent(key), modifiers: [.option])
+        }
         .truncationMode(.tail)
         .disabled(status == .indexing)
     }
