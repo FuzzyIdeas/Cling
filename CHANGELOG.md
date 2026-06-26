@@ -1,3 +1,15 @@
+# 2.6.3
+
+**[Download Cling 2.6.3 →](https://files.lowtechguys.com/releases/Cling-2.6.3.dmg)**
+## Fixes
+
+- No more long freezes (beachball) while refreshing recent files, loading app icons, or finishing indexing; that work now runs in the background so the window stays responsive
+- The filter menu shows each filter's `⌥` shortcut on the right again
+
+## Improvements
+
+- Filters with long extension or folder lists no longer stretch the filter menu; the detail line shortens to the first few with `+N more`, and the full list shows when you hover
+
 # 2.6.2
 
 **[Download Cling 2.6.2 →](https://files.lowtechguys.com/releases/Cling-2.6.2.dmg)**
