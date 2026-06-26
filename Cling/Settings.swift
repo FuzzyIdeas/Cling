@@ -46,11 +46,12 @@ extension Character: @retroactive Codable {
 // MARK: - FolderFilter
 
 struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
-    init(id: String, folders: [FilePath], key: Character?, maxDepth: Int? = nil) {
+    init(id: String, folders: [FilePath], key: Character?, maxDepth: Int? = nil, uuid: String = UUID().uuidString) {
         self.id = id
         self.folders = folders
         self.key = key
         self.maxDepth = maxDepth
+        self.uuid = uuid
     }
 
     init(from decoder: Decoder) throws {
@@ -59,8 +60,14 @@ struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         folders = try container.decode([FilePath].self, forKey: .folders)
         key = try container.decodeIfPresent(Character.self, forKey: .key)
         maxDepth = try container.decodeIfPresent(Int.self, forKey: .maxDepth)
+        // Stable identity, decoupled from the editable name (`id`). Older stored filters predate this
+        // field, so synthesize one on first decode; it persists once the filter is next saved.
+        uuid = try container.decodeIfPresent(String.self, forKey: .uuid) ?? UUID().uuidString
     }
 
+    /// Stable identity used for SwiftUI view identity and array lookups, so renaming (which changes
+    /// `id`) never recreates the editor row or breaks references.
+    let uuid: String
     let id: String
     let folders: [FilePath]
     let key: Character?
@@ -79,7 +86,7 @@ struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     }
 
     func withKey(_ key: Character?) -> FolderFilter {
-        FolderFilter(id: id, folders: folders, key: key, maxDepth: maxDepth)
+        FolderFilter(id: id, folders: folders, key: key, maxDepth: maxDepth, uuid: uuid)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -88,10 +95,11 @@ struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         try container.encode(folders, forKey: .folders)
         try container.encodeIfPresent(key, forKey: .key)
         try container.encodeIfPresent(maxDepth, forKey: .maxDepth)
+        try container.encode(uuid, forKey: .uuid)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, folders, key, maxDepth
+        case id, folders, key, maxDepth, uuid
     }
 }
 
@@ -102,6 +110,9 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
+        // Stable identity, decoupled from the editable name (`id`). Synthesized for filters stored
+        // before this field existed; persists once the filter is next saved.
+        uuid = try container.decodeIfPresent(String.self, forKey: .uuid) ?? UUID().uuidString
         key = try container.decodeIfPresent(Character.self, forKey: .key)
         postQuery = try container.decodeIfPresent(String.self, forKey: .postQuery)
         folders = try container.decodeIfPresent([FilePath].self, forKey: .folders)
@@ -156,13 +167,17 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         maxDepth: Int? = nil,
         exclude: String? = nil,
         rawQuery: String? = nil,
-        match: FilterMatch = .both
+        match: FilterMatch = .both,
+        uuid: String = UUID().uuidString
     ) {
         self.id = id; self.extensions = extensions; self.preQuery = preQuery; self.postQuery = postQuery
         self.dirsOnly = dirsOnly; self.folders = folders; self.key = key; self.maxDepth = maxDepth
-        self.exclude = exclude; self.rawQuery = rawQuery; self.match = match
+        self.exclude = exclude; self.rawQuery = rawQuery; self.match = match; self.uuid = uuid
     }
 
+    /// Stable identity used for SwiftUI view identity and array lookups, so renaming (which changes
+    /// `id`) never recreates the editor row or breaks references.
+    let uuid: String
     let id: String
     let extensions: String? // e.g. ".png .jpeg" or ".mp4 | .mov"
     let preQuery: String? // prepended before user query
@@ -268,7 +283,8 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
             maxDepth: maxDepth,
             exclude: exclude,
             rawQuery: rawQuery,
-            match: match
+            match: match,
+            uuid: uuid
         )
     }
 
@@ -285,11 +301,12 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         try container.encodeIfPresent(exclude, forKey: .exclude)
         try container.encodeIfPresent(rawQuery, forKey: .rawQuery)
         try container.encode(match, forKey: .match)
+        try container.encode(uuid, forKey: .uuid)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, extensions, preQuery, postQuery, dirsOnly, folders, key, maxDepth
-        case exclude, rawQuery, match
+        case exclude, rawQuery, match, uuid
         case suffix, query // legacy keys for decoding only
     }
 
@@ -660,6 +677,7 @@ extension Defaults.Keys {
     // once the user has seen it enough (they can still toggle via the shortcut or the menu action).
     static let filePreviewHintSeenCount = Key<Int>("filePreviewHintSeenCount", default: 0)
     static let didDefaultHideOpenWith = Key<Bool>("didDefaultHideOpenWith", default: false)
+    static let didAssignFilterUUIDs = Key<Bool>("didAssignFilterUUIDs", default: false)
 }
 
 // MARK: - hiddenActionButtons → hiddenActions migration
@@ -694,6 +712,19 @@ func hideOpenWithFromToolbarByDefault() {
     Defaults[.hiddenActions].insert(.openWith)
     Defaults[.barActions].removeAll { $0 == .openWith }
     Defaults[.didDefaultHideOpenWith] = true
+}
+
+// MARK: - Persist filter UUIDs
+
+/// Filters stored before `uuid` existed synthesize a fresh one on every decode, so two independent
+/// `Defaults[.quickFilters]` reads (e.g. the editor list vs. an editor row) would see different
+/// identities and edits wouldn't match back to the array. Re-encoding once writes the synthesized
+/// UUIDs to disk so every later decode reads the same stable value.
+func assignFilterUUIDsIfNeeded() {
+    guard !Defaults[.didAssignFilterUUIDs] else { return }
+    Defaults[.quickFilters] = Defaults[.quickFilters]
+    Defaults[.folderFilters] = Defaults[.folderFilters]
+    Defaults[.didAssignFilterUUIDs] = true
 }
 
 // MARK: - DefaultsCache

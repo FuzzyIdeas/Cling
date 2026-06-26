@@ -450,7 +450,7 @@ class FuzzyClient {
                         id: currentQuick.id, extensions: currentQuick.extensions,
                         preQuery: currentQuick.preQuery, postQuery: currentQuick.postQuery,
                         dirsOnly: currentQuick.dirsOnly, folders: folderFilter.folders, key: currentQuick.key,
-                        maxDepth: currentQuick.maxDepth
+                        maxDepth: currentQuick.maxDepth, uuid: currentQuick.uuid
                     )
                     recomputeQuickFilterPool()
                 }

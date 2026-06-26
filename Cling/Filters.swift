@@ -392,8 +392,11 @@ func saveFolderFilter(id: String, folders: [FilePath], key: SauceKey, originalID
         return
     }
 
+    // Reuse the edited filter's stable identity so renaming via the add sheet doesn't recreate it.
+    let editedUUID = Defaults[.folderFilters].first { $0.id == originalID }?.uuid ?? UUID().uuidString
+
     guard key != .escape else {
-        let filter = FolderFilter(id: id, folders: folders, key: nil)
+        let filter = FolderFilter(id: id, folders: folders, key: nil, uuid: editedUUID)
         let originalFilter = Defaults[.folderFilters].first { $0.id == originalID }
 
         Defaults[.folderFilters] = Defaults[.folderFilters].without(originalFilter ?? filter) + [filter]
@@ -404,7 +407,7 @@ func saveFolderFilter(id: String, folders: [FilePath], key: SauceKey, originalID
 
     // Check for existing filter with the same key and set its key to nil
     let key = key.lowercasedChar.first
-    let filter = FolderFilter(id: id, folders: folders, key: key)
+    let filter = FolderFilter(id: id, folders: folders, key: key, uuid: editedUUID)
     let originalFilter = Defaults[.folderFilters].first { $0.id == originalID }
     // if let key, let existingFilter = Defaults[.quickFilters].first(where: { $0.key == key }) {
     //     Defaults[.quickFilters] = Defaults[.quickFilters].without(existingFilter) + [existingFilter.withKey(nil)]
@@ -458,9 +461,9 @@ struct FlowLayout: Layout {
 
 enum FilterEditorSelection: Hashable {
     case quickFilters
-    case quickFilter(String)
+    case quickFilter(String) // associated value is the filter's stable `uuid`, not its name
     case folderFilters
-    case folderFilter(String)
+    case folderFilter(String) // associated value is the filter's stable `uuid`, not its name
     case disconnectedVolumes
 }
 
@@ -503,23 +506,16 @@ struct FilterEditorSheet: View {
             Divider()
             detail
         }
-        .onChange(of: quickFilters) { old, new in
-            if case let .quickFilter(id) = selection, !new.contains(where: { $0.id == id }) {
-                // Same length + same position → it's a rename. Follow the renamed filter.
-                if old.count == new.count, let oldIdx = old.firstIndex(where: { $0.id == id }), oldIdx < new.count {
-                    selection = .quickFilter(new[oldIdx].id)
-                } else {
-                    selection = .quickFilters
-                }
+        // Selection keys off the stable `uuid`, so renames keep it intact; only a deletion can leave
+        // the selection dangling, in which case fall back to the list.
+        .onChange(of: quickFilters) { _, new in
+            if case let .quickFilter(uuid) = selection, !new.contains(where: { $0.uuid == uuid }) {
+                selection = .quickFilters
             }
         }
-        .onChange(of: folderFilters) { old, new in
-            if case let .folderFilter(id) = selection, !new.contains(where: { $0.id == id }) {
-                if old.count == new.count, let oldIdx = old.firstIndex(where: { $0.id == id }), oldIdx < new.count {
-                    selection = .folderFilter(new[oldIdx].id)
-                } else {
-                    selection = .folderFilters
-                }
+        .onChange(of: folderFilters) { _, new in
+            if case let .folderFilter(uuid) = selection, !new.contains(where: { $0.uuid == uuid }) {
+                selection = .folderFilters
             }
         }
     }
@@ -535,8 +531,8 @@ struct FilterEditorSheet: View {
                 NavigationLink(value: FilterEditorSelection.quickFilters) {
                     Label("All Quick Filters", systemImage: "slider.horizontal.3")
                 }
-                ForEach(quickFilters, id: \.id) { filter in
-                    NavigationLink(value: FilterEditorSelection.quickFilter(filter.id)) {
+                ForEach(quickFilters, id: \.uuid) { filter in
+                    NavigationLink(value: FilterEditorSelection.quickFilter(filter.uuid)) {
                         Label(filter.id, systemImage: "line.3.horizontal.decrease.circle")
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -553,8 +549,8 @@ struct FilterEditorSheet: View {
                 NavigationLink(value: FilterEditorSelection.folderFilters) {
                     Label("All Folder Filters", systemImage: "folder")
                 }
-                ForEach(folderFilters, id: \.id) { filter in
-                    NavigationLink(value: FilterEditorSelection.folderFilter(filter.id)) {
+                ForEach(folderFilters, id: \.uuid) { filter in
+                    NavigationLink(value: FilterEditorSelection.folderFilter(filter.uuid)) {
                         Label(filter.id, systemImage: "folder.fill")
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -588,13 +584,13 @@ struct FilterEditorSheet: View {
                 if quickFilters.isEmpty {
                     emptySection("No quick filters yet")
                 } else {
-                    ForEach(quickFilters, id: \.id) { filter in
-                        QuickFilterRow(filter: filter).id(filter.id)
+                    ForEach(quickFilters, id: \.uuid) { filter in
+                        QuickFilterRow(filter: filter).id(filter.uuid)
                     }
                 }
-            case let .quickFilter(id):
-                if let filter = quickFilters.first(where: { $0.id == id }) {
-                    QuickFilterRow(filter: filter).id(filter.id)
+            case let .quickFilter(uuid):
+                if let filter = quickFilters.first(where: { $0.uuid == uuid }) {
+                    QuickFilterRow(filter: filter).id(filter.uuid)
                 } else {
                     emptySection("Filter not found")
                 }
@@ -602,13 +598,13 @@ struct FilterEditorSheet: View {
                 if folderFilters.isEmpty {
                     emptySection("No folder filters yet")
                 } else {
-                    ForEach(folderFilters, id: \.id) { filter in
-                        FolderFilterRow(filter: filter).id(filter.id)
+                    ForEach(folderFilters, id: \.uuid) { filter in
+                        FolderFilterRow(filter: filter).id(filter.uuid)
                     }
                 }
-            case let .folderFilter(id):
-                if let filter = folderFilters.first(where: { $0.id == id }) {
-                    FolderFilterRow(filter: filter).id(filter.id)
+            case let .folderFilter(uuid):
+                if let filter = folderFilters.first(where: { $0.uuid == uuid }) {
+                    FolderFilterRow(filter: filter).id(filter.uuid)
                 } else {
                     emptySection("Filter not found")
                 }
@@ -648,7 +644,7 @@ struct FilterEditorSheet: View {
         }
         let filter = QuickFilter(id: id, extensions: nil, preQuery: nil, dirsOnly: false, key: nil)
         Defaults[.quickFilters].insert(filter, at: 0)
-        selection = .quickFilter(id)
+        selection = .quickFilter(filter.uuid)
     }
 
     private func addFolderFilter() {
@@ -661,7 +657,7 @@ struct FilterEditorSheet: View {
         }
         let filter = FolderFilter(id: id, folders: [], key: nil)
         Defaults[.folderFilters].insert(filter, at: 0)
-        selection = .folderFilter(id)
+        selection = .folderFilter(filter.uuid)
     }
 }
 
@@ -712,6 +708,7 @@ private func folderEditor(folders: Binding<[FilePath]>, emptyText: String, onCha
 struct QuickFilterDraft {
     init() {}
     init(from f: QuickFilter) {
+        uuid = f.uuid
         name = f.id
         extensions = f.extensions ?? ""
         exclude = f.exclude ?? ""
@@ -724,6 +721,8 @@ struct QuickFilterDraft {
         maxDepth = f.maxDepth ?? -1
     }
 
+    /// Carried so edits preserve the filter's stable identity (see `QuickFilter.uuid`).
+    var uuid = UUID().uuidString
     var name = ""
     var extensions = ""
     var exclude = ""
@@ -747,7 +746,8 @@ struct QuickFilterDraft {
             maxDepth: maxDepth < 0 ? nil : maxDepth,
             exclude: exclude.trimmed.isEmpty ? nil : exclude.trimmed,
             rawQuery: rawQuery?.trimmed.isEmpty == true ? nil : rawQuery?.trimmed,
-            match: match
+            match: match,
+            uuid: uuid
         )
     }
 }
@@ -950,15 +950,15 @@ struct QuickFilterRow: View {
     }
 
     private func save() {
-        guard let idx = quickFilters.firstIndex(where: { $0.id == filter.id }) else { return }
+        guard let idx = quickFilters.firstIndex(where: { $0.uuid == filter.uuid }) else { return }
         let updated = draft.asFilter
         quickFilters[idx] = updated
-        if FUZZY.quickFilter == filter { FUZZY.quickFilter = updated }
+        if FUZZY.quickFilter?.uuid == filter.uuid { FUZZY.quickFilter = updated }
     }
 
     private func delete() {
-        quickFilters.removeAll { $0 == filter }
-        if FUZZY.quickFilter == filter { FUZZY.quickFilter = nil }
+        quickFilters.removeAll { $0.uuid == filter.uuid }
+        if FUZZY.quickFilter?.uuid == filter.uuid { FUZZY.quickFilter = nil }
     }
 
     private func addFolder() {
@@ -1080,15 +1080,15 @@ struct FolderFilterRow: View {
     }
 
     private func save() {
-        guard let idx = folderFilters.firstIndex(where: { $0.id == filter.id }) else { return }
-        let updated = FolderFilter(id: name, folders: folders, key: hotkey == .escape ? nil : hotkey.lowercasedChar.first, maxDepth: maxDepth < 0 ? nil : maxDepth)
+        guard let idx = folderFilters.firstIndex(where: { $0.uuid == filter.uuid }) else { return }
+        let updated = FolderFilter(id: name, folders: folders, key: hotkey == .escape ? nil : hotkey.lowercasedChar.first, maxDepth: maxDepth < 0 ? nil : maxDepth, uuid: filter.uuid)
         folderFilters[idx] = updated
-        if FUZZY.folderFilter == filter { FUZZY.folderFilter = updated }
+        if FUZZY.folderFilter?.uuid == filter.uuid { FUZZY.folderFilter = updated }
     }
 
     private func delete() {
-        folderFilters.removeAll { $0 == filter }
-        if FUZZY.folderFilter == filter { FUZZY.folderFilter = nil }
+        folderFilters.removeAll { $0.uuid == filter.uuid }
+        if FUZZY.folderFilter?.uuid == filter.uuid { FUZZY.folderFilter = nil }
     }
 
     private func addFolder() {
