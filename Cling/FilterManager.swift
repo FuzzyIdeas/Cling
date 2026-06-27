@@ -62,7 +62,12 @@ struct QuickFilterAddSheet: View {
 // MARK: - QuickFilterEditorView
 
 struct QuickFilterEditorView: View {
-    var label: String? = nil
+    var label: String?
+
+    @Binding var isPresented: Bool
+    @Binding var filterID: String
+    @Binding var filterKey: SauceKey
+    @Binding var isEditing: Bool
 
     var body: some View {
         newQuickFilterButton
@@ -73,10 +78,6 @@ struct QuickFilterEditorView: View {
     }
 
     @State private var fuzzy = FUZZY
-    @Binding var isPresented: Bool
-    @Binding var filterID: String
-    @Binding var filterKey: SauceKey
-    @Binding var isEditing: Bool
 
     private var newQuickFilterButton: some View {
         Button(action: { isPresented = true }) {
@@ -95,7 +96,12 @@ struct QuickFilterEditorView: View {
 // MARK: - FolderFilterEditorView
 
 struct FolderFilterEditorView: View {
-    var label: String? = nil
+    var label: String?
+
+    @Binding var isPresented: Bool
+    @Binding var filterID: String
+    @Binding var filterKey: SauceKey
+    @Binding var isEditing: Bool
 
     var body: some View {
         newFolderFilterButton
@@ -104,11 +110,6 @@ struct FolderFilterEditorView: View {
                 filterKey = getFilterKey(id: filterID)
             }
     }
-
-    @Binding var isPresented: Bool
-    @Binding var filterID: String
-    @Binding var filterKey: SauceKey
-    @Binding var isEditing: Bool
 
     private var newFolderFilterButton: some View {
         Button(action: { isPresented = true }) {
@@ -127,7 +128,9 @@ struct FolderFilterEditorView: View {
 // MARK: - FilePath + @retroactive Identifiable
 
 extension FilePath: @retroactive Identifiable {
-    public var id: String { string }
+    public var id: String {
+        string
+    }
 }
 
 // MARK: - FolderFilterAddSheet

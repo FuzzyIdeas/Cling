@@ -104,5 +104,7 @@ private struct MenuAnchorView: NSViewRepresentable {
 /// Flipped so popping up at `y == bounds.height` reliably places the menu just below the button,
 /// regardless of how SwiftUI hosts the representable.
 private final class FlippedAnchorView: NSView {
-    override var isFlipped: Bool { true }
+    override var isFlipped: Bool {
+        true
+    }
 }

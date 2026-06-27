@@ -8,7 +8,7 @@ import SwiftUI
 /// reliably enter recording mode. Use this instead of the package's `Recorder` everywhere.
 struct ShortcutRecorder: NSViewRepresentable {
     let name: KeyboardShortcuts.Name
-    var onChange: ((KeyboardShortcuts.Shortcut?) -> Void)? = nil
+    var onChange: ((KeyboardShortcuts.Shortcut?) -> Void)?
 
     func makeNSView(context: Context) -> ClickToRecordRecorder {
         ClickToRecordRecorder(for: name, onChange: onChange)
@@ -18,12 +18,12 @@ struct ShortcutRecorder: NSViewRepresentable {
         nsView.recorder.shortcutName = name
     }
 
-    // Without this, SwiftUI's default representable sizing treats the wrapper (a plain
-    // NSView with `defaultLow` hugging priorities) as freely stretchable and expands it
-    // to the full proposed row height: in a grouped Form row the label gets top-aligned
-    // with dead space below it while the recorder fills the rest. Reporting the
-    // recorder's own fixed size makes the row hug the field and center it vertically
-    // like any other control.
+    /// Without this, SwiftUI's default representable sizing treats the wrapper (a plain
+    /// NSView with `defaultLow` hugging priorities) as freely stretchable and expands it
+    /// to the full proposed row height: in a grouped Form row the label gets top-aligned
+    /// with dead space below it while the recorder fills the rest. Reporting the
+    /// recorder's own fixed size makes the row hug the field and center it vertically
+    /// like any other control.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: ClickToRecordRecorder, context: Context) -> CGSize? {
         nsView.intrinsicContentSize
     }
@@ -89,7 +89,9 @@ final class ClickToRecordRecorder: NSView {
         }
     }
 
-    override var intrinsicContentSize: NSSize { recorder.intrinsicContentSize }
+    override var intrinsicContentSize: NSSize {
+        recorder.intrinsicContentSize
+    }
 
     let recorder: KeyboardShortcuts.RecorderCocoa
 

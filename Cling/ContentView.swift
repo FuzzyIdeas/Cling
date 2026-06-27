@@ -19,8 +19,8 @@ import UniformTypeIdentifiers
 
 private let log = Logger(subsystem: clingSubsystem, category: "ContentView")
 
-// Returns true if an IME (CJK input method, etc.) is currently composing text
-// in the focused responder. Key handlers should defer to the IME in that case.
+/// Returns true if an IME (CJK input method, etc.) is currently composing text
+/// in the focused responder. Key handlers should defer to the IME in that case.
 @inline(__always)
 func isIMEComposing() -> Bool {
     if let client = NSTextInputContext.current?.client, client.hasMarkedText() {
@@ -88,8 +88,6 @@ struct ContentView: View {
         .focusable(false)
         .help(wm.pinned ? "Unpin window (⌘.)" : "Pin window to keep it on top of other windows (⌘.)")
     }
-    @State private var pinHovering = false
-
     var quitButton: some View {
         Button(action: {
             NSApp.terminate(nil)
@@ -109,8 +107,6 @@ struct ContentView: View {
         .focusable(false)
         .help("Quit Cling (⌘Q)")
     }
-    @State private var quitHovering = false
-
     var body: some View {
         let _ = appearance.useGlass
         // Track selection so the QuickLook panel re-presents even when `items`
@@ -181,8 +177,6 @@ struct ContentView: View {
         }
     }
 
-    @State private var quickLook = QLP
-
     var content: some View {
         ZStack(alignment: .topLeading) {
             VStack {
@@ -228,6 +222,247 @@ struct ContentView: View {
         .if(!fuzzy.hasFullDiskAccess) { view in
             view.overlay(fullDiskAccessOverlay)
         }
+    }
+
+    private static let placeholderExamples = [
+        "Search",
+        "Example: **`invoice .pdf`** *(finds PDF invoices)*",
+        "Example: **`.png .jpg`** *(filters common image formats)*",
+        "Example: **`in:~/Downloads .dmg`** *(finds downloaded DMGs)*",
+        "Example: **`contract .docx`** *(shows contracts in Word format)*",
+        "Example: **`depth:1 in:~/Documents`** *(searches Documents folder non-recursively)*",
+        "Example: **`config/ .toml .yaml`** *(finds configuration files)*",
+        "Example: **`.mkv .mp4 in:~/Movies`** *(shows common video files)*",
+        "Example: **`.md in:~/Notes`** *(finds Markdown notes)*",
+        "Example: **`.js !node_modules/`** *(code, without dependencies)*",
+        "Example: **`report !draft`** *(reports, skipping drafts)*",
+        "Example: **`.png !screenshot`** *(PNGs that aren't screenshots)*",
+        "Example: **`notes$`** *(names ending in notes)*",
+        "Example: **`'cat`** *(exact text: finds Cats or vacation, not contact)*",
+        "Example: **`brew python`** *(shows installed Python versions)*",
+    ]
+
+    @State private var pinHovering = false
+
+    @State private var quitHovering = false
+
+    @State private var quickLook = QLP
+
+    @FocusState private var focused: FocusedField?
+
+    @State private var appManager = APP_MANAGER
+    @State private var renamedPaths: [FilePath]? = nil
+    @State private var fuzzy: FuzzyClient = FUZZY
+    @State private var appearance = AM
+    @State private var scriptManager: ScriptManager = SM
+    @State private var selectedResults = Set<FilePath>()
+    @State private var selectedResultIDs = Set<String>()
+
+    @State private var isAddingQuickFilter = false
+    @State private var filterDraft = QuickFilterDraft()
+
+    @State private var cmdDownMonitor: Any?
+    @State private var contentShortcutMonitor: Any?
+
+    @State private var showFullHistory = false
+    @State private var showSyntaxHelp = false
+    // Right-arrow drills into a folder (query becomes `in:<folder>`); left-arrow walks back out.
+    @State private var queryDrillStack: [String] = []
+    @State private var lastDrillSetQuery: String?
+    @State private var showNeedsProPopover = false
+    @State private var isAddingFolderFilter = false
+    @State private var folderFilterID = ""
+    @State private var folderFilterFolders: [FilePath] = []
+    @State private var folderFilterKey: SauceKey = .escape
+
+    @State private var historyIndex = -1
+    @State private var querySaved = "" // query before navigating history
+    @State private var navigatingHistory = false
+    @State private var showHistorySuggestions = false
+    @State private var imeComposing = false
+    @State private var showSuggestionsList = false
+    @State private var suggestionIndex = -1
+
+    @State private var placeholderHint = "Search"
+    @State private var placeholderIndex = 0
+    @State private var windowManager = WM
+    @State private var sortOrder = [KeyPathComparator(\FilePath.string)]
+
+    @State private var excludeRequest: ExcludeSheetRequest?
+
+    @State private var liveChangeSortOrder = [KeyPathComparator(\FuzzyClient.IndexChange.date, order: .reverse)]
+    @State private var liveChangesIndexedOnly = true
+
+    @State private var runHistorySelection = Set<String>()
+    @State private var liveIndexSelection = Set<UUID>()
+    @State private var pathNotFoundMessage: String?
+    @State private var runHistorySortOrder = [KeyPathComparator(\RunHistoryRow.count, order: .reverse)]
+
+    /// Keep the user's selection when the results list mutates for reasons other
+    /// than a new query (file watching, reindexing). Only drop ids that vanished,
+    /// and fall back to the first row if the whole selection is gone.
+    @State private var lastSelectionQuery: String? = nil
+
+    @Default(.showFilePreview) private var showFilePreview
+
+    @Default(.showOpenWithRow) private var showOpenWithRow
+    @Default(.showScriptRow) private var showScriptRow
+    @Default(.toolbarRowBackground) private var toolbarRowBackground
+    @Default(.showActionRow) private var showActionRow
+    @Default(.shortcutsCoachmarkShown) private var coachmarkShown
+    @Default(.onboardingCompleted) private var onboardingCompleted
+
+    @Default(.triggerKeys) private var triggerKeys
+    @Default(.showAppKey) private var showAppKey
+    @Default(.folderFilters) private var folderFilters
+    @Default(.quickFilters) private var quickFilters
+
+    @Default(.showSearchHints) private var showSearchHints
+    @Default(.searchHintsManuallyEnabled) private var searchHintsManuallyEnabled
+    @Default(.searchHintsFirstShownAt) private var searchHintsFirstShownAt
+
+    /// Whether the normal results table (not a log/history/live view) is showing,
+    /// the only context where the file preview panel makes sense.
+    private var isShowingResultsTable: Bool {
+        !fuzzy.showLiveIndex && !fuzzy.showActivityLog && !fuzzy.showRunHistory && !showFullHistory
+    }
+
+    /// Files whose previews are shown: the selected results in table order, falling
+    /// back to the first row so the panel is never blank when results exist.
+    private var previewPaths: [FilePath] {
+        let selected = results.filter { selectedResults.contains($0) }
+        if !selected.isEmpty { return selected }
+        if let first = results.first { return [first] }
+        return []
+    }
+
+    /// Roughly a third of the table's width, clamped so it stays usable.
+    private var previewWidth: CGFloat {
+        let available = wm.size.width - 32
+        return min(max(available * 0.26, 300), 520)
+    }
+
+    private var filterSubtitle: String? {
+        var parts = [String]()
+        if let q = fuzzy.quickFilter {
+            parts.append(q.id)
+        }
+        if let f = fuzzy.folderFilter {
+            parts.append("in \(f.id)")
+        }
+        if let v = fuzzy.volumeFilter {
+            parts.append("on \(v.name.string)")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
+    private var showingResults: Bool {
+        !fuzzy.showLiveIndex && !fuzzy.showActivityLog
+    }
+
+    /// History entries matching the query, for the ⌘↓ suggestions list.
+    private var historySuggestions: [String] {
+        let trimmed = fuzzy.query.trimmingCharacters(in: .whitespaces)
+        return SearchHistory.shared.suggestions(for: fuzzy.query)
+            .filter { $0.trimmingCharacters(in: .whitespaces) != trimmed }
+            .prefix(8).map { $0 }
+    }
+
+    /// Best history entry that the current query is a prefix of, used for the inline ghost completion.
+    private var inlineSuggestion: String? {
+        guard focused == .search, !imeComposing, historyIndex < 0, showHistorySuggestions else { return nil }
+        let q = fuzzy.query
+        guard !q.isEmpty else { return nil }
+        let lower = q.lowercased()
+        return SearchHistory.shared.entries.first { entry in
+            entry.count > q.count && entry.lowercased().hasPrefix(lower)
+        }
+    }
+
+    /// The part of `inlineSuggestion` after what the user has already typed.
+    private var inlineSuffix: String? {
+        guard let s = inlineSuggestion else { return nil }
+        return String(s.dropFirst(fuzzy.query.count))
+    }
+
+    private var shouldCyclePlaceholder: Bool {
+        showSearchHints && fuzzy.query.isEmpty && wm.mainWindowActive
+    }
+
+    private var results: [FilePath] {
+        (fuzzy.noQuery && fuzzy.volumeFilter == nil)
+            ? (fuzzy.sortField == .score ? fuzzy.recents : fuzzy.sortedRecents)
+            : fuzzy.results
+    }
+
+    private var sortedLiveChanges: [FuzzyClient.IndexChange] {
+        let q = fuzzy.query.trimmingCharacters(in: .whitespaces).lowercased()
+        // No query: show the most recent slice. With a query: search the whole deduplicated history (bounded,
+        // so a change from a day ago is still findable), then cap the rendered rows.
+        let filtered: [FuzzyClient.IndexChange] = q.isEmpty
+            ? Array(fuzzy.liveIndexChanges.suffix(2000))
+            : fuzzy.liveIndexChanges.filter { $0.path.lowercased().contains(q) }
+        let afterBlock: [FuzzyClient.IndexChange] = if liveChangesIndexedOnly {
+            filtered.filter { change in
+                !isPathBlocked(change.path) && !(change.path.hasPrefix(HOME.string) && change.path.isIgnored(in: fsignoreString))
+            }
+        } else {
+            filtered
+        }
+        return Array(afterBlock.sorted(using: liveChangeSortOrder).prefix(2000))
+    }
+
+    private var runHistoryRows: [RunHistoryRow] {
+        RH.entries.compactMap { path, entry in
+            guard entry.count > 0 else { return nil }
+            let fp = FilePath(path)
+            return RunHistoryRow(
+                path: fp,
+                name: fp.lastComponent?.string ?? path,
+                dir: fp.removingLastComponent().string,
+                count: entry.count,
+                lastRun: entry.lastRun
+            )
+        }.sorted { $0.count > $1.count }
+    }
+
+    private var sortedRunHistory: [RunHistoryRow] {
+        runHistoryRows.sorted(using: runHistorySortOrder)
+    }
+
+    private var iconColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
+        TableColumn("", value: \.string) { path in
+            Image(nsImage: path.memoz.icon).resizable().frame(width: 16, height: 16)
+        }.width(20)
+    }
+
+    private var nameColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
+        TableColumn("Name", value: \.name.string) { path in
+            // .help sets the cell's NSView tooltip (cheap, no layout pass), so the truncated middle is
+            // revealed on hover without the per-row measuring that would slow scrolling.
+            let name = path.name.string
+            Text(name).font(.system(size: 12)).lineLimit(1).truncationMode(.middle).help(name)
+        }.width(min: 100, ideal: 200)
+    }
+
+    private var pathColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
+        TableColumn("Path", value: \.dir.string) { path in
+            let dir = path.dir.shellString
+            Text(dir).font(.system(size: 12, design: .rounded)).tracking(-0.2).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary).help(dir)
+        }.width(min: 100, ideal: 300)
+    }
+
+    private var sizeColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
+        TableColumn("Size", value: \.memoz.size) { path in
+            Text(path.memoz.humanizedFileSize).font(.system(size: 11, design: .monospaced)).lineLimit(1)
+        }.width(min: 60, ideal: 80)
+    }
+
+    private var dateColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
+        TableColumn("Date Modified", value: \.memoz.date) { path in
+            let date = path.memoz.formattedModificationDate
+            Text(date).font(.system(size: 11, design: .monospaced)).lineLimit(1).help(date)
+        }.width(min: 100, ideal: 160)
     }
 
     /// The results/index table next to the optional file preview panel. The
@@ -285,29 +520,6 @@ struct ContentView: View {
                 }
         }
     }
-
-    /// Whether the normal results table (not a log/history/live view) is showing,
-    /// the only context where the file preview panel makes sense.
-    private var isShowingResultsTable: Bool {
-        !fuzzy.showLiveIndex && !fuzzy.showActivityLog && !fuzzy.showRunHistory && !showFullHistory
-    }
-
-    /// Files whose previews are shown: the selected results in table order, falling
-    /// back to the first row so the panel is never blank when results exist.
-    private var previewPaths: [FilePath] {
-        let selected = results.filter { selectedResults.contains($0) }
-        if !selected.isEmpty { return selected }
-        if let first = results.first { return [first] }
-        return []
-    }
-
-    /// Roughly a third of the table's width, clamped so it stays usable.
-    private var previewWidth: CGFloat {
-        let available = wm.size.width - 32
-        return min(max(available * 0.26, 300), 520)
-    }
-
-    @Default(.showFilePreview) private var showFilePreview
 
     private var activityLogList: some View {
         List {
@@ -454,13 +666,6 @@ struct ContentView: View {
             }
     }
 
-    @Default(.showOpenWithRow) private var showOpenWithRow
-    @Default(.showScriptRow) private var showScriptRow
-    @Default(.toolbarRowBackground) private var toolbarRowBackground
-    @Default(.showActionRow) private var showActionRow
-    @Default(.shortcutsCoachmarkShown) private var coachmarkShown
-    @Default(.onboardingCompleted) private var onboardingCompleted
-
     private var actionButtonRows: some View {
         // Each row clears its shortcut badges by `badgeClearance` on top and bottom (the Open With /
         // Scripts rows do it inside their pill ScrollViews; the action row gets it here). The bottom
@@ -535,29 +740,6 @@ struct ContentView: View {
         }
     }
 
-    private func volumeIndexingOverlay(_ volume: FilePath) -> some View {
-        VStack(spacing: 8) {
-            ProgressView()
-                .progressViewStyle(CircularProgressViewStyle())
-            Text("Indexing \(volume.name.string)...")
-                .medium(20)
-                .foregroundStyle(.secondary)
-            if !fuzzy.operation.isEmpty {
-                Text(fuzzy.operation)
-                    .round(12, weight: .regular)
-                    .foregroundStyle(.tertiary)
-            }
-            Button("Cancel") {
-                fuzzy.cancelVolumeIndexing(volume: volume)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-        }
-        .fill()
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-
     private var fullDiskAccessOverlay: some View {
         VStack {
             ProgressView()
@@ -578,75 +760,7 @@ struct ContentView: View {
         .fill()
         .background(.thinMaterial)
     }
-    @Default(.triggerKeys) private var triggerKeys
-    @Default(.showAppKey) private var showAppKey
 
-    @FocusState private var focused: FocusedField?
-
-    @State private var appManager = APP_MANAGER
-    @State private var renamedPaths: [FilePath]? = nil
-    @State private var fuzzy: FuzzyClient = FUZZY
-    @State private var appearance = AM
-    @State private var scriptManager: ScriptManager = SM
-    @State private var selectedResults = Set<FilePath>()
-    @State private var selectedResultIDs = Set<String>()
-
-    @Default(.folderFilters) private var folderFilters
-    @Default(.quickFilters) private var quickFilters
-
-    private func handleFilterKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
-        guard keyPress.modifiers == [.option] else { return .ignored }
-        guard keyPress.key != .escape else {
-            fuzzy.folderFilter = nil
-            fuzzy.quickFilter = nil
-            fuzzy.volumeFilter = nil
-            focused = .search
-            return .handled
-        }
-
-        var result: KeyPress.Result = .ignored
-
-        if proactive, let filter = folderFilters.first(where: { $0.keyEquivalent == keyPress.key }) {
-            fuzzy.folderFilter = filter
-            result = .handled
-        }
-        if proactive, let filter = quickFilters.first(where: { $0.keyEquivalent == keyPress.key }) {
-            fuzzy.quickFilter = filter
-            result = .handled
-        }
-        if let index = keyPress.key.character.wholeNumberValue, let filter = ([FilePath.root] + fuzzy.enabledVolumes)[safe: index] {
-            fuzzy.volumeFilter = filter
-            result = .handled
-        }
-
-        if result == .handled {
-            focused = .search
-        }
-        return result
-    }
-
-    @State private var isAddingQuickFilter = false
-    @State private var filterDraft = QuickFilterDraft()
-
-    private var filterSubtitle: String? {
-        var parts = [String]()
-        if let q = fuzzy.quickFilter {
-            parts.append(q.id)
-        }
-        if let f = fuzzy.folderFilter {
-            parts.append("in \(f.id)")
-        }
-        if let v = fuzzy.volumeFilter {
-            parts.append("on \(v.name.string)")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: " ")
-    }
-
-    private var showingResults: Bool {
-        !fuzzy.showLiveIndex && !fuzzy.showActivityLog
-    }
-
-    @ViewBuilder
     private var searchSection: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -672,7 +786,6 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
     private var filterRow: some View {
         HStack(spacing: 4) {
             if let subtitle = filterSubtitle {
@@ -753,6 +866,389 @@ struct ContentView: View {
         }
     }
 
+    private var searchBar: some View {
+        ZStack(alignment: .leading) {
+            if fuzzy.query.isEmpty, !imeComposing {
+                Text(LocalizedStringKey(placeholderHint))
+                    .foregroundStyle(Color(nsColor: .placeholderTextColor))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .id(placeholderHint)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
+            if let suffix = inlineSuffix {
+                // Ghost completion: the typed text is invisible here (the real TextField draws it), so
+                // the suffix lines up right after it, with completion hints trailing in tertiary.
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Text(fuzzy.query).foregroundStyle(.clear)
+                    Text(suffix).foregroundStyle(.secondary)
+                    completionHint("tab to complete").padding(.leading, 8)
+                    if suffix.contains(" ") {
+                        completionHint("→ word by word").padding(.leading, 8)
+                    }
+                    completionHint("⌘↓ suggestions").padding(.leading, 8)
+                }
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .allowsHitTesting(false)
+            }
+            TextField("", text: $fuzzy.query)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .focused($focused, equals: .search)
+                .modifier(SearchBarKeyHandlers(
+                    focused: $focused,
+                    query: $fuzzy.query,
+                    historyIndex: $historyIndex,
+                    querySaved: $querySaved,
+                    navigatingHistory: $navigatingHistory,
+                    showHistorySuggestions: $showHistorySuggestions,
+                    showSuggestionsList: $showSuggestionsList,
+                    suggestionIndex: $suggestionIndex,
+                    inlineSuggestion: inlineSuggestion,
+                    historySuggestions: historySuggestions
+                ))
+        }
+        .animation(.easeInOut(duration: 0.45), value: placeholderHint)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.quaternary, lineWidth: 0.5))
+        .padding(.vertical)
+        .onChange(of: fuzzy.query) {
+            if navigatingHistory {
+                navigatingHistory = false
+            } else {
+                historyIndex = -1
+                suggestionIndex = -1
+                let isFocused = focused == .search
+                let hasQuery = !fuzzy.query.isEmpty
+                showHistorySuggestions = isFocused && hasQuery
+            }
+            if imeComposing { imeComposing = false }
+            if showFullHistory { showFullHistory = false }
+        }
+        .onChange(of: focused) {
+            showHistorySuggestions = focused == .search && !fuzzy.query.isEmpty
+            if focused != .search {
+                showSuggestionsList = false
+                suggestionIndex = -1
+                if imeComposing { imeComposing = false }
+            }
+        }
+        .task(id: shouldCyclePlaceholder) {
+            guard shouldCyclePlaceholder else {
+                placeholderHint = "Search"
+                return
+            }
+            if searchHintsFirstShownAt == 0 {
+                searchHintsFirstShownAt = Date().timeIntervalSince1970
+            } else if !searchHintsManuallyEnabled,
+                      Date().timeIntervalSince1970 - searchHintsFirstShownAt > 3 * 24 * 60 * 60
+            {
+                showSearchHints = false
+                placeholderHint = "Search"
+                return
+            }
+            while !Task.isCancelled, shouldCyclePlaceholder {
+                placeholderHint = ContentView.placeholderExamples[placeholderIndex]
+                placeholderIndex = (placeholderIndex + 1) % ContentView.placeholderExamples.count
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
+            }
+        }
+    }
+
+    private var xButton: some View {
+        Button(action: {
+            if QLP.isVisible {
+                QLP.close()
+            } else if fuzzy.query.isEmpty {
+                dismiss()
+                AppDelegate.shared.handBackFocusAfterMainDismiss()
+            } else {
+                fuzzy.query = ""
+                focused = .search
+            }
+        }) {
+            Image(systemName: "xmark.circle.fill")
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(.secondary)
+        .focusable(false)
+
+    }
+
+    private var resultsList: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .topTrailing) {
+                Table(of: FilePath.self, selection: $selectedResultIDs, sortOrder: $sortOrder) {
+                    iconColumn
+                    nameColumn
+                    pathColumn
+                    sizeColumn
+                    dateColumn
+                } rows: {
+                    ForEach(results, id: \.string) { path in
+                        TableRow(path)
+                            .draggable(path.url)
+                    }
+                }
+                .scrollContentBackground(.hidden)
+                .alternatingRowBackgrounds(.disabled)
+                .onChange(of: sortOrder) { _, newOrder in
+                    applySortOrder(newOrder)
+                }
+                .onChange(of: results) {
+                    // Auto-select the top row only when the query actually changed (a real
+                    // new search). Background updates to the list (file watching, reindexing,
+                    // recents refresh) keep the user's current selection put.
+                    if lastSelectionQuery != fuzzy.query {
+                        lastSelectionQuery = fuzzy.query
+                        selectFirstResult()
+                    } else {
+                        preserveSelectionAcrossResultsUpdate()
+                    }
+                }
+                .onChange(of: selectedResultIDs) {
+                    selectedResults = Set(results.filter { selectedResultIDs.contains($0.string) })
+                    fuzzy.computeOpenWithApps(for: selectedResults.map(\.url))
+                    // Commit to history only on user-initiated selection (not auto-select from query change)
+                    if focused == .list, !selectedResults.isEmpty, !fuzzy.query.isEmpty {
+                        SearchHistory.shared.commit(fuzzy.query)
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .clingDidCreateFiles)) { notif in
+                    guard let paths = notif.object as? [FilePath], !paths.isEmpty else { return }
+                    let newSet = Set(paths)
+                    fuzzy.results = paths + fuzzy.results.filter { !newSet.contains($0) }
+                    fuzzy.recents = paths + fuzzy.recents.filter { !newSet.contains($0) }
+                    fuzzy.sortedRecents = paths + fuzzy.sortedRecents.filter { !newSet.contains($0) }
+                    DispatchQueue.main.async {
+                        selectedResultIDs = Set(paths.map(\.string))
+                        scrollResultsTableToTop()
+                    }
+                }
+                .onKeyPress(.tab) {
+                    focused = .search
+                    return .handled
+                }
+                .onKeyPress(.rightArrow) {
+                    // Drill into the selected folder: replace the query with `in:<folder>`.
+                    guard focused == .list, selectedResults.count == 1,
+                          let folder = selectedResults.first, folder.memoz.isDir
+                    else { return .ignored }
+                    let drilled = drillIntoFolderQuery(folder)
+                    // A fresh drill (query isn't one we set) starts a new back-stack.
+                    if fuzzy.query != lastDrillSetQuery { queryDrillStack.removeAll() }
+                    queryDrillStack.append(fuzzy.query)
+                    fuzzy.query = drilled
+                    lastDrillSetQuery = drilled
+                    return .handled
+                }
+                .onKeyPress(.leftArrow) {
+                    // Walk back out, but only while the query is still the untouched one we drilled into.
+                    guard focused == .list, !queryDrillStack.isEmpty, fuzzy.query == lastDrillSetQuery
+                    else { return .ignored }
+                    let previous = queryDrillStack.removeLast()
+                    fuzzy.query = previous
+                    lastDrillSetQuery = previous
+                    return .handled
+                }
+                .focused($focused, equals: .list)
+                .transparentTableBackground()
+                .padding(6)
+
+                Button(action: {
+                    fuzzy.sortField = .score
+                    fuzzy.reverseSort = true
+                }) {
+                    Image(systemName: "flag.pattern.checkered.circle" + (fuzzy.sortField == .score ? ".fill" : ""))
+                        .font(.system(size: 14))
+                        .opacity(fuzzy.sortField == .score ? 1 : 0.5)
+                }
+                .buttonStyle(BorderlessButtonStyle())
+                .help("Sort by score (Control-0)")
+                .padding(.trailing, 12)
+                .padding(.top, 9)
+            }
+            .background(.background.opacity(0.3))
+
+            if !fuzzy.noQuery {
+                MissingPathResultsBar(query: fuzzy.query)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .clingRequestExcludeSheet)) { notif in
+            guard let paths = notif.object as? [FilePath], !paths.isEmpty else { return }
+            excludeRequest = ExcludeSheetRequest(paths: paths)
+        }
+        .sheet(item: $excludeRequest) { request in
+            ExcludeFromIndexSheet(paths: request.paths)
+                .frame(width: 600, height: 540)
+        }
+    }
+
+    private var runHistoryTable: some View {
+        Table(sortedRunHistory, selection: $runHistorySelection, sortOrder: $runHistorySortOrder) {
+            TableColumn("Runs", value: \.count) { row in
+                Text("\(row.count)")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.orange)
+            }.width(min: 40, ideal: 50)
+
+            TableColumn("Name", value: \.name) { row in
+                Text(row.name)
+                    .lineLimit(1).truncationMode(.middle)
+                    .help(row.name)
+            }.width(min: 100, ideal: 200)
+
+            TableColumn("Path", value: \.dir) { row in
+                Text(row.dir)
+                    .lineLimit(1).truncationMode(.middle)
+                    .foregroundStyle(.secondary)
+                    .help(row.dir)
+            }.width(min: 100, ideal: 300)
+
+            TableColumn("Last Run", value: \.lastRun) { row in
+                Text(row.lastRun.formatted(.dateTime.month().day().hour().minute()))
+                    .font(.system(size: 11, design: .monospaced))
+                    .help(row.lastRun.formatted(date: .abbreviated, time: .standard))
+            }.width(min: 100, ideal: 120)
+        }
+        .contextMenu(forSelectionType: String.self) { ids in
+            filePathContextMenu(paths: ids.compactMap { id in sortedRunHistory.first { $0.id == id }?.path })
+        } primaryAction: { ids in
+            let paths = ids.compactMap { id in sortedRunHistory.first { $0.id == id }?.path }
+            openPathsIfExist(paths)
+        }
+    }
+
+    private var liveIndexTable: some View {
+        Table(sortedLiveChanges, selection: $liveIndexSelection, sortOrder: $liveChangeSortOrder) {
+            TableColumn("", value: \.kind.rawValue) { change in
+                Text(change.kind.rawValue)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(liveChangeColor(change.kind))
+            }.width(16)
+
+            TableColumn("Name", value: \.name) { change in
+                Text(change.name)
+                    .lineLimit(1).truncationMode(.middle)
+                    .help(change.name)
+            }.width(min: 100, ideal: 200)
+
+            TableColumn("Path", value: \.dir) { change in
+                Text(change.dir)
+                    .lineLimit(1).truncationMode(.middle)
+                    .foregroundStyle(.secondary)
+                    .help(change.dir)
+            }.width(min: 100, ideal: 300)
+
+            TableColumn("Time", value: \.date) { change in
+                Text(change.date.formatted(.dateTime.hour().minute().second()))
+                    .font(.system(size: 11, design: .monospaced))
+                    .help(change.date.formatted(date: .abbreviated, time: .standard))
+            }.width(min: 70, ideal: 80)
+        }
+        .contextMenu(forSelectionType: UUID.self) { ids in
+            let paths = ids.compactMap { id in sortedLiveChanges.first { $0.id == id }.map { FilePath($0.path) } }
+            filePathContextMenu(paths: paths)
+        } primaryAction: { ids in
+            let paths = ids.compactMap { id in sortedLiveChanges.first { $0.id == id }.map { FilePath($0.path) } }
+            openPathsIfExist(paths)
+        }
+    }
+
+    private func volumeIndexingOverlay(_ volume: FilePath) -> some View {
+        VStack(spacing: 8) {
+            ProgressView()
+                .progressViewStyle(CircularProgressViewStyle())
+            Text("Indexing \(volume.name.string)...")
+                .medium(20)
+                .foregroundStyle(.secondary)
+            if !fuzzy.operation.isEmpty {
+                Text(fuzzy.operation)
+                    .round(12, weight: .regular)
+                    .foregroundStyle(.tertiary)
+            }
+            Button("Cancel") {
+                fuzzy.cancelVolumeIndexing(volume: volume)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .fill()
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func completionHint(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(.quaternary, lineWidth: 0.5))
+    }
+
+    @ViewBuilder
+    private func filePathContextMenu(paths: [FilePath]) -> some View {
+        Button("Open") {
+            openPathsIfExist(paths)
+        }
+        Button("Show in Finder") {
+            let existing = paths.filter(\.exists)
+            if existing.isEmpty {
+                pathNotFoundMessage = paths.map(\.string).joined(separator: "\n")
+            } else {
+                revealInFinder(existing.map(\.url))
+            }
+        }
+        Button("Get Info") {
+            if let path = paths.first { openFinderGetInfo(path) }
+        }
+        Divider()
+        Button("Copy Path\(paths.count > 1 ? "s" : "")") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(paths.map(\.string).joined(separator: "\n"), forType: .string)
+        }
+        Button("Copy Filename\(paths.count > 1 ? "s" : "")") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(paths.compactMap { $0.lastComponent?.string }.joined(separator: "\n"), forType: .string)
+        }
+    }
+
+    private func handleFilterKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
+        guard keyPress.modifiers == [.option] else { return .ignored }
+        guard keyPress.key != .escape else {
+            fuzzy.folderFilter = nil
+            fuzzy.quickFilter = nil
+            fuzzy.volumeFilter = nil
+            focused = .search
+            return .handled
+        }
+
+        var result: KeyPress.Result = .ignored
+
+        if proactive, let filter = folderFilters.first(where: { $0.keyEquivalent == keyPress.key }) {
+            fuzzy.folderFilter = filter
+            result = .handled
+        }
+        if proactive, let filter = quickFilters.first(where: { $0.keyEquivalent == keyPress.key }) {
+            fuzzy.quickFilter = filter
+            result = .handled
+        }
+        if let index = keyPress.key.character.wholeNumberValue, let filter = ([FilePath.root] + fuzzy.enabledVolumes)[safe: index] {
+            fuzzy.volumeFilter = filter
+            result = .handled
+        }
+
+        if result == .handled {
+            focused = .search
+        }
+        return result
+    }
+
     private func handleFolderFilterDismiss() {
         guard !folderFilterID.isEmpty, !folderFilterFolders.isEmpty else {
             folderFilterID = ""; folderFilterFolders = []
@@ -817,9 +1313,6 @@ struct ContentView: View {
 
         isAddingQuickFilter = true
     }
-
-    @State private var cmdDownMonitor: Any?
-    @State private var contentShortcutMonitor: Any?
 
     private func installContentShortcutMonitor() {
         guard contentShortcutMonitor == nil else { return }
@@ -975,436 +1468,6 @@ struct ContentView: View {
         }
     }
 
-    @State private var showFullHistory = false
-    @State private var showSyntaxHelp = false
-    // Right-arrow drills into a folder (query becomes `in:<folder>`); left-arrow walks back out.
-    @State private var queryDrillStack: [String] = []
-    @State private var lastDrillSetQuery: String?
-    @State private var showNeedsProPopover = false
-    @State private var isAddingFolderFilter = false
-    @State private var folderFilterID = ""
-    @State private var folderFilterFolders: [FilePath] = []
-    @State private var folderFilterKey: SauceKey = .escape
-
-    @State private var historyIndex = -1
-    @State private var querySaved = "" // query before navigating history
-    @State private var navigatingHistory = false
-    @State private var showHistorySuggestions = false
-    @State private var imeComposing = false
-    @State private var showSuggestionsList = false
-    @State private var suggestionIndex = -1
-
-    /// History entries matching the query, for the ⌘↓ suggestions list.
-    private var historySuggestions: [String] {
-        let trimmed = fuzzy.query.trimmingCharacters(in: .whitespaces)
-        return SearchHistory.shared.suggestions(for: fuzzy.query)
-            .filter { $0.trimmingCharacters(in: .whitespaces) != trimmed }
-            .prefix(8).map { $0 }
-    }
-
-    /// Best history entry that the current query is a prefix of, used for the inline ghost completion.
-    private var inlineSuggestion: String? {
-        guard focused == .search, !imeComposing, historyIndex < 0, showHistorySuggestions else { return nil }
-        let q = fuzzy.query
-        guard !q.isEmpty else { return nil }
-        let lower = q.lowercased()
-        return SearchHistory.shared.entries.first { entry in
-            entry.count > q.count && entry.lowercased().hasPrefix(lower)
-        }
-    }
-
-    /// The part of `inlineSuggestion` after what the user has already typed.
-    private var inlineSuffix: String? {
-        guard let s = inlineSuggestion else { return nil }
-        return String(s.dropFirst(fuzzy.query.count))
-    }
-
-    private func completionHint(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(.tertiary)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(.quaternary, lineWidth: 0.5))
-    }
-
-    private var searchBar: some View {
-        ZStack(alignment: .leading) {
-            if fuzzy.query.isEmpty, !imeComposing {
-                Text(LocalizedStringKey(placeholderHint))
-                    .foregroundStyle(Color(nsColor: .placeholderTextColor))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .id(placeholderHint)
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
-            }
-            if let suffix = inlineSuffix {
-                // Ghost completion: the typed text is invisible here (the real TextField draws it), so
-                // the suffix lines up right after it, with completion hints trailing in tertiary.
-                HStack(alignment: .firstTextBaseline, spacing: 0) {
-                    Text(fuzzy.query).foregroundStyle(.clear)
-                    Text(suffix).foregroundStyle(.secondary)
-                    completionHint("tab to complete").padding(.leading, 8)
-                    if suffix.contains(" ") {
-                        completionHint("→ word by word").padding(.leading, 8)
-                    }
-                    completionHint("⌘↓ suggestions").padding(.leading, 8)
-                }
-                .lineLimit(1)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .allowsHitTesting(false)
-            }
-            TextField("", text: $fuzzy.query)
-                .textFieldStyle(.plain)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .focused($focused, equals: .search)
-                .modifier(SearchBarKeyHandlers(
-                    focused: $focused,
-                    query: $fuzzy.query,
-                    historyIndex: $historyIndex,
-                    querySaved: $querySaved,
-                    navigatingHistory: $navigatingHistory,
-                    showHistorySuggestions: $showHistorySuggestions,
-                    showSuggestionsList: $showSuggestionsList,
-                    suggestionIndex: $suggestionIndex,
-                    inlineSuggestion: inlineSuggestion,
-                    historySuggestions: historySuggestions
-                ))
-        }
-        .animation(.easeInOut(duration: 0.45), value: placeholderHint)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.quaternary, lineWidth: 0.5))
-        .padding(.vertical)
-        .onChange(of: fuzzy.query) {
-            if navigatingHistory {
-                navigatingHistory = false
-            } else {
-                historyIndex = -1
-                suggestionIndex = -1
-                let isFocused = focused == .search
-                let hasQuery = !fuzzy.query.isEmpty
-                showHistorySuggestions = isFocused && hasQuery
-            }
-            if imeComposing { imeComposing = false }
-            if showFullHistory { showFullHistory = false }
-        }
-        .onChange(of: focused) {
-            showHistorySuggestions = focused == .search && !fuzzy.query.isEmpty
-            if focused != .search {
-                showSuggestionsList = false
-                suggestionIndex = -1
-                if imeComposing { imeComposing = false }
-            }
-        }
-        .task(id: shouldCyclePlaceholder) {
-            guard shouldCyclePlaceholder else {
-                placeholderHint = "Search"
-                return
-            }
-            if searchHintsFirstShownAt == 0 {
-                searchHintsFirstShownAt = Date().timeIntervalSince1970
-            } else if !searchHintsManuallyEnabled,
-                      Date().timeIntervalSince1970 - searchHintsFirstShownAt > 3 * 24 * 60 * 60
-            {
-                showSearchHints = false
-                placeholderHint = "Search"
-                return
-            }
-            while !Task.isCancelled, shouldCyclePlaceholder {
-                placeholderHint = ContentView.placeholderExamples[placeholderIndex]
-                placeholderIndex = (placeholderIndex + 1) % ContentView.placeholderExamples.count
-                try? await Task.sleep(nanoseconds: 3_500_000_000)
-            }
-        }
-    }
-
-    @State private var placeholderHint = "Search"
-    @State private var placeholderIndex = 0
-    @Default(.showSearchHints) private var showSearchHints
-    @Default(.searchHintsManuallyEnabled) private var searchHintsManuallyEnabled
-    @Default(.searchHintsFirstShownAt) private var searchHintsFirstShownAt
-
-    private var shouldCyclePlaceholder: Bool {
-        showSearchHints && fuzzy.query.isEmpty && wm.mainWindowActive
-    }
-
-    private static let placeholderExamples = [
-        "Search",
-        "Example: **`invoice .pdf`** *(finds PDF invoices)*",
-        "Example: **`.png .jpg`** *(filters common image formats)*",
-        "Example: **`in:~/Downloads .dmg`** *(finds downloaded DMGs)*",
-        "Example: **`contract .docx`** *(shows contracts in Word format)*",
-        "Example: **`depth:1 in:~/Documents`** *(searches Documents folder non-recursively)*",
-        "Example: **`config/ .toml .yaml`** *(finds configuration files)*",
-        "Example: **`.mkv .mp4 in:~/Movies`** *(shows common video files)*",
-        "Example: **`.md in:~/Notes`** *(finds Markdown notes)*",
-        "Example: **`.js !node_modules/`** *(code, without dependencies)*",
-        "Example: **`report !draft`** *(reports, skipping drafts)*",
-        "Example: **`.png !screenshot`** *(PNGs that aren't screenshots)*",
-        "Example: **`notes$`** *(names ending in notes)*",
-        "Example: **`'cat`** *(exact text: finds Cats or vacation, not contact)*",
-        "Example: **`brew python`** *(shows installed Python versions)*",
-    ]
-
-    private var xButton: some View {
-        Button(action: {
-            if QLP.isVisible {
-                QLP.close()
-            } else if fuzzy.query.isEmpty {
-                dismiss()
-                AppDelegate.shared.handBackFocusAfterMainDismiss()
-            } else {
-                fuzzy.query = ""
-                focused = .search
-            }
-        }) {
-            Image(systemName: "xmark.circle.fill")
-        }
-        .buttonStyle(.plain)
-        .foregroundColor(.secondary)
-        .focusable(false)
-
-    }
-
-    @State private var windowManager = WM
-    @State private var sortOrder = [KeyPathComparator(\FilePath.string)]
-
-    private var results: [FilePath] {
-        let base = (fuzzy.noQuery && fuzzy.volumeFilter == nil)
-            ? (fuzzy.sortField == .score ? fuzzy.recents : fuzzy.sortedRecents)
-            : fuzzy.results
-        return base
-    }
-
-    @ViewBuilder
-    private var resultsList: some View {
-        VStack(spacing: 0) {
-            ZStack(alignment: .topTrailing) {
-                Table(of: FilePath.self, selection: $selectedResultIDs, sortOrder: $sortOrder) {
-                    iconColumn
-                    nameColumn
-                    pathColumn
-                    sizeColumn
-                    dateColumn
-                } rows: {
-                    ForEach(results, id: \.string) { path in
-                        TableRow(path)
-                            .draggable(path.url)
-                    }
-                }
-                .scrollContentBackground(.hidden)
-                .alternatingRowBackgrounds(.disabled)
-                .onChange(of: sortOrder) { _, newOrder in
-                    applySortOrder(newOrder)
-                }
-                .onChange(of: results) {
-                    // Auto-select the top row only when the query actually changed (a real
-                    // new search). Background updates to the list (file watching, reindexing,
-                    // recents refresh) keep the user's current selection put.
-                    if lastSelectionQuery != fuzzy.query {
-                        lastSelectionQuery = fuzzy.query
-                        selectFirstResult()
-                    } else {
-                        preserveSelectionAcrossResultsUpdate()
-                    }
-                }
-                .onChange(of: selectedResultIDs) {
-                    selectedResults = Set(results.filter { selectedResultIDs.contains($0.string) })
-                    fuzzy.computeOpenWithApps(for: selectedResults.map(\.url))
-                    // Commit to history only on user-initiated selection (not auto-select from query change)
-                    if focused == .list, !selectedResults.isEmpty, !fuzzy.query.isEmpty {
-                        SearchHistory.shared.commit(fuzzy.query)
-                    }
-                }
-                .onReceive(NotificationCenter.default.publisher(for: .clingDidCreateFiles)) { notif in
-                    guard let paths = notif.object as? [FilePath], !paths.isEmpty else { return }
-                    let newSet = Set(paths)
-                    fuzzy.results = paths + fuzzy.results.filter { !newSet.contains($0) }
-                    fuzzy.recents = paths + fuzzy.recents.filter { !newSet.contains($0) }
-                    fuzzy.sortedRecents = paths + fuzzy.sortedRecents.filter { !newSet.contains($0) }
-                    DispatchQueue.main.async {
-                        selectedResultIDs = Set(paths.map(\.string))
-                        scrollResultsTableToTop()
-                    }
-                }
-                .onKeyPress(.tab) {
-                    focused = .search
-                    return .handled
-                }
-                .onKeyPress(.rightArrow) {
-                    // Drill into the selected folder: replace the query with `in:<folder>`.
-                    guard focused == .list, selectedResults.count == 1,
-                          let folder = selectedResults.first, folder.memoz.isDir
-                    else { return .ignored }
-                    let drilled = drillIntoFolderQuery(folder)
-                    // A fresh drill (query isn't one we set) starts a new back-stack.
-                    if fuzzy.query != lastDrillSetQuery { queryDrillStack.removeAll() }
-                    queryDrillStack.append(fuzzy.query)
-                    fuzzy.query = drilled
-                    lastDrillSetQuery = drilled
-                    return .handled
-                }
-                .onKeyPress(.leftArrow) {
-                    // Walk back out, but only while the query is still the untouched one we drilled into.
-                    guard focused == .list, !queryDrillStack.isEmpty, fuzzy.query == lastDrillSetQuery
-                    else { return .ignored }
-                    let previous = queryDrillStack.removeLast()
-                    fuzzy.query = previous
-                    lastDrillSetQuery = previous
-                    return .handled
-                }
-                .focused($focused, equals: .list)
-                .transparentTableBackground()
-                .padding(6)
-
-                Button(action: {
-                    fuzzy.sortField = .score
-                    fuzzy.reverseSort = true
-                }) {
-                    Image(systemName: "flag.pattern.checkered.circle" + (fuzzy.sortField == .score ? ".fill" : ""))
-                        .font(.system(size: 14))
-                        .opacity(fuzzy.sortField == .score ? 1 : 0.5)
-                }
-                .buttonStyle(BorderlessButtonStyle())
-                .help("Sort by score (Control-0)")
-                .padding(.trailing, 12)
-                .padding(.top, 9)
-            }
-            .background(.background.opacity(0.3))
-
-            if !fuzzy.noQuery {
-                MissingPathResultsBar(query: fuzzy.query)
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .clingRequestExcludeSheet)) { notif in
-            guard let paths = notif.object as? [FilePath], !paths.isEmpty else { return }
-            excludeRequest = ExcludeSheetRequest(paths: paths)
-        }
-        .sheet(item: $excludeRequest) { request in
-            ExcludeFromIndexSheet(paths: request.paths)
-                .frame(width: 600, height: 540)
-        }
-    }
-
-    @State private var excludeRequest: ExcludeSheetRequest?
-
-    @State private var liveChangeSortOrder = [KeyPathComparator(\FuzzyClient.IndexChange.date, order: .reverse)]
-    @State private var liveChangesIndexedOnly = true
-
-    private var sortedLiveChanges: [FuzzyClient.IndexChange] {
-        let q = fuzzy.query.trimmingCharacters(in: .whitespaces).lowercased()
-        // No query: show the most recent slice. With a query: search the whole deduplicated history (bounded,
-        // so a change from a day ago is still findable), then cap the rendered rows.
-        let filtered: [FuzzyClient.IndexChange] = q.isEmpty
-            ? Array(fuzzy.liveIndexChanges.suffix(2000))
-            : fuzzy.liveIndexChanges.filter { $0.path.lowercased().contains(q) }
-        let afterBlock: [FuzzyClient.IndexChange] = if liveChangesIndexedOnly {
-            filtered.filter { change in
-                !isPathBlocked(change.path) && !(change.path.hasPrefix(HOME.string) && change.path.isIgnored(in: fsignoreString))
-            }
-        } else {
-            filtered
-        }
-        return Array(afterBlock.sorted(using: liveChangeSortOrder).prefix(2000))
-    }
-
-    private var runHistoryRows: [RunHistoryRow] {
-        RH.entries.compactMap { path, entry in
-            guard entry.count > 0 else { return nil }
-            let fp = FilePath(path)
-            return RunHistoryRow(
-                path: fp,
-                name: fp.lastComponent?.string ?? path,
-                dir: fp.removingLastComponent().string,
-                count: entry.count,
-                lastRun: entry.lastRun
-            )
-        }.sorted { $0.count > $1.count }
-    }
-
-    @State private var runHistorySelection = Set<String>()
-    @State private var liveIndexSelection = Set<UUID>()
-    @State private var pathNotFoundMessage: String?
-    @State private var runHistorySortOrder = [KeyPathComparator(\RunHistoryRow.count, order: .reverse)]
-
-    private var sortedRunHistory: [RunHistoryRow] {
-        runHistoryRows.sorted(using: runHistorySortOrder)
-    }
-
-    private var runHistoryTable: some View {
-        Table(sortedRunHistory, selection: $runHistorySelection, sortOrder: $runHistorySortOrder) {
-            TableColumn("Runs", value: \.count) { row in
-                Text("\(row.count)")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.orange)
-            }.width(min: 40, ideal: 50)
-
-            TableColumn("Name", value: \.name) { row in
-                Text(row.name)
-                    .lineLimit(1).truncationMode(.middle)
-                    .help(row.name)
-            }.width(min: 100, ideal: 200)
-
-            TableColumn("Path", value: \.dir) { row in
-                Text(row.dir)
-                    .lineLimit(1).truncationMode(.middle)
-                    .foregroundStyle(.secondary)
-                    .help(row.dir)
-            }.width(min: 100, ideal: 300)
-
-            TableColumn("Last Run", value: \.lastRun) { row in
-                Text(row.lastRun.formatted(.dateTime.month().day().hour().minute()))
-                    .font(.system(size: 11, design: .monospaced))
-                    .help(row.lastRun.formatted(date: .abbreviated, time: .standard))
-            }.width(min: 100, ideal: 120)
-        }
-        .contextMenu(forSelectionType: String.self) { ids in
-            filePathContextMenu(paths: ids.compactMap { id in sortedRunHistory.first { $0.id == id }?.path })
-        } primaryAction: { ids in
-            let paths = ids.compactMap { id in sortedRunHistory.first { $0.id == id }?.path }
-            openPathsIfExist(paths)
-        }
-    }
-
-    private var liveIndexTable: some View {
-        Table(sortedLiveChanges, selection: $liveIndexSelection, sortOrder: $liveChangeSortOrder) {
-            TableColumn("", value: \.kind.rawValue) { change in
-                Text(change.kind.rawValue)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(liveChangeColor(change.kind))
-            }.width(16)
-
-            TableColumn("Name", value: \.name) { change in
-                Text(change.name)
-                    .lineLimit(1).truncationMode(.middle)
-                    .help(change.name)
-            }.width(min: 100, ideal: 200)
-
-            TableColumn("Path", value: \.dir) { change in
-                Text(change.dir)
-                    .lineLimit(1).truncationMode(.middle)
-                    .foregroundStyle(.secondary)
-                    .help(change.dir)
-            }.width(min: 100, ideal: 300)
-
-            TableColumn("Time", value: \.date) { change in
-                Text(change.date.formatted(.dateTime.hour().minute().second()))
-                    .font(.system(size: 11, design: .monospaced))
-                    .help(change.date.formatted(date: .abbreviated, time: .standard))
-            }.width(min: 70, ideal: 80)
-        }
-        .contextMenu(forSelectionType: UUID.self) { ids in
-            let paths = ids.compactMap { id in sortedLiveChanges.first { $0.id == id }.map { FilePath($0.path) } }
-            filePathContextMenu(paths: paths)
-        } primaryAction: { ids in
-            let paths = ids.compactMap { id in sortedLiveChanges.first { $0.id == id }.map { FilePath($0.path) } }
-            openPathsIfExist(paths)
-        }
-    }
-
     private func openPathsIfExist(_ paths: [FilePath]) {
         let missing = paths.filter { !$0.exists }
         if missing.isEmpty {
@@ -1416,74 +1479,12 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
-    private func filePathContextMenu(paths: [FilePath]) -> some View {
-        Button("Open") {
-            openPathsIfExist(paths)
-        }
-        Button("Show in Finder") {
-            let existing = paths.filter(\.exists)
-            if existing.isEmpty {
-                pathNotFoundMessage = paths.map(\.string).joined(separator: "\n")
-            } else {
-                revealInFinder(existing.map(\.url))
-            }
-        }
-        Button("Get Info") {
-            if let path = paths.first { openFinderGetInfo(path) }
-        }
-        Divider()
-        Button("Copy Path\(paths.count > 1 ? "s" : "")") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(paths.map(\.string).joined(separator: "\n"), forType: .string)
-        }
-        Button("Copy Filename\(paths.count > 1 ? "s" : "")") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(paths.compactMap { $0.lastComponent?.string }.joined(separator: "\n"), forType: .string)
-        }
-    }
-
     private func liveChangeColor(_ kind: FuzzyClient.IndexChange.Kind) -> Color {
         switch kind {
         case .added: .green
         case .removed: .red
         case .modified: .orange
         }
-    }
-
-    private var iconColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
-        TableColumn("", value: \.string) { path in
-            Image(nsImage: path.memoz.icon).resizable().frame(width: 16, height: 16)
-        }.width(20)
-    }
-
-    private var nameColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
-        TableColumn("Name", value: \.name.string) { path in
-            // .help sets the cell's NSView tooltip (cheap, no layout pass), so the truncated middle is
-            // revealed on hover without the per-row measuring that would slow scrolling.
-            let name = path.name.string
-            Text(name).font(.system(size: 12)).lineLimit(1).truncationMode(.middle).help(name)
-        }.width(min: 100, ideal: 200)
-    }
-
-    private var pathColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
-        TableColumn("Path", value: \.dir.string) { path in
-            let dir = path.dir.shellString
-            Text(dir).font(.system(size: 12, design: .rounded)).tracking(-0.2).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary).help(dir)
-        }.width(min: 100, ideal: 300)
-    }
-
-    private var sizeColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
-        TableColumn("Size", value: \.memoz.size) { path in
-            Text(path.memoz.humanizedFileSize).font(.system(size: 11, design: .monospaced)).lineLimit(1)
-        }.width(min: 60, ideal: 80)
-    }
-
-    private var dateColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
-        TableColumn("Date Modified", value: \.memoz.date) { path in
-            let date = path.memoz.formattedModificationDate
-            Text(date).font(.system(size: 11, design: .monospaced)).lineLimit(1).help(date)
-        }.width(min: 100, ideal: 160)
     }
 
     private func applySortOrder(_ order: [KeyPathComparator<FilePath>]) {
@@ -1524,11 +1525,6 @@ struct ContentView: View {
             selectedResultIDs.removeAll()
         }
     }
-
-    /// Keep the user's selection when the results list mutates for reasons other
-    /// than a new query (file watching, reindexing). Only drop ids that vanished,
-    /// and fall back to the first row if the whole selection is gone.
-    @State private var lastSelectionQuery: String? = nil
 
     private func preserveSelectionAcrossResultsUpdate() {
         let resultIDs = Set(results.map(\.string))
@@ -1672,7 +1668,9 @@ extension FilePath {
         }
         return NSWorkspace.shared.icon(forFile: string)
     }
-    var sourceIndex: String { "" }
+    var sourceIndex: String {
+        ""
+    }
 }
 
 // #Preview {
@@ -1699,6 +1697,7 @@ func getPro() {
 struct NeedsProView: View {
     var size: CGFloat = 12
     var color: Color = .secondary
+
     @ObservedObject var pro: LowtechPro
 
     var body: some View {
@@ -1767,6 +1766,7 @@ struct SearchBarKeyHandlers: ViewModifier {
     @Binding var showHistorySuggestions: Bool
     @Binding var showSuggestionsList: Bool
     @Binding var suggestionIndex: Int
+
     var inlineSuggestion: String?
     var historySuggestions: [String]
 
@@ -1833,8 +1833,12 @@ struct SearchBarKeyHandlers: ViewModifier {
                 // Accept just the next word of the suggestion.
                 let suffix = suggestion.dropFirst(query.count)
                 var end = suffix.startIndex
-                while end < suffix.endIndex, suffix[end] == " " { end = suffix.index(after: end) }
-                while end < suffix.endIndex, suffix[end] != " " { end = suffix.index(after: end) }
+                while end < suffix.endIndex, suffix[end] == " " {
+                    end = suffix.index(after: end)
+                }
+                while end < suffix.endIndex, suffix[end] != " " {
+                    end = suffix.index(after: end)
+                }
                 query += String(suffix[suffix.startIndex ..< end])
                 return .handled
             }
@@ -1884,5 +1888,7 @@ struct RunHistoryRow: Identifiable {
     let count: Int
     let lastRun: Date
 
-    var id: String { path.string }
+    var id: String {
+        path.string
+    }
 }

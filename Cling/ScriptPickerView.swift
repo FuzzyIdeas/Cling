@@ -12,32 +12,8 @@ private let log = Logger(subsystem: clingSubsystem, category: "ScriptPickerView"
 
 struct ScriptPickerView: View {
     let fileURLs: [URL]
-    @Environment(\.dismiss) var dismiss
-    @State private var isShowingAddScript = false
-    @State private var scriptName = ""
-    @State private var selectedRunner: ScriptRunner? = .zsh
-    @State private var scriptManager = SM
-    @State private var confirmScript: URL? = nil
-    @State private var deleteScript: URL? = nil
 
-    func scriptButton(_ script: URL) -> some View {
-        ScriptRowButton(
-            script: script,
-            scriptManager: scriptManager,
-            onRun: {
-                if scriptManager.scriptsWithConfirm.contains(script) {
-                    confirmScript = script
-                } else {
-                    scriptManager.run(script: script, args: fileURLs.map(\.path))
-                    dismiss()
-                }
-            },
-            onDelete: { deleteScript = script }
-        )
-        .ifLet(scriptManager.scriptShortcuts[script]) {
-            $0.keyboardShortcut(KeyEquivalent($1), modifiers: [])
-        }
-    }
+    @Environment(\.dismiss) var dismiss
 
     @ViewBuilder
     var scriptList: some View {
@@ -113,6 +89,25 @@ struct ScriptPickerView: View {
         }
     }
 
+    func scriptButton(_ script: URL) -> some View {
+        ScriptRowButton(
+            script: script,
+            scriptManager: scriptManager,
+            onRun: {
+                if scriptManager.scriptsWithConfirm.contains(script) {
+                    confirmScript = script
+                } else {
+                    scriptManager.run(script: script, args: fileURLs.map(\.path))
+                    dismiss()
+                }
+            },
+            onDelete: { deleteScript = script }
+        )
+        .ifLet(scriptManager.scriptShortcuts[script]) {
+            $0.keyboardShortcut(KeyEquivalent($1), modifiers: [])
+        }
+    }
+
     func createNewScript() {
         guard !scriptName.isEmpty else { return }
         let ext = selectedRunner?.fileExtension ?? "sh"
@@ -131,6 +126,14 @@ struct ScriptPickerView: View {
         selectedRunner = nil
         scriptManager.fetchScripts() // Update scripts and shortcuts
     }
+
+    @State private var isShowingAddScript = false
+    @State private var scriptName = ""
+    @State private var selectedRunner: ScriptRunner? = .zsh
+    @State private var scriptManager = SM
+    @State private var confirmScript: URL? = nil
+    @State private var deleteScript: URL? = nil
+
 }
 
 // MARK: - ScriptActionButtons
@@ -199,7 +202,6 @@ struct ScriptActionButtons: View {
         }
     }
 
-    @ViewBuilder
     var scriptList: some View {
         ForEach(commonScripts.filter { scriptManager.isEligible($0, forPaths: selectedResults.arr) }, id: \.path) { script in
             if let key = scriptManager.scriptShortcuts[script] {
@@ -268,20 +270,26 @@ struct ScriptActionButtons: View {
     @State private var fuzzy = FUZZY
     @State private var isPresentingScriptPicker = false
     @ObservedObject private var km = KM
-    @Default(.toolbarLabelStyle) private var labelStyle
-    @Default(.toolbarDensity) private var density
     @State private var comboHintVisible = false
     @State private var pillHintsVisible = false
 
+    @Default(.toolbarLabelStyle) private var labelStyle
+    @Default(.toolbarDensity) private var density
+
     /// ⌘ held: surfaces the "⌘ + ⌃" discoverability hint and the leading button's ⌘X, without
     /// flooding the row with every script's badge.
-    private var cmdHeld: Bool { km.lcmd || km.rcmd }
+    private var cmdHeld: Bool {
+        km.lcmd || km.rcmd
+    }
     /// ⌃ held alongside ⌘: the actual combo for the script pills (and Clop), so their ⌘⌃<key>
     /// badges reveal.
-    private var ctrlHeld: Bool { km.lctrl || km.rctrl }
-    private var cmdCtrlHeld: Bool { cmdHeld && ctrlHeld }
+    private var ctrlHeld: Bool {
+        km.lctrl || km.rctrl
+    }
+    private var cmdCtrlHeld: Bool {
+        cmdHeld && ctrlHeld
+    }
 
-    @ViewBuilder
     private var runningProcessButton: some View {
         HStack(spacing: 0) {
             if let script = scriptManager.lastScript {
@@ -550,12 +558,6 @@ struct AddScriptView: View {
 /// Sidebar list of scripts + inline source editor. Mirrors `FilterEditorSheet`.
 /// Presented standalone as a sheet, or embedded inside the Settings window's Scripts pane.
 struct ScriptEditorSheet: View {
-    @State private var scriptManager = SM
-    @State private var selection: URL? = nil
-    @State private var isShowingAddScript = false
-    @State private var scriptName = ""
-    @State private var selectedRunner: ScriptRunner? = .zsh
-    @State private var deleteScript: URL? = nil
     @Environment(\.dismiss) var dismiss
 
     /// When true, renders without the sheet header/Done button and fills its container.
@@ -580,6 +582,13 @@ struct ScriptEditorSheet: View {
             .frame(width: 820, height: 580)
         }
     }
+
+    @State private var scriptManager = SM
+    @State private var selection: URL? = nil
+    @State private var isShowingAddScript = false
+    @State private var scriptName = ""
+    @State private var selectedRunner: ScriptRunner? = .zsh
+    @State private var deleteScript: URL? = nil
 
     private var scripts: [URL] {
         scriptManager.scriptURLs.sorted(by: \.lastPathComponent)
@@ -618,7 +627,6 @@ struct ScriptEditorSheet: View {
         }
     }
 
-    @ViewBuilder
     private var sidebar: some View {
         List(selection: $selection) {
             Section("Scripts") {
@@ -738,12 +746,14 @@ private struct ScriptSourceEditor: View {
 
     @Default(.editorApp) private var editorApp
 
-    // Description lives with the params but is edited in the header; empty clears it (so it isn't written).
+    /// Description lives with the params but is edited in the header; empty clears it (so it isn't written).
     private var descriptionBinding: Binding<String> {
         Binding(get: { params.description ?? "" }, set: { params.description = $0.isEmpty ? nil : $0 })
     }
 
-    private var currentName: String { script.lastPathComponent.ns.deletingPathExtension }
+    private var currentName: String {
+        script.lastPathComponent.ns.deletingPathExtension
+    }
 
     private var renameTarget: URL {
         let stem = name.trimmingCharacters(in: .whitespaces).safeFilename
@@ -751,7 +761,7 @@ private struct ScriptSourceEditor: View {
         return (scriptsFolder / (ext.isEmpty ? stem : "\(stem).\(ext)")).url
     }
 
-    // Enabled only for a non-empty, changed name that wouldn't clobber another script.
+    /// Enabled only for a non-empty, changed name that wouldn't clobber another script.
     private var canRename: Bool {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, trimmed != currentName else { return false }
@@ -819,8 +829,8 @@ private struct ScriptSourceEditor: View {
         }
     }
 
-    // Renaming has to recreate the file (write current content to the new path, drop the old one)
-    // and repoint the selection, so it's an explicit button rather than part of the debounced save.
+    /// Renaming has to recreate the file (write current content to the new path, drop the old one)
+    /// and repoint the selection, so it's an explicit button rather than part of the debounced save.
     private func rename() {
         guard canRename else { return }
         let newURL = renameTarget
@@ -902,7 +912,7 @@ private struct ScriptParamsForm: View {
 
     @State private var recording = false
 
-    // Bridges the stored single-letter `key` to the SauceKey that DynamicKey records; Escape clears it.
+    /// Bridges the stored single-letter `key` to the SauceKey that DynamicKey records; Escape clears it.
     private var hotkeyBinding: Binding<SauceKey> {
         Binding(
             get: { params.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape },
@@ -910,7 +920,6 @@ private struct ScriptParamsForm: View {
         )
     }
 
-    @ViewBuilder
     private var detailsSection: some View {
         Section {
             LabeledContent("Hotkey") {
@@ -928,7 +937,6 @@ private struct ScriptParamsForm: View {
         }
     }
 
-    @ViewBuilder
     private var eligibilitySection: some View {
         Section {
             Toggle("Show only on specific file types", isOn: enabled(\.extensions, fallback: ""))
@@ -960,7 +968,6 @@ private struct ScriptParamsForm: View {
         }
     }
 
-    @ViewBuilder
     private var behaviourSection: some View {
         Section("Behaviour") {
             Toggle("Show confirmation before running", isOn: $params.confirm)
@@ -969,7 +976,7 @@ private struct ScriptParamsForm: View {
         }
     }
 
-    // A toggle flips the optional param between nil (disabled) and a value; the field edits the value.
+    /// A toggle flips the optional param between nil (disabled) and a value; the field edits the value.
     private func enabled<V>(_ key: WritableKeyPath<ScriptParams, V?>, fallback: V) -> Binding<Bool> {
         Binding(
             get: { params[keyPath: key] != nil },
@@ -992,11 +999,11 @@ private struct ScriptParamsForm: View {
 /// Optional behaviour settings parsed from (and written back into) a script's comment header.
 /// A `nil` String/Int or a `false` Bool means the setting is absent from the script.
 struct ScriptParams: Equatable {
-    var description: String? = nil
-    var key: String? = nil
-    var extensions: String? = nil
-    var minFiles: Int? = nil
-    var maxFiles: Int? = nil
+    var description: String?
+    var key: String?
+    var extensions: String?
+    var minFiles: Int?
+    var maxFiles: Int?
     var filesOnly = false
     var dirsOnly = false
     var confirm = false
@@ -1084,8 +1091,8 @@ enum ScriptHeaderParser {
         #"^[^A-Za-z0-9\n]+(description|key|extensions|minFiles|maxFiles|filesOnly|dirsOnly|confirm|sequential|showOutput)\s*\[?\s*:"#
     ).ignoresCase()
 
-    // Descriptive comments emitted by older templates, stripped so the code editor stays clean.
-    private static let managedHelpPhrases: Set<String> = [
+    /// Descriptive comments emitted by older templates, stripped so the code editor stays clean.
+    private static let managedHelpPhrases: Set = [
         "All settings below are optional. Remove the brackets around [:] to enable a setting.",
         "A short description shown in the script picker",
         "Only show this script for specific file types",
@@ -1253,8 +1260,8 @@ enum ScriptRunner: String, CaseIterable {
         }
     }
 
-    // Behaviour settings (description, extensions, confirm, …) are managed through the
-    // Scripts editor form, which writes them into the comment header on save.
+    /// Behaviour settings (description, extensions, confirm, …) are managed through the
+    /// Scripts editor form, which writes them into the comment header on save.
     var template: String {
         """
 

@@ -30,7 +30,7 @@ enum StructuralPatterns {
 
     /// Build-artifact / VCS / dependency directories that are noise at any depth. These go to the global
     /// blocklist (fast prune, no globs needed) rather than a per-store ignore file.
-    static let noiseDirs: Set<String> = [
+    static let noiseDirs: Set = [
         "node_modules", ".git", ".svn", ".hg", ".build", "DerivedData", "Pods", "Carthage",
         "target", "build", "Build", "dist", "out", "vendor", "__pycache__", ".venv", "venv",
         "site-packages", ".tox", ".mypy_cache", ".pytest_cache", ".gradle", ".m2", ".terraform",
@@ -44,7 +44,7 @@ enum StructuralPatterns {
     ]
 
     /// Non-binary sections of an `*.app` bundle that can be dropped wholesale.
-    static let appDropSections: Set<String> = [
+    static let appDropSections: Set = [
         "Resources", "Frameworks", "PlugIns", "_CodeSignature", "SharedSupport", "Helpers",
         "Library", "XPCServices", "Frameworks", "CodeResources",
     ]

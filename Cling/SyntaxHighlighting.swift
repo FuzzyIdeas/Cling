@@ -206,7 +206,9 @@ struct CodePreviewView: NSViewRepresentable {
         context.coordinator.load(url, fontSize: fontSize)
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
 
 }
 
@@ -291,7 +293,9 @@ struct CodeEditorView: NSViewRepresentable {
         }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
 
 }
 

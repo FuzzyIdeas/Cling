@@ -205,6 +205,10 @@ struct FilePreviewPanel: View {
         }
     }
 
+    /// The footer retires once the panel has been opened this many times; after that the user
+    /// toggles the panel with the shortcut or the Toggle Preview menu action instead.
+    private static let hintRetireCount = 6
+
     @State private var index = 0
     @State private var hintHovering = false
     // Live heights of the floating glass bars, reserved as content insets on the
@@ -212,21 +216,21 @@ struct FilePreviewPanel: View {
     // clear of the header/footer instead of being hidden beneath them.
     @State private var headerHeight: CGFloat = 0
     @State private var footerHeight: CGFloat = 0
+    // Mirror of paths.count, read by the arrow-key monitor (which captures a
+    // frozen `self`, so it can only see live values through @State storage).
+    @State private var pathCount = 0
+    @State private var arrowMonitor: Any?
+
     @Default(.filePreviewHintSeenCount) private var hintSeenCount
 
-    /// The footer retires once the panel has been opened this many times; after that the user
-    /// toggles the panel with the shortcut or the Toggle Preview menu action instead.
-    private static let hintRetireCount = 6
-    private var showHideHint: Bool { hintSeenCount < Self.hintRetireCount }
+    private var showHideHint: Bool {
+        hintSeenCount < Self.hintRetireCount
+    }
 
     /// Current binding for the Toggle Preview shortcut, shown in the footer (falls back to ⌘⇧P).
     private var toggleShortcutLabel: String {
         KeyboardShortcuts.getShortcut(for: .clTogglePreview)?.description ?? "⌘⇧P"
     }
-    // Mirror of paths.count, read by the arrow-key monitor (which captures a
-    // frozen `self`, so it can only see live values through @State storage).
-    @State private var pathCount = 0
-    @State private var arrowMonitor: Any?
 
     /// Identity of the current selection, so navigation resets when it changes
     /// but stays put while paging through the same set.
@@ -448,7 +452,9 @@ struct PDFKitPreview: NSViewRepresentable {
         context.coordinator.load(url)
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
 
 }
 
@@ -595,7 +601,9 @@ struct ImageScrollPreview: NSViewRepresentable {
         context.coordinator.load(url)
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
 
 }
 
@@ -682,7 +690,9 @@ private struct DirEntry: Identifiable {
     let path: FilePath
     let isDir: Bool
 
-    var id: String { path.string }
+    var id: String {
+        path.string
+    }
 }
 
 // MARK: - FolderPreview
@@ -841,7 +851,9 @@ enum SevenZip {
         let name: String
         let isDir: Bool
 
-        var id: String { name }
+        var id: String {
+            name
+        }
     }
 
     struct Listing {
@@ -853,7 +865,7 @@ enum SevenZip {
     /// Archive, disk-image, and filesystem-image extensions 7-Zip can list.
     /// Document containers (docx, xlsx, epub, …) and installer packages are left
     /// out so they stay on their proper QuickLook preview.
-    static let listableExtensions: Set<String> = [
+    static let listableExtensions: Set = [
         "zip", "zipx", "jar", "xpi", "7z", "rar", "r00", "tar", "gz", "tgz", "taz",
         "bz2", "bzip2", "tbz", "tbz2", "xz", "txz", "zst", "tzst", "lz", "lzma",
         "lzh", "lha", "arj", "cab", "cpio", "ar", "deb", "rpm", "wim", "swm", "esd",
@@ -1021,7 +1033,7 @@ final class QuickLookSupport {
 
     /// Modern QuickLook provider extensions don't show up in `qlmanage -m`; keep
     /// a small supplement so they aren't mistaken for unsupported.
-    private static let supplement: Set<String> = ["org.idpf.epub-container"]
+    private static let supplement: Set = ["org.idpf.epub-container"]
 
     private var ready = false
 

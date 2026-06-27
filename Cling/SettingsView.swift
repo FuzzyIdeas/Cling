@@ -31,7 +31,9 @@ let envState = EnvState()
 enum SettingsCategory: String, CaseIterable, Identifiable {
     case general, interface, shortcuts, apps, search, volumes, filters, scripts, exclusions, licenseAndUpdates, about
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var title: String {
         switch self {
@@ -95,7 +97,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
 // MARK: - SettingsView
 
 struct SettingsView: View {
-    @ObservedObject private var nav = SettingsNavigation.shared
     @EnvironmentObject var env: EnvState
 
     var body: some View {
@@ -133,20 +134,7 @@ struct SettingsView: View {
         .frame(minWidth: 820, maxWidth: .infinity, minHeight: 640, maxHeight: .infinity)
     }
 
-    @ViewBuilder
-    private func sidebarRow(_ category: SettingsCategory) -> some View {
-        NavigationLink(value: category) {
-            Label {
-                Text(category.title)
-            } icon: {
-                Image(systemName: category.symbol)
-                    .foregroundStyle(.white)
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 20, height: 20)
-                    .background(category.tint.gradient, in: .rect(cornerRadius: 5))
-            }
-        }
-    }
+    @ObservedObject private var nav = SettingsNavigation.shared
 
     @ViewBuilder
     private var detailView: some View {
@@ -164,6 +152,21 @@ struct SettingsView: View {
         case .about: AboutSettingsPane()
         }
     }
+
+    private func sidebarRow(_ category: SettingsCategory) -> some View {
+        NavigationLink(value: category) {
+            Label {
+                Text(category.title)
+            } icon: {
+                Image(systemName: category.symbol)
+                    .foregroundStyle(.white)
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 20, height: 20)
+                    .background(category.tint.gradient, in: .rect(cornerRadius: 5))
+            }
+        }
+    }
+
 }
 
 // MARK: - SettingRow
@@ -212,6 +215,7 @@ private struct SettingRow<Label: View, Control: View>: View {
 private struct DescriptiveToggle: View {
     let title: String
     let detail: String
+
     @Binding var isOn: Bool
 
     var body: some View {
@@ -434,33 +438,7 @@ private enum ToolbarPlacement: String, CaseIterable {
 // MARK: - GeneralSettingsPane
 
 private struct GeneralSettingsPane: View {
-    @Default(.showWindowAtLaunch) private var showWindowAtLaunch
-    @Default(.showDockIcon) private var showDockIcon
-    @Default(.keepWindowOpenWhenDefocused) private var keepWindowOpenWhenDefocused
-    @Default(.instantMode) private var instantMode
-    @Default(.enableGlobalHotkey) private var enableGlobalHotkey
-    @Default(.showAppKey) private var showAppKey
-    @Default(.triggerKeys) private var triggerKeys
     @EnvironmentObject var env: EnvState
-
-    private var windowMode: Binding<WindowMode> {
-        Binding(
-            get: { showDockIcon ? .desktopApp : .utility },
-            set: { mode in
-                switch mode {
-                case .utility:
-                    showDockIcon = false
-                    keepWindowOpenWhenDefocused = false
-                case .desktopApp:
-                    showDockIcon = true
-                    keepWindowOpenWhenDefocused = true
-                }
-                NSApp.setActivationPolicy(showDockIcon ? .regular : .accessory)
-                NSApp.activate(ignoringOtherApps: true)
-                AppDelegate.shared?.keepSettingsFrontUntil = .now + 2
-            }
-        )
-    }
 
     var body: some View {
         Form {
@@ -545,6 +523,34 @@ private struct GeneralSettingsPane: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
     }
+
+    @Default(.showWindowAtLaunch) private var showWindowAtLaunch
+    @Default(.showDockIcon) private var showDockIcon
+    @Default(.keepWindowOpenWhenDefocused) private var keepWindowOpenWhenDefocused
+    @Default(.instantMode) private var instantMode
+    @Default(.enableGlobalHotkey) private var enableGlobalHotkey
+    @Default(.showAppKey) private var showAppKey
+    @Default(.triggerKeys) private var triggerKeys
+
+    private var windowMode: Binding<WindowMode> {
+        Binding(
+            get: { showDockIcon ? .desktopApp : .utility },
+            set: { mode in
+                switch mode {
+                case .utility:
+                    showDockIcon = false
+                    keepWindowOpenWhenDefocused = false
+                case .desktopApp:
+                    showDockIcon = true
+                    keepWindowOpenWhenDefocused = true
+                }
+                NSApp.setActivationPolicy(showDockIcon ? .regular : .accessory)
+                NSApp.activate(ignoringOtherApps: true)
+                AppDelegate.shared?.keepSettingsFrontUntil = .now + 2
+            }
+        )
+    }
+
 }
 
 // MARK: - AppsSettingsPane
@@ -625,17 +631,6 @@ private struct AppsSettingsPane: View {
 // MARK: - SearchSettingsPane
 
 private struct SearchSettingsPane: View {
-    @Default(.maxResultsCount) private var maxResultsCount
-    @Default(.defaultResultsMode) private var defaultResultsMode
-    @Default(.searchScopes) private var searchScopes
-    @Default(.showSearchHints) private var showSearchHints
-    @Default(.searchHintsManuallyEnabled) private var searchHintsManuallyEnabled
-    @State private var fuzzy = FUZZY
-    @State private var showCLIAlert = false
-    @State private var showCLIPathAlert = false
-    @State private var cliInstallMessage = ""
-    @State private var cliInstallSuccess = false
-
     var body: some View {
         Form {
             Section {
@@ -768,6 +763,18 @@ private struct SearchSettingsPane: View {
         }
     }
 
+    @State private var fuzzy = FUZZY
+    @State private var showCLIAlert = false
+    @State private var showCLIPathAlert = false
+    @State private var cliInstallMessage = ""
+    @State private var cliInstallSuccess = false
+
+    @Default(.maxResultsCount) private var maxResultsCount
+    @Default(.defaultResultsMode) private var defaultResultsMode
+    @Default(.searchScopes) private var searchScopes
+    @Default(.showSearchHints) private var showSearchHints
+    @Default(.searchHintsManuallyEnabled) private var searchHintsManuallyEnabled
+
     private func scopeRow(_ scope: SearchScope, label: String, detail: LocalizedStringKey) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Toggle(isOn: scope.binding) {
@@ -859,19 +866,6 @@ private struct ScriptsSettingsPane: View {
 // MARK: - ExclusionsSettingsPane
 
 private struct ExclusionsSettingsPane: View {
-    @Default(.blockedPrefixes) private var blockedPrefixes
-    @Default(.blockedContains) private var blockedContains
-    @Default(.honorGitignore) private var honorGitignore
-    @Default(.editorApp) private var editorApp
-    @State private var fuzzy = FUZZY
-    @State private var fsignoreContent: String = (try? String(contentsOf: fsignore.url, encoding: .utf8)) ?? ""
-    @State private var fsignoreSaveTask: DispatchWorkItem?
-    @State private var scopeContents: [String: String] = Dictionary(
-        uniqueKeysWithValues: ScopeIgnore.rootedScopes.map { ($0.rawValue, ScopeIgnore.content(for: $0)) }
-    )
-    @State private var scopeSaveTasks: [String: DispatchWorkItem] = [:]
-    @State private var showResetAllConfirm = false
-
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
@@ -884,6 +878,36 @@ private struct ExclusionsSettingsPane: View {
             }
             .padding()
         }
+    }
+
+    @State private var fuzzy = FUZZY
+    @State private var fsignoreContent: String = (try? String(contentsOf: fsignore.url, encoding: .utf8)) ?? ""
+    @State private var fsignoreSaveTask: DispatchWorkItem?
+    @State private var scopeContents: [String: String] = Dictionary(
+        uniqueKeysWithValues: ScopeIgnore.rootedScopes.map { ($0.rawValue, ScopeIgnore.content(for: $0)) }
+    )
+    @State private var scopeSaveTasks: [String: DispatchWorkItem] = [:]
+    @State private var showResetAllConfirm = false
+
+    @Default(.blockedPrefixes) private var blockedPrefixes
+    @Default(.blockedContains) private var blockedContains
+    @Default(.honorGitignore) private var honorGitignore
+    @Default(.editorApp) private var editorApp
+
+    private var homeBinding: Binding<String> {
+        Binding(
+            get: { fsignoreContent },
+            set: { newVal in
+                fsignoreContent = newVal
+                fsignoreSaveTask?.cancel()
+                let task = DispatchWorkItem {
+                    FUZZY.fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 5
+                    try? newVal.write(to: fsignore.url, atomically: true, encoding: .utf8)
+                }
+                fsignoreSaveTask = task
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: task)
+            }
+        )
     }
 
     private var resetAllHeader: some View {
@@ -909,55 +933,6 @@ private struct ExclusionsSettingsPane: View {
                 Text("Replaces the Home ignore file, the global blocklist, and every per-scope ignore file with Cling's built-in rules. Your custom rules in these lists are removed. Volume ignore files are left untouched.")
             }
         }
-    }
-
-    private var homeBinding: Binding<String> {
-        Binding(
-            get: { fsignoreContent },
-            set: { newVal in
-                fsignoreContent = newVal
-                fsignoreSaveTask?.cancel()
-                let task = DispatchWorkItem {
-                    FUZZY.fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 5
-                    try? newVal.write(to: fsignore.url, atomically: true, encoding: .utf8)
-                }
-                fsignoreSaveTask = task
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: task)
-            }
-        )
-    }
-
-    private func scopeBinding(_ scope: SearchScope) -> Binding<String> {
-        Binding(
-            get: { scopeContents[scope.rawValue] ?? "" },
-            set: { newVal in
-                scopeContents[scope.rawValue] = newVal
-                scopeSaveTasks[scope.rawValue]?.cancel()
-                let task = DispatchWorkItem { ScopeIgnore.write(newVal, for: scope) }
-                scopeSaveTasks[scope.rawValue] = task
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: task)
-            }
-        )
-    }
-
-    private func resetAllToDefault() {
-        let homeDefault = (try? String(contentsOf: FS_IGNORE.url, encoding: .utf8)) ?? ""
-        fsignoreContent = homeDefault
-        fsignoreSaveTask?.cancel()
-        FUZZY.fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 5
-        try? homeDefault.write(to: fsignore.url, atomically: true, encoding: .utf8)
-
-        Defaults.reset(.blockedPrefixes)
-        Defaults.reset(.blockedContains)
-        PathBlocklist.shared.rebuild()
-
-        for scope in ScopeIgnore.rootedScopes {
-            let def = ScopeIgnore.bundledTemplate(for: scope) ?? ""
-            scopeContents[scope.rawValue] = def
-            ScopeIgnore.write(def, for: scope)
-        }
-
-        FUZZY.refresh(pauseSearch: false)
     }
 
     private var gitignoreSection: some View {
@@ -1084,6 +1059,40 @@ private struct ExclusionsSettingsPane: View {
         }
         .groupBoxStyle(SettingsCardGroupBoxStyle())
     }
+
+    private func scopeBinding(_ scope: SearchScope) -> Binding<String> {
+        Binding(
+            get: { scopeContents[scope.rawValue] ?? "" },
+            set: { newVal in
+                scopeContents[scope.rawValue] = newVal
+                scopeSaveTasks[scope.rawValue]?.cancel()
+                let task = DispatchWorkItem { ScopeIgnore.write(newVal, for: scope) }
+                scopeSaveTasks[scope.rawValue] = task
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: task)
+            }
+        )
+    }
+
+    private func resetAllToDefault() {
+        let homeDefault = (try? String(contentsOf: FS_IGNORE.url, encoding: .utf8)) ?? ""
+        fsignoreContent = homeDefault
+        fsignoreSaveTask?.cancel()
+        FUZZY.fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 5
+        try? homeDefault.write(to: fsignore.url, atomically: true, encoding: .utf8)
+
+        Defaults.reset(.blockedPrefixes)
+        Defaults.reset(.blockedContains)
+        PathBlocklist.shared.rebuild()
+
+        for scope in ScopeIgnore.rootedScopes {
+            let def = ScopeIgnore.bundledTemplate(for: scope) ?? ""
+            scopeContents[scope.rawValue] = def
+            ScopeIgnore.write(def, for: scope)
+        }
+
+        FUZZY.refresh(pauseSearch: false)
+    }
+
 }
 
 // MARK: - LicenseAndUpdatesSettingsPane
@@ -1222,7 +1231,9 @@ struct VolumeIgnoreEditor: View {
     @State private var content = ""
     @State private var saveTask: DispatchWorkItem?
 
-    private var fsignorePath: FilePath { volume / ".fsignore" }
+    private var fsignorePath: FilePath {
+        volume / ".fsignore"
+    }
 
 }
 
@@ -1390,37 +1401,6 @@ struct VolumeListView: View {
         }
     }
 
-    private func disconnectedVolumeItem(_ volume: FilePath) -> some View {
-        HStack {
-            Image(systemName: "externaldrive.badge.xmark").foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(volume.name.string)
-                    Text("Disconnected")
-                        .font(.system(size: 10, weight: .medium))
-                        .padding(.horizontal, 6).padding(.vertical, 1)
-                        .background(Color.orange.opacity(0.2), in: Capsule())
-                        .foregroundStyle(.orange)
-                }
-                Text(volume.shellString)
-                    .monospaced()
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                    .truncationMode(.middle)
-            }
-            Spacer()
-            Button("Remove") {
-                fuzzy.removeVolume(volume)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .help("Delete cached index for \(volume.name.string)")
-        }
-        .padding(.vertical, 2)
-    }
-
-    @Default(.reindexTimeIntervalPerVolume) private var reindexTimeIntervalPerVolume
-
     func volumeItem(_ volume: FilePath) -> some View {
         VStack(alignment: .leading) {
             Toggle(isOn: volume.enabledVolumeBinding) {
@@ -1457,13 +1437,58 @@ struct VolumeListView: View {
 
     @State private var fuzzy = FUZZY
 
+    @Default(.reindexTimeIntervalPerVolume) private var reindexTimeIntervalPerVolume
+
     @Default(.disabledVolumes) private var disabledVolumes
+
+    private func disconnectedVolumeItem(_ volume: FilePath) -> some View {
+        HStack {
+            Image(systemName: "externaldrive.badge.xmark").foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(volume.name.string)
+                    Text("Disconnected")
+                        .font(.system(size: 10, weight: .medium))
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Color.orange.opacity(0.2), in: Capsule())
+                        .foregroundStyle(.orange)
+                }
+                Text(volume.shellString)
+                    .monospaced()
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            Button("Remove") {
+                fuzzy.removeVolume(volume)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Delete cached index for \(volume.name.string)")
+        }
+        .padding(.vertical, 2)
+    }
+
 }
 
 // MARK: - ReindexTimeIntervalSlider
 
 struct ReindexTimeIntervalSlider: View {
     var volume: FilePath
+
+    @State var interval: TimeInterval = DEFAULT_VOLUME_REINDEX_INTERVAL
+
+    var body: some View {
+        HStack {
+            Text("Reindex Interval: ")
+                .round(12)
+            Slider(value: snapped, in: 3600 ... 2_419_200) {
+                Text(interval.humanizedInterval).mono(11)
+                    .frame(width: 150, alignment: .trailing)
+            }
+        }
+    }
 
     /// Clean values the slider is magnetically pulled toward.
     private static let anchors: [TimeInterval] = [
@@ -1483,17 +1508,6 @@ struct ReindexTimeIntervalSlider: View {
     /// Fraction of the gap to the neighbouring anchor within which the handle snaps to that anchor.
     /// The remaining middle of each gap stays free, rounded to the hour.
     private static let magneticFraction: TimeInterval = 0.2
-
-    var body: some View {
-        HStack {
-            Text("Reindex Interval: ")
-                .round(12)
-            Slider(value: snapped, in: 3600 ... 2_419_200) {
-                Text(interval.humanizedInterval).mono(11)
-                    .frame(width: 150, alignment: .trailing)
-            }
-        }
-    }
 
     /// Binding that applies magnetic snapping as the handle moves, then persists the result.
     private var snapped: Binding<TimeInterval> {
@@ -1522,8 +1536,6 @@ struct ReindexTimeIntervalSlider: View {
         if abs(raw - nearest) <= radius { return nearest }
         return (raw / 3600).rounded() * 3600
     }
-
-    @State var interval: TimeInterval = DEFAULT_VOLUME_REINDEX_INTERVAL
 
 }
 

@@ -107,8 +107,12 @@ struct FilterPicker: View {
 
     @State private var filterShortcutMonitor: Any?
 
-    private var folderFilters: [FolderFilter] { defaults.folderFilters }
-    private var quickFilters: [QuickFilter] { defaults.quickFilters }
+    private var folderFilters: [FolderFilter] {
+        defaults.folderFilters
+    }
+    private var quickFilters: [QuickFilter] {
+        defaults.quickFilters
+    }
 
     private var enabledVolumes: [FilePath]? {
         fuzzy.enabledVolumes.isEmpty ? nil : fuzzy.enabledVolumes
@@ -470,10 +474,6 @@ enum FilterEditorSelection: Hashable {
 // MARK: - FilterEditorSheet
 
 struct FilterEditorSheet: View {
-    @Default(.quickFilters) private var quickFilters
-    @Default(.folderFilters) private var folderFilters
-    @State private var fuzzy = FUZZY
-    @State private var selection: FilterEditorSelection? = .quickFilters
     @Environment(\.dismiss) var dismiss
 
     /// When true, the editor renders without the sheet header/Done button and fills its container.
@@ -500,6 +500,16 @@ struct FilterEditorSheet: View {
         }
     }
 
+    @State private var fuzzy = FUZZY
+    @State private var selection: FilterEditorSelection? = .quickFilters
+
+    @Default(.quickFilters) private var quickFilters
+    @Default(.folderFilters) private var folderFilters
+
+    private var disconnectedVolumes: [FilePath] {
+        fuzzy.disconnectedVolumes.sorted(by: { $0.string < $1.string })
+    }
+
     private var editorContent: some View {
         HStack(spacing: 0) {
             sidebar
@@ -520,11 +530,6 @@ struct FilterEditorSheet: View {
         }
     }
 
-    private var disconnectedVolumes: [FilePath] {
-        fuzzy.disconnectedVolumes.sorted(by: { $0.string < $1.string })
-    }
-
-    @ViewBuilder
     private var sidebar: some View {
         List(selection: $selection) {
             Section("Quick Filters") {
@@ -576,7 +581,6 @@ struct FilterEditorSheet: View {
         .foregroundStyle(.primary)
     }
 
-    @ViewBuilder
     private var detail: some View {
         Form {
             switch selection ?? .quickFilters {
@@ -623,7 +627,6 @@ struct FilterEditorSheet: View {
         .formStyle(.grouped)
     }
 
-    @ViewBuilder
     private func emptySection(_ text: String) -> some View {
         Section {
             Text(text)
@@ -663,7 +666,6 @@ struct FilterEditorSheet: View {
 
 // MARK: - Folder Editor
 
-@ViewBuilder
 private func folderEditor(folders: Binding<[FilePath]>, emptyText: String, onChange: @escaping () -> Void, onAdd: @escaping () -> Void) -> some View {
     HStack(alignment: .top, spacing: 6) {
         VStack(alignment: .leading, spacing: 4) {
@@ -762,7 +764,7 @@ struct QuickFilterEditor: View {
     var matchCountText = ""
     var onEdit: () -> Void = {}
     var onAddFolder: () -> Void = {}
-    var onDelete: (() -> Void)? = nil
+    var onDelete: (() -> Void)?
 
     var body: some View {
         // Pinned at top so switching modes only changes the sections below it.
@@ -864,10 +866,14 @@ struct QuickFilterEditor: View {
         )
     }
 
-    private var fieldsMode: Bool { draft.rawQuery == nil }
-    private var preview: String { draft.asFilter.queryString }
+    private var fieldsMode: Bool {
+        draft.rawQuery == nil
+    }
+    private var preview: String {
+        draft.asFilter.queryString
+    }
 
-    @ViewBuilder private var rawQueryRow: some View {
+    private var rawQueryRow: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text("Raw query").font(.system(size: 11)).foregroundStyle(.secondary)

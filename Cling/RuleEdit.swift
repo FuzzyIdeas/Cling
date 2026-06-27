@@ -10,7 +10,9 @@ enum RuleLineKind: Equatable {
     case fsignoreReExclude
     case fsignoreReInclude
 
-    var isFsignore: Bool { self == .fsignoreReExclude || self == .fsignoreReInclude }
+    var isFsignore: Bool {
+        self == .fsignoreReExclude || self == .fsignoreReInclude
+    }
 }
 
 // MARK: - RuleToken
@@ -39,7 +41,9 @@ struct RuleToken: Equatable {
     }
 
     /// Whether a literal token is currently showing a wildcard (drives the chip tint).
-    var isWildcarded: Bool { isLiteral && state != .literal }
+    var isWildcarded: Bool {
+        isLiteral && state != .literal
+    }
 
     /// Detect a file extension on a literal segment, mirroring `IndexInclusionAnalyzer.fileExtension`
     /// (a dot not at the start, a short non-empty extension, no spaces or wildcards). Case is preserved.
@@ -133,7 +137,9 @@ enum RuleGrid {
     static func fitSegments(_ segs: [String], budget: Int, minSeg: Int = 6) -> [String] {
         guard budget > 0, !segs.isEmpty else { return segs }
         let separators = segs.count - 1
-        func total(_ s: [String]) -> Int { s.reduce(0) { $0 + $1.count } + separators }
+        func total(_ s: [String]) -> Int {
+            s.reduce(0) { $0 + $1.count } + separators
+        }
         guard total(segs) > budget else { return segs }
         var out = segs
         var loops = 0
@@ -162,8 +168,12 @@ struct RuleLine: Equatable, TokenizedRuleLine {
     /// excluded from what apply writes and from the coverage check.
     var enabled = true
 
-    var isFsignore: Bool { kind.isFsignore }
-    var chipEligible: Bool { isFsignore }
+    var isFsignore: Bool {
+        kind.isFsignore
+    }
+    var chipEligible: Bool {
+        isFsignore
+    }
 
     static func parse(_ text: String, kind: RuleLineKind) -> RuleLine {
         let f = RuleGrid.frame(text)
@@ -195,16 +205,22 @@ struct RuleEdit: Equatable {
     /// When non-nil, a raw-edit override parallel to `lines` (one entry per line). Bypasses the token grid.
     private(set) var rawText: [String]?
 
-    var isRaw: Bool { rawText != nil }
+    var isRaw: Bool {
+        rawText != nil
+    }
 
     /// Column indices (over fsignore lines only) that hold at least one literal token and no fixed wildcard,
     /// so a click can cycle them in lockstep.
-    func togglableColumns() -> Set<Int> { RuleGrid.togglableColumns(lines) }
+    func togglableColumns() -> Set<Int> {
+        RuleGrid.togglableColumns(lines)
+    }
 
     /// Advance the wildcard state of every fsignore line's literal token at `column`, all to the same new
     /// state. The first matching token cycles naturally; the rest are forced to match so the lines stay in
     /// lockstep even if they ever held different originals.
-    mutating func cycle(column c: Int) { RuleGrid.cycle(&lines, column: c) }
+    mutating func cycle(column c: Int) {
+        RuleGrid.cycle(&lines, column: c)
+    }
 
     /// Begin (or continue) a raw-text override and set one line's text.
     mutating func setRaw(_ index: Int, _ text: String) {

@@ -46,8 +46,12 @@ final class PreviewPanelState {
 /// their kind-specific facts instead of queueing behind it.
 @MainActor
 enum VolumeFetchGate {
-    static func tryAcquire(_ key: String) -> Bool { busy.insert(key).inserted }
-    static func release(_ key: String) { busy.remove(key) }
+    static func tryAcquire(_ key: String) -> Bool {
+        busy.insert(key).inserted
+    }
+    static func release(_ key: String) {
+        busy.remove(key)
+    }
 
     private static var busy: Set<String> = []
 }
@@ -213,7 +217,7 @@ enum FileInfo {
         return facts
     }
 
-    private struct CommonAttrs: Sendable {
+    private struct CommonAttrs {
         var size: Int?
         var created: Date?
         var modified: Date?

@@ -9,14 +9,18 @@ private let DD = "[DragDrop]"
 // MARK: - DragSourceView
 
 final class DragSourceView: NSView, NSDraggingSource {
-    override var acceptsFirstResponder: Bool { true }
+    override var acceptsFirstResponder: Bool {
+        true
+    }
 
     var fileURLs: [URL] = []
     var onMouseDown: (() -> Void)?
     var onDragStart: (() -> Void)?
     var onSessionEnded: ((NSDragOperation) -> Void)?
 
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
 
     override func mouseDown(with event: NSEvent) {
         onMouseDown?()

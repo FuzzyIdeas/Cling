@@ -55,11 +55,17 @@ private struct TextButtonContent<Label: View>: View {
     @Environment(\.colorScheme) private var scheme
     @State private var hovering = false
 
-    private var enabled: Bool { isEnabledOverride ?? isEnabled }
+    private var enabled: Bool {
+        isEnabledOverride ?? isEnabled
+    }
 
-    // Opaque pills are squarish (small radius); glass/vibrant are capsules.
-    private var isSquare: Bool { variant == .opaque }
-    private var squareShape: RoundedRectangle { RoundedRectangle(cornerRadius: 2, style: .continuous) }
+    /// Opaque pills are squarish (small radius); glass/vibrant are capsules.
+    private var isSquare: Bool {
+        variant == .opaque
+    }
+    private var squareShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 2, style: .continuous)
+    }
 
     private var fillColor: Color {
         if active { return activeTint.opacity(0.22) }
@@ -122,80 +128,93 @@ private struct TextButtonContent<Label: View>: View {
 // MARK: - GlassTextButton
 
 struct GlassTextButton: ButtonStyle {
-    public func makeBody(configuration: Configuration) -> some View {
-        TextButtonContent(label: configuration.label, isPressed: configuration.isPressed, variant: .glass, color: color, active: active, activeTint: activeTint, isEnabledOverride: isEnabledOverride)
-    }
-
     var color = Color.primary.opacity(0.8)
     var active = false
     var activeTint: Color = .accentColor
     var isEnabledOverride: Bool?
+
+    func makeBody(configuration: Configuration) -> some View {
+        TextButtonContent(label: configuration.label, isPressed: configuration.isPressed, variant: .glass, color: color, active: active, activeTint: activeTint, isEnabledOverride: isEnabledOverride)
+    }
+
 }
 
 // MARK: - VibrantTextButton
 
 struct VibrantTextButton: ButtonStyle {
-    public func makeBody(configuration: Configuration) -> some View {
-        TextButtonContent(label: configuration.label, isPressed: configuration.isPressed, variant: .vibrant, color: color, borderColor: borderColor, active: active, activeTint: activeTint, isEnabledOverride: isEnabledOverride)
-    }
-
     var color = Color.primary.opacity(0.8)
     var borderColor: Color?
     var active = false
     var activeTint: Color = .accentColor
     var isEnabledOverride: Bool?
+
+    func makeBody(configuration: Configuration) -> some View {
+        TextButtonContent(label: configuration.label, isPressed: configuration.isPressed, variant: .vibrant, color: color, borderColor: borderColor, active: active, activeTint: activeTint, isEnabledOverride: isEnabledOverride)
+    }
+
 }
 
 // MARK: - OpaqueTextButton
 
 struct OpaqueTextButton: ButtonStyle {
-    public func makeBody(configuration: Configuration) -> some View {
-        TextButtonContent(label: configuration.label, isPressed: configuration.isPressed, variant: .opaque, color: color, borderColor: borderColor, active: active, activeTint: activeTint, isEnabledOverride: isEnabledOverride)
-    }
-
     var color = Color.primary.opacity(0.8)
     var borderColor: Color?
     var active = false
     var activeTint: Color = .accentColor
     var isEnabledOverride: Bool?
+
+    func makeBody(configuration: Configuration) -> some View {
+        TextButtonContent(label: configuration.label, isPressed: configuration.isPressed, variant: .opaque, color: color, borderColor: borderColor, active: active, activeTint: activeTint, isEnabledOverride: isEnabledOverride)
+    }
+
 }
 
 // MARK: - TextButton
 
 struct TextButton: ButtonStyle {
-    public func makeBody(configuration: Configuration) -> some View {
-        let variant: TextButtonContent<Configuration.Label>.Variant = AM.useGlass ? .glass : (AM.useVibrant ? .vibrant : .opaque)
-        TextButtonContent(label: configuration.label, isPressed: configuration.isPressed, variant: variant, color: color, borderColor: borderColor, active: active, activeTint: activeTint)
-    }
-
     var color = Color.primary.opacity(0.8)
     var borderColor: Color?
     var active = false
     var activeTint: Color = .accentColor
 
+    func makeBody(configuration: Configuration) -> some View {
+        let variant: TextButtonContent<Configuration.Label>.Variant = AM.useGlass ? .glass : (AM.useVibrant ? .vibrant : .opaque)
+        TextButtonContent(label: configuration.label, isPressed: configuration.isPressed, variant: variant, color: color, borderColor: borderColor, active: active, activeTint: activeTint)
+    }
+
 }
 
 extension ButtonStyle where Self == TextButton {
-    static var text: TextButton { TextButton() }
+    static var text: TextButton {
+        TextButton()
+    }
     static func text(color: Color = .primary.opacity(0.8), borderColor: Color? = nil, active: Bool = false, activeTint: Color = .accentColor) -> TextButton {
         TextButton(color: color, borderColor: borderColor, active: active, activeTint: activeTint)
     }
 }
 
 extension ButtonStyle where Self == GlassTextButton {
-    static var glassText: GlassTextButton { GlassTextButton() }
+    static var glassText: GlassTextButton {
+        GlassTextButton()
+    }
 }
 
 extension ButtonStyle where Self == VibrantTextButton {
-    static var vibrantText: VibrantTextButton { VibrantTextButton() }
+    static var vibrantText: VibrantTextButton {
+        VibrantTextButton()
+    }
 }
 
 extension ButtonStyle where Self == OpaqueTextButton {
-    static var opaqueText: OpaqueTextButton { OpaqueTextButton() }
+    static var opaqueText: OpaqueTextButton {
+        OpaqueTextButton()
+    }
 }
 
 extension ButtonStyle where Self == BorderlessTextButton {
-    static var borderlessText: BorderlessTextButton { BorderlessTextButton() }
+    static var borderlessText: BorderlessTextButton {
+        BorderlessTextButton()
+    }
     static func borderlessText(color: Color) -> BorderlessTextButton {
         BorderlessTextButton(color: color)
     }
@@ -204,9 +223,11 @@ extension ButtonStyle where Self == BorderlessTextButton {
 // MARK: - BorderlessTextButton
 
 struct BorderlessTextButton: ButtonStyle {
-    @Environment(\.isEnabled) public var isEnabled
+    @Environment(\.isEnabled) var isEnabled
 
-    public func makeBody(configuration: Configuration) -> some View {
+    var color = Color.primary.opacity(0.8)
+
+    func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(color)
             .padding(.vertical, 2.0)
@@ -218,8 +239,6 @@ struct BorderlessTextButton: ButtonStyle {
             }
             .opacity(isEnabled ? (hovering ? 1 : 0.8) : 0.6)
     }
-
-    var color = Color.primary.opacity(0.8)
 
     @State private var hovering = false
 
@@ -288,7 +307,6 @@ extension View {
         }
     }
 
-    @ViewBuilder
     func raisedPanel(cornerRadius: CGFloat = windowCornerRadius) -> some View {
         clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .background(
@@ -305,7 +323,7 @@ extension View {
     @ViewBuilder
     func glassOrMaterial(cornerRadius: CGFloat = 18) -> some View {
         if AM.useGlass, #available(macOS 26, *) {
-            self.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+            glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
         } else {
             background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius))
         }
@@ -318,7 +336,7 @@ extension View {
     @ViewBuilder
     func glassBar() -> some View {
         if AM.useGlass, #available(macOS 26, *) {
-            self.glassEffect(.regular, in: Rectangle())
+            glassEffect(.regular, in: Rectangle())
         } else {
             background(.ultraThinMaterial)
         }

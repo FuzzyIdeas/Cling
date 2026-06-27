@@ -45,9 +45,48 @@ struct ClingCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "cling",
         abstract: "Cling: fast fuzzy file search from the command line",
-        subcommands: [Search.self, Reindex.self, Status.self, Recents.self, Index.self],
+        subcommands: [Search.self, Reindex.self, Status.self, Recents.self, Index.self, Explain.self],
         defaultSubcommand: Search.self
     )
+}
+
+// MARK: - Explain
+
+struct Explain: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Explain whether a path is indexed, and if not, which rule excludes it",
+        discussion: """
+        For each path, reports existence on disk, current index membership, the scope it maps to \
+        (and whether that scope is enabled), the path blocklist, and the gitignore-style ignore \
+        files — then a one-line verdict. Relative paths are resolved against the current directory.
+        """
+    )
+
+    @Argument(parsing: .remaining, help: "Paths to diagnose")
+    var paths: [String]
+
+    mutating func run() throws {
+        let cwd = FileManager.default.currentDirectoryPath
+        let resolved = paths.map { p -> String in
+            let tilde = (p as NSString).expandingTildeInPath
+            let abs = tilde.hasPrefix("/") ? tilde : (cwd as NSString).appendingPathComponent(tilde)
+            return (abs as NSString).standardizingPath
+        }
+        let request = ClingRequest(command: .explain, paths: resolved)
+        guard let data = try sendMachPort(data: JSONEncoder().encode(request)) else {
+            fputs("error: no response from Cling app\n", stderr)
+            throw ExitCode.failure
+        }
+        guard let response = try? JSONDecoder().decode(ClingResponse.self, from: data) else {
+            fputs("error: invalid response\n", stderr)
+            throw ExitCode.failure
+        }
+        if let error = response.error {
+            fputs("error: \(error)\n", stderr)
+            throw ExitCode.failure
+        }
+        print(response.status ?? "(no output)")
+    }
 }
 
 // MARK: - Search

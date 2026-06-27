@@ -90,7 +90,9 @@ class ScriptManager {
     var lastErrorFile: FilePath?
     @ObservationIgnored var shellEnv: [String: String]? = nil
 
-    var combinedOutputFile: FilePath? { createCombinedOutputFile() }
+    var combinedOutputFile: FilePath? {
+        createCombinedOutputFile()
+    }
 
     var process: Process? {
         didSet {

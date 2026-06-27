@@ -97,7 +97,9 @@ struct RootContext: Equatable {
     let rootPath: String
     let rel: String
 
-    var isHome: Bool { if case .home = kind { return true }; return false }
+    var isHome: Bool {
+        if case .home = kind { return true }; return false
+    }
 
     /// Where `!` re-include lines for this context's ignore file should be written.
     var ignoreDest: IgnoreDest {
@@ -126,7 +128,9 @@ enum Breadth: Int, Comparable {
     case folder = 2
     case broad = 3
 
-    static func < (lhs: Breadth, rhs: Breadth) -> Bool { lhs.rawValue < rhs.rawValue }
+    static func < (lhs: Breadth, rhs: Breadth) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
 }
 
 // MARK: - ReindexTarget
@@ -156,7 +160,9 @@ struct InclusionOption: Identifiable, Equatable {
     var ignoreDest: IgnoreDest = .home // which ignore file the fsignore lines go to
 
     /// Lines, in apply order: re-exclusions first, then `!` re-inclusions (so negation wins as the last match).
-    var fsignoreLines: [String] { reExcludeFsignore + reIncludeFsignore }
+    var fsignoreLines: [String] {
+        reExcludeFsignore + reIncludeFsignore
+    }
 
     /// Signature used to dedupe options that would produce identical changes.
     var signature: String {
@@ -165,7 +171,9 @@ struct InclusionOption: Identifiable, Equatable {
         return "\(add)|\(rm)|\(ignoreDest)|\(fsignoreLines.joined(separator: ","))"
     }
 
-    static func == (lhs: InclusionOption, rhs: InclusionOption) -> Bool { lhs.id == rhs.id }
+    static func == (lhs: InclusionOption, rhs: InclusionOption) -> Bool {
+        lhs.id == rhs.id
+    }
 
 }
 
@@ -252,7 +260,7 @@ struct IndexSnapshot {
 
 enum IndexInclusionAnalyzer {
     /// Directory extensions that macOS treats as opaque bundles; we index the bundle entry but not its guts.
-    nonisolated static let bundleExtensions: Set<String> = [
+    nonisolated static let bundleExtensions: Set = [
         "app", "framework", "bundle", "appex", "xpc", "plugin", "kext", "qlgenerator",
         "mdimporter", "prefpane", "photoslibrary", "rtfd", "pkg", "component", "wdgt",
     ]
@@ -384,7 +392,9 @@ enum IndexInclusionAnalyzer {
     nonisolated static func relativize(_ path: String, to root: String) -> String {
         guard path.hasPrefix(root) else { return path }
         var rel = String(path.dropFirst(root.count))
-        while rel.hasPrefix("/") { rel.removeFirst() }
+        while rel.hasPrefix("/") {
+            rel.removeFirst()
+        }
         return rel
     }
 

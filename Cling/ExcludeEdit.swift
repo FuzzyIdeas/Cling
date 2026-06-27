@@ -38,11 +38,17 @@ struct ExcludeEdit: Equatable {
     var lines: [ExcludeRuleLine]
     private(set) var rawText: [String]?
 
-    var isRaw: Bool { rawText != nil }
+    var isRaw: Bool {
+        rawText != nil
+    }
 
-    func togglableColumns() -> Set<Int> { RuleGrid.togglableColumns(lines) }
+    func togglableColumns() -> Set<Int> {
+        RuleGrid.togglableColumns(lines)
+    }
 
-    mutating func cycle(column c: Int) { RuleGrid.cycle(&lines, column: c) }
+    mutating func cycle(column c: Int) {
+        RuleGrid.cycle(&lines, column: c)
+    }
 
     mutating func setRaw(_ index: Int, _ text: String) {
         if rawText == nil { rawText = lines.map { $0.serialize() } }
@@ -66,7 +72,9 @@ struct ExcludeEdit: Equatable {
         lines[index].enabled = on
     }
 
-    func isEnabled(_ index: Int) -> Bool { lines.indices.contains(index) ? lines[index].enabled : false }
+    func isEnabled(_ index: Int) -> Bool {
+        lines.indices.contains(index) ? lines[index].enabled : false
+    }
 
     /// Serialized lines, raw override applied. Parallel to `lines` (includes disabled ones) so callers can
     /// index by position; filter with `isEnabled` for what apply should write.

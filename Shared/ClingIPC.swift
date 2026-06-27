@@ -21,6 +21,7 @@ public enum ClingCommand: String, Codable {
     case indexAdd
     case indexRemove
     case indexHas
+    case explain
 }
 
 // MARK: - ClingRequest

@@ -12,14 +12,16 @@ final class DropZoneOverlay {
     static let mouselessColumns: [Character] = Array("asdfghjkl")
     static let mouselessRows: [Character] = Array("asdfghjkl")
 
-    // Single-letter drill-down second overlay.
+    /// Single-letter drill-down second overlay.
     static let singleLetterRows: [[Character]] = [
         Array("qwertyuiop"),
         Array("asdfghjkl"),
         Array("zxcvbnm"),
     ]
 
-    var isPresenting: Bool { panel != nil }
+    var isPresenting: Bool {
+        panel != nil
+    }
 
     func present(onSelect: @escaping (CGPoint) -> Void, onCancel: @escaping () -> Void) {
         dismiss(restoreHiddenWindow: true)

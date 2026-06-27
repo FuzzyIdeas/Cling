@@ -80,8 +80,21 @@ var PRODUCTS: [Any] {
 
 @MainActor
 class AppDelegate: LowtechProAppDelegate {
+    static var shared: AppDelegate!
+
+    var keepSettingsFrontUntil: Date?
+
+    var mainWindow: NSWindow? {
+        NSApp.windows.first { $0.identifier?.rawValue == "main" }
+    }
+    /// The Settings window's title tracks the selected sidebar item, so match on
+    /// the stable SwiftUI scene identifier instead.
+    var settingsWindow: NSWindow? {
+        NSApp.windows.first { $0.identifier?.rawValue == "settings" }
+    }
+
     @MainActor
-    override public func willShowPaddle(_ uiType: PADUIType, product _: PADProduct) -> PADDisplayConfiguration? {
+    override func willShowPaddle(_ uiType: PADUIType, product _: PADProduct) -> PADDisplayConfiguration? {
         // Present the licence / product-access dialogs as a sheet on the Settings window (which hosts
         // the About sidebar item) when it is open, consistent with the other Lowtech apps. Standalone
         // Paddle windows were unclickable on macOS 27. Checkout and alerts keep their own window.
@@ -92,19 +105,6 @@ class AppDelegate: LowtechProAppDelegate {
             return PADDisplayConfiguration(.sheet, hideNavigationButtons: false, parentWindow: settings)
         }
         return PADDisplayConfiguration(.window, hideNavigationButtons: false, parentWindow: nil)
-    }
-
-    static var shared: AppDelegate!
-
-    var keepSettingsFrontUntil: Date?
-
-    var mainWindow: NSWindow? {
-        NSApp.windows.first { $0.identifier?.rawValue == "main" }
-    }
-    // The Settings window's title tracks the selected sidebar item, so match on
-    // the stable SwiftUI scene identifier instead.
-    var settingsWindow: NSWindow? {
-        NSApp.windows.first { $0.identifier?.rawValue == "settings" }
     }
 
     override func applicationDidFinishLaunching(_ notification: Notification) {

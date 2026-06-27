@@ -16,7 +16,9 @@ final class QuickLookPresenter {
     /// The set the panel can arrow through.
     var items: [URL] = []
 
-    var isVisible: Bool { selection != nil }
+    var isVisible: Bool {
+        selection != nil
+    }
 
     func present(urls: [URL], selectedItemIndex: Int = 0) {
         guard !urls.isEmpty else { return }

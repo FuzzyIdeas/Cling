@@ -169,28 +169,18 @@ struct OnboardingView: View {
     }
 
     @EnvironmentObject private var env: EnvState
-    @Default(.windowAppearance) private var windowAppearance
-    @Default(.enableGlobalHotkey) private var enableGlobalHotkey
-    @Default(.showAppKey) private var showAppKey
-    @Default(.triggerKeys) private var triggerKeys
-    @Default(.showDockIcon) private var showDockIcon
-    @Default(.keepWindowOpenWhenDefocused) private var keepWindowOpenWhenDefocused
-
     @State private var selectedMode: WindowMode = .utility
     @State private var fdaGranted = false
     @State private var fdaChecker: Repeater?
     @State private var availableVolumes: [FilePath] = FuzzyClient.getVolumes()
     @State private var selectedVolumes: Set<FilePath> = Set(FuzzyClient.getVolumes())
 
-    private func volumeBinding(_ volume: FilePath) -> Binding<Bool> {
-        Binding(
-            get: { selectedVolumes.contains(volume) },
-            set: { enabled in
-                if enabled { selectedVolumes.insert(volume) }
-                else { selectedVolumes.remove(volume) }
-            }
-        )
-    }
+    @Default(.windowAppearance) private var windowAppearance
+    @Default(.enableGlobalHotkey) private var enableGlobalHotkey
+    @Default(.showAppKey) private var showAppKey
+    @Default(.triggerKeys) private var triggerKeys
+    @Default(.showDockIcon) private var showDockIcon
+    @Default(.keepWindowOpenWhenDefocused) private var keepWindowOpenWhenDefocused
 
     @ViewBuilder
     private func windowModeButton(mode: WindowMode, icon: String, description: [String]) -> some View {
@@ -237,6 +227,16 @@ struct OnboardingView: View {
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
+    }
+
+    private func volumeBinding(_ volume: FilePath) -> Binding<Bool> {
+        Binding(
+            get: { selectedVolumes.contains(volume) },
+            set: { enabled in
+                if enabled { selectedVolumes.insert(volume) }
+                else { selectedVolumes.remove(volume) }
+            }
+        )
     }
 
     private func getStarted() {

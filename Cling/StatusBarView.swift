@@ -9,9 +9,6 @@ import Defaults
 import SwiftUI
 
 struct StatusBarView: View {
-    @Default(.triggerKeys) private var triggerKeys
-    @Default(.showAppKey) private var showAppKey
-
     var body: some View {
         let bar = HStack {
             if !fuzzy.backgroundIndexing {
@@ -128,4 +125,8 @@ struct StatusBarView: View {
 
     @State private var fuzzy: FuzzyClient = FUZZY
     @State private var appearance = AM
+
+    @Default(.triggerKeys) private var triggerKeys
+    @Default(.showAppKey) private var showAppKey
+
 }

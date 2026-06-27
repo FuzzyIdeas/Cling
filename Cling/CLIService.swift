@@ -20,8 +20,12 @@ final class SearchCoordinator: @unchecked Sendable {
         let isDir: Bool
     }
 
-    var count: Int { lock.withLock { _count } }
-    var indexing: Bool { lock.withLock { _indexing } }
+    var count: Int {
+        lock.withLock { _count }
+    }
+    var indexing: Bool {
+        lock.withLock { _indexing }
+    }
 
     func setIndexing(_ value: Bool) {
         lock.withLock { _indexing = value }
@@ -221,10 +225,14 @@ final class SearchCoordinator: @unchecked Sendable {
 // ClingCLI tool.
 
 private extension Encodable {
-    var jsonData: Data { try! JSONEncoder().encode(self) }
+    var jsonData: Data {
+        try! JSONEncoder().encode(self)
+    }
 }
 private extension Decodable {
-    static func from(_ data: Data) -> Self? { try? JSONDecoder().decode(Self.self, from: data) }
+    static func from(_ data: Data) -> Self? {
+        try? JSONDecoder().decode(Self.self, from: data)
+    }
 }
 
 // MARK: - Mach Port Listener
@@ -564,6 +572,13 @@ extension FuzzyClient {
                 }
             }
             return ClingResponse(status: messages.joined(separator: "\n"), indexCount: coord.count)
+
+        case .explain:
+            guard let paths = request.paths, !paths.isEmpty else {
+                return ClingResponse(error: "no paths specified")
+            }
+            let report = paths.map { explainPathExclusion($0, coord: coord) }.joined(separator: "\n\n")
+            return ClingResponse(status: report, indexCount: coord.count)
         }
     }
 }

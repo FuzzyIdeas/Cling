@@ -584,7 +584,7 @@ func walkSMBShare(
         }
     } else {
         try await withThrowingTaskGroup(of: DirPage.self) { group in
-            var pending: Set<String> = ["/"]
+            var pending: Set = ["/"]
             var seenFileIds: Set<UInt64> = []
             var inFlight = 0
 

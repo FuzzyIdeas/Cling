@@ -74,9 +74,10 @@ struct ModifierComboHint: View {
 
     @Environment(\.colorScheme) private var scheme
 
-    private var accent: Color { tint }
+    private var accent: Color {
+        tint
+    }
 
-    @ViewBuilder
     private func keycap(_ glyph: String, pressed: Bool) -> some View {
         Text(glyph)
             .font(.system(size: 10, weight: .semibold))
@@ -105,8 +106,8 @@ struct ActionPillButton: View {
     var shortcut = ""
     var badgesVisible = false
     var labelStyle: ToolbarLabelStyle
-    var role: ButtonRole? = nil
-    var help: String? = nil
+    var role: ButtonRole?
+    var help: String?
     var hintColor: Color = ShortcutTint.action
     let action: () -> Void
 
@@ -142,12 +143,11 @@ struct ActionPillButton: View {
 struct ShortcutHintReveal: ViewModifier {
     let held: Bool
     @Binding var visible: Bool
+
     /// Skip the 500ms wait and reveal immediately. Used when a sibling hint is already on screen
     /// (e.g. the ⌘ combo hint is showing and the user adds ⌥/⌃), so there's no need to re-earn the
     /// reveal — they're clearly already peeking at shortcuts.
     var instant = false
-    @Default(.shortcutBadgesRevealedOnce) private var revealedOnce
-    @State private var task: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content.onChange(of: held) { _, isHeld in
@@ -168,6 +168,11 @@ struct ShortcutHintReveal: ViewModifier {
             }
         }
     }
+
+    @State private var task: Task<Void, Never>?
+
+    @Default(.shortcutBadgesRevealedOnce) private var revealedOnce
+
 }
 
 extension View {

@@ -31,11 +31,21 @@ struct IgnoreDocument {
             }
         }
 
-        var ruleCount: Int { rules.count }
-        var enabledCount: Int { rules.lazy.filter(\.enabled).count }
-        var allEnabled: Bool { ruleCount > 0 && enabledCount == ruleCount }
-        var anyEnabled: Bool { enabledCount > 0 }
-        var isPartial: Bool { enabledCount > 0 && enabledCount < ruleCount }
+        var ruleCount: Int {
+            rules.count
+        }
+        var enabledCount: Int {
+            rules.lazy.filter(\.enabled).count
+        }
+        var allEnabled: Bool {
+            ruleCount > 0 && enabledCount == ruleCount
+        }
+        var anyEnabled: Bool {
+            enabledCount > 0
+        }
+        var isPartial: Bool {
+            enabledCount > 0 && enabledCount < ruleCount
+        }
     }
 
     /// Lines before the first group header (top-of-file comments), kept verbatim.

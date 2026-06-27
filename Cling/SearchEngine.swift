@@ -56,16 +56,36 @@ struct ScoringConfig: Codable, Equatable {
 
 private var SC = ScoringConfig.load()
 
-private var scoreMatch: Int { SC.scoreMatch }
-private var gapStart: Int { SC.gapStart }
-private var gapExtend: Int { SC.gapExtend }
-private var bonusBoundary: Int { SC.bonusBoundary }
-private var bonusNonWord: Int { SC.bonusNonWord }
-private var bonusCamel123: Int { SC.bonusCamel }
-private var bonusConsec: Int { SC.bonusConsecutive }
-private var firstCharMul: Int { SC.firstCharMultiplier }
-private var bonusBdWhite: Int { SC.bonusWhitespace }
-private var bonusBdDelim: Int { SC.bonusDelimiter }
+private var scoreMatch: Int {
+    SC.scoreMatch
+}
+private var gapStart: Int {
+    SC.gapStart
+}
+private var gapExtend: Int {
+    SC.gapExtend
+}
+private var bonusBoundary: Int {
+    SC.bonusBoundary
+}
+private var bonusNonWord: Int {
+    SC.bonusNonWord
+}
+private var bonusCamel123: Int {
+    SC.bonusCamel
+}
+private var bonusConsec: Int {
+    SC.bonusConsecutive
+}
+private var firstCharMul: Int {
+    SC.firstCharMultiplier
+}
+private var bonusBdWhite: Int {
+    SC.bonusWhitespace
+}
+private var bonusBdDelim: Int {
+    SC.bonusDelimiter
+}
 
 func reloadScoringConfig() {
     SC = ScoringConfig.load()
@@ -263,7 +283,9 @@ private func simdFilterMasks(
 
 // MARK: - Byte-level Fuzzy Matcher
 
-@inline(__always) private func toLowerByte(_ b: UInt8) -> UInt8 { (b >= 0x41 && b <= 0x5A) ? b &+ 32 : b }
+@inline(__always) private func toLowerByte(_ b: UInt8) -> UInt8 {
+    (b >= 0x41 && b <= 0x5A) ? b &+ 32 : b
+}
 
 private func fuzzyScoreBytes(
     _ pat: UnsafeBufferPointer<UInt8>,
@@ -460,7 +482,9 @@ final class SearchEngine: @unchecked Sendable {
 
     private(set) var bnBoundaries: [UInt64] = [] // bit N = 1 means basename byte N is a word boundary (camelCase, delimiter, etc.)
 
-    var count: Int { lock.withLock { entries.count - free.count } }
+    var count: Int {
+        lock.withLock { entries.count - free.count }
+    }
 
     // MARK: - FTS Filesystem Walker
 
@@ -514,7 +538,9 @@ final class SearchEngine: @unchecked Sendable {
         lock.withLock { _removePath(path) }
     }
 
-    func hasPath(_ path: String) -> Bool { lock.withLock { ensurePathIndex(); return pathToID[path] != nil } }
+    func hasPath(_ path: String) -> Bool {
+        lock.withLock { ensurePathIndex(); return pathToID[path] != nil }
+    }
 
     func clear() {
         lock.withLock {
@@ -945,7 +971,8 @@ final class SearchEngine: @unchecked Sendable {
         let n = entries.count
         guard n > 0 else { sortedByPath = nil; lock.unlock(); return }
 
-        var sorted = [Int](unsafeUninitializedCapacity: n) { buf, count in
+        var sorted = [Int](unsafeUninitializedCapacity: n) {
+            buf, count in
             var i = 0
             while i < n {
                 buf[i] = i; i &+= 1
@@ -1588,8 +1615,8 @@ final class SearchEngine: @unchecked Sendable {
             let nfc = Array(s.precomposedStringWithCanonicalMapping.utf8)
             return (nfd, nfc != nfd ? nfc : nil)
         }
-        // Letters guaranteed present in EVERY normalization form (intersection), so the candidate
-        // prefilter / negation gate never drops a path that differs only by NFC/NFD spelling.
+        /// Letters guaranteed present in EVERY normalization form (intersection), so the candidate
+        /// prefilter / negation gate never drops a path that differs only by NFC/NFD spelling.
         @inline(__always) func needleMask(_ n: OpNeedle) -> UInt64 {
             let m1 = n.nfd.withUnsafeBufferPointer { letterMaskBytes($0) }
             guard let alt = n.nfc else { return m1 }
@@ -1626,7 +1653,9 @@ final class SearchEngine: @unchecked Sendable {
             if !negate, t.hasPrefix("in:"), t.count > 3 {
                 var path = String(t.dropFirst(3))
                 if path.hasPrefix("~") { path = homePath + path.dropFirst() }
-                while path.count > 1, path.hasSuffix("/") { path = String(path.dropLast()) }
+                while path.count > 1, path.hasSuffix("/") {
+                    path = String(path.dropLast())
+                }
                 // Mirror macOS firmlinks: /tmp, /var, /etc are exposed both as themselves and
                 // under /private. Index stores the resolved /private/* form, so add it.
                 if path == "/tmp" || path == "/var" || path == "/etc"
@@ -1661,7 +1690,9 @@ final class SearchEngine: @unchecked Sendable {
                 if !rest.isEmpty, !rest.contains("/") {
                     anchorStart = true; t = rest // single-segment /foo → start anchor
                 } else {
-                    while t.hasPrefix("/") { t = String(t.dropFirst()) } // legacy: strip leading slashes
+                    while t.hasPrefix("/") {
+                        t = String(t.dropFirst())
+                    } // legacy: strip leading slashes
                 }
             }
             if t.isEmpty { continue }
@@ -1703,6 +1734,10 @@ final class SearchEngine: @unchecked Sendable {
         let extTokenBytes: [[UInt8]] = extStrings.map { Array($0.utf8) }
         // Pre-resolve extension IDs for O(1) matching (UInt16 compare vs byte-by-byte suffix)
         let extTokenIDs: [UInt16] = extStrings.compactMap { extToID[$0] }
+        // Extensions never seen during indexing have no extID; match them by trailing bytes. These
+        // match disjunctively with extTokenIDs — a file matches if ANY queried extension fits.
+        let extUnknownBytes: [[UInt8]] = extStrings.filter { extToID[$0] == nil }.map { Array($0.utf8) }
+        let hasExtFilter = !extTokenBytes.isEmpty
         let dirSegments: [[UInt8]] = dirSegStrings.map { Array($0.utf8) }
         let negExtIDs: [UInt16] = negExtStrings.compactMap { extToID[$0] }
         let negExtUnknownBytes: [[UInt8]] = negExtStrings.filter { extToID[$0] == nil }.map { Array($0.utf8) }
@@ -1746,9 +1781,14 @@ final class SearchEngine: @unchecked Sendable {
         let tokenBytes: [[UInt8]]? = fuzzyTokens.count > 1 ? fuzzyTokens.map { Array($0.utf8) } : nil
         // Bitmask filter uses only ASCII letters/digits, which are identical across NFC/NFD, so no alt mask needed
         // Include extension token letters in the mask for candidate filtering
+        // Only a SINGLE extension folds its letters into the conjunctive candidate-prefilter mask.
+        // Multiple extensions match disjunctively (OR) — see extensionMatches — so AND-ing their
+        // combined letters into combinedMask would demand every extension's letters appear in one
+        // path at once (e.g. j from .json AND x from .xml AND z from .zsh), which matches nothing.
+        // With >1 extension the precise extID/suffix test in extensionMatches does the filtering.
         var extMask: UInt64 = 0
-        for ext in extTokenBytes {
-            ext.withUnsafeBufferPointer { extMask |= letterMaskBytes($0) }
+        if extTokenBytes.count == 1 {
+            extTokenBytes[0].withUnsafeBufferPointer { extMask |= letterMaskBytes($0) }
         }
         var dirMask: UInt64 = 0
         for seg in dirSegments {
@@ -1820,13 +1860,13 @@ final class SearchEngine: @unchecked Sendable {
         ].map { Array($0.utf8) }
         let libraryPrefix = Array((homePrefix + "/library").utf8)
 
-        // Path importance (higher = more relevant to the user), shared by the fuzzy scoring loop
-        // and the extension-only fast path:
-        //   4 = important user dir (Documents, Desktop, Downloads, Projects, Music, Movies, Pictures, iCloud, /Applications)
-        //   3 = other home visible
-        //   2 = home Library visible
-        //   1 = system/root visible
-        //   0 = hidden (dotfile/dotdir anywhere in the path)
+        /// Path importance (higher = more relevant to the user), shared by the fuzzy scoring loop
+        /// and the extension-only fast path:
+        ///   4 = important user dir (Documents, Desktop, Downloads, Projects, Music, Movies, Pictures, iCloud, /Applications)
+        ///   3 = other home visible
+        ///   2 = home Library visible
+        ///   1 = system/root visible
+        ///   0 = hidden (dotfile/dotdir anywhere in the path)
         @inline(__always)
         func computePathImportance(_ allBase: UnsafePointer<UInt8>, _ off: Int, _ len: Int, _ bnOff: Int) -> Int32 {
             let isHidden: Bool = !queryHasDot && {
@@ -1888,9 +1928,13 @@ final class SearchEngine: @unchecked Sendable {
         let folderPrefixSegCounts: [Int]? = allFolderPrefixes?.map { p -> Int in
             if p == "/" { return 1 }
             var s = p
-            while s.count > 1, s.hasSuffix("/") { s.removeLast() }
+            while s.count > 1, s.hasSuffix("/") {
+                s.removeLast()
+            }
             var n = 1
-            for c in s where c == "/" { n &+= 1 }
+            for c in s where c == "/" {
+                n &+= 1
+            }
             return n
         }
         let excludedPrefixBytes: [[UInt8]]? = excludedPrefixes?.map { Array($0.lowercased().utf8) }
@@ -1937,11 +1981,11 @@ final class SearchEngine: @unchecked Sendable {
 
         let isCancelled = cancelled ?? { false }
 
-        // Dir-segment match (shared by every candidate-filter path). A token "X/" matches a
-        // descendant via the literal substring "X/", AND — the folder-self-match fix — the
-        // directory X itself, whose stored path has no trailing slash (so its last segment
-        // equals X). Without the self-match, "releasenotes/" found files inside ReleaseNotes
-        // but never the folder itself.
+        /// Dir-segment match (shared by every candidate-filter path). A token "X/" matches a
+        /// descendant via the literal substring "X/", AND — the folder-self-match fix — the
+        /// directory X itself, whose stored path has no trailing slash (so its last segment
+        /// equals X). Without the self-match, "releasenotes/" found files inside ReleaseNotes
+        /// but never the folder itself.
         @inline(__always) func dirSegMatches(_ i: Int) -> Bool {
             guard !dirSegments.isEmpty else { return true }
             let off = byteOffsets[i]
@@ -1988,47 +2032,45 @@ final class SearchEngine: @unchecked Sendable {
             return true
         }
 
-        // Common filter: mask, extension ID, excluded IDs/prefixes
+        /// Disjunctive extension test shared by every candidate-filter path: a file matches if its
+        /// extID equals ANY queried extension (O(1)), or — for an extension never seen during
+        /// indexing (no extID) — its trailing bytes equal ANY such token. The OR is the whole point:
+        /// ".json .yaml .xml" should return files that are json OR yaml OR xml, not all three at once.
+        @inline(__always) func extensionMatches(_ eid: UInt16, _ off: Int, _ len: Int) -> Bool {
+            var ei = 0
+            while ei < extTokenIDs.count {
+                if eid == extTokenIDs[ei] { return true }
+                ei &+= 1
+            }
+            var ui = 0
+            while ui < extUnknownBytes.count {
+                let ext = extUnknownBytes[ui]
+                if len >= ext.count {
+                    var m = true
+                    var j = 0
+                    while j < ext.count {
+                        if allBytes[off + len - ext.count + j] != ext[j] { m = false; break }
+                        j &+= 1
+                    }
+                    if m { return true }
+                }
+                ui &+= 1
+            }
+            return false
+        }
+
+        /// Common filter: mask, extension ID, excluded IDs/prefixes
         @inline(__always) func applyBaseFilters(_ i: Int) -> Bool {
             if hasFuzzyQuery, masks[i] & combinedMask != combinedMask { return false }
             if !hasFuzzyQuery, masks[i] == 0 { return false }
-
-            // Extension ID prefilter: O(1) check instead of scoring all candidates
-            if !extTokenIDs.isEmpty {
-                let eid = extIDs[i]
-                var matched = false
-                var ei = 0
-                while ei < extTokenIDs.count {
-                    if eid == extTokenIDs[ei] { matched = true; break }
-                    ei &+= 1
-                }
-                if !matched { return false }
-            }
 
             if let excl = excludedIDs, excl.contains(i) { return false }
 
             let off = byteOffsets[i]
             let len = byteLengths[i]
 
-            // Byte suffix fallback for extensions not in extToID (rare extensions)
-            if extTokenIDs.count < extTokenBytes.count {
-                var allExtMatch = true
-                var ei = 0
-                while ei < extTokenBytes.count {
-                    let ext = extTokenBytes[ei]
-                    if len >= ext.count {
-                        var match = true
-                        var j = 0
-                        while j < ext.count {
-                            if allBytes[off + len - ext.count + j] != ext[j] { match = false; break }
-                            j &+= 1
-                        }
-                        if !match { allExtMatch = false; break }
-                    } else { allExtMatch = false; break }
-                    ei &+= 1
-                }
-                if !allExtMatch { return false }
-            }
+            // Extension filter (disjunctive): reject unless the entry matches ANY queried extension.
+            if hasExtFilter, !extensionMatches(extIDs[i], off, len) { return false }
 
             if let prefixes = excludedPrefixBytes {
                 var pi = 0
@@ -2053,7 +2095,7 @@ final class SearchEngine: @unchecked Sendable {
             return true
         }
 
-        // Full filter: base + dirsOnly + suffix (skipped when candidatePool already pre-filtered these)
+        /// Full filter: base + dirsOnly + suffix (skipped when candidatePool already pre-filtered these)
         @inline(__always) func applyAllFilters(_ i: Int) -> Bool {
             guard applyBaseFilters(i) else { return false }
 
@@ -2105,11 +2147,11 @@ final class SearchEngine: @unchecked Sendable {
             return false
         }
 
-        // Operator pass: positive literal/anchor terms (required) + negation/files-only
-        // (reject). Run once over the assembled candidate list so every filter path
-        // (full-scan, sorted-prefix, QuickFilter pool) honors it uniformly. `allBase` is the
-        // start of the shared lowercased byte buffer; valid for the lock's duration.
-        // Match an operator needle in either normalization form (NFD primary, NFC fallback).
+        /// Operator pass: positive literal/anchor terms (required) + negation/files-only
+        /// (reject). Run once over the assembled candidate list so every filter path
+        /// (full-scan, sorted-prefix, QuickFilter pool) honors it uniformly. `allBase` is the
+        /// start of the shared lowercased byte buffer; valid for the lock's duration.
+        /// Match an operator needle in either normalization form (NFD primary, NFC fallback).
         @inline(__always) func containsOp(_ pathPtr: UnsafePointer<UInt8>, _ len: Int, _ n: OpNeedle) -> Bool {
             if n.nfd.withUnsafeBufferPointer({ simdContains(pathPtr, count: len, needle: $0.baseAddress!, needleLen: $0.count) }) { return true }
             guard let alt = n.nfc else { return false }
@@ -2234,40 +2276,13 @@ final class SearchEngine: @unchecked Sendable {
                         } else {
                             if maskPtr[i] == 0 { i &+= 1; continue }
                         }
-                        if !extTokenIDs.isEmpty {
-                            let eid = self.extIDs[i]
-                            var matched = false
-                            var ei = 0
-                            while ei < extTokenIDs.count {
-                                if eid == extTokenIDs[ei] { matched = true; break }
-                                ei &+= 1
-                            }
-                            if !matched { i &+= 1; continue }
-                        }
                         if let excl = excludedIDs, excl.contains(i) { i &+= 1; continue }
 
                         let off = byteOffsets[i]
                         let len = byteLengths[i]
 
-                        // Byte suffix fallback for extensions not in extToID (rare extensions)
-                        if extTokenIDs.count < extTokenBytes.count {
-                            var allExtMatch = true
-                            var ei = 0
-                            while ei < extTokenBytes.count {
-                                let ext = extTokenBytes[ei]
-                                if len >= ext.count {
-                                    var match = true
-                                    var j = 0
-                                    while j < ext.count {
-                                        if allBytes[off + len - ext.count + j] != ext[j] { match = false; break }
-                                        j &+= 1
-                                    }
-                                    if !match { allExtMatch = false; break }
-                                } else { allExtMatch = false; break }
-                                ei &+= 1
-                            }
-                            if !allExtMatch { i &+= 1; continue }
-                        }
+                        // Extension filter (disjunctive): keep only entries matching ANY queried extension.
+                        if hasExtFilter, !extensionMatches(self.extIDs[i], off, len) { i &+= 1; continue }
 
                         if let prefixes = folderPrefixBytes {
                             var matched = false
@@ -2383,35 +2398,7 @@ final class SearchEngine: @unchecked Sendable {
                 var ci = 0
                 while ci < cands.count {
                     let id = cands[ci]
-                    // Try fast ID check first, fall back to byte suffix
-                    var matched = false
-                    if !extTokenIDs.isEmpty {
-                        var ei = 0
-                        while ei < extTokenIDs.count {
-                            if extIDs[id] == extTokenIDs[ei] { matched = true; break }
-                            ei &+= 1
-                        }
-                    }
-                    if !matched, extTokenIDs.count < extTokenBytes.count {
-                        let off = byteOffsets[id]
-                        let len = byteLengths[id]
-                        matched = true
-                        var ei = 0
-                        while ei < extTokenBytes.count {
-                            let ext = extTokenBytes[ei]
-                            if len >= ext.count {
-                                var ok = true
-                                var j = 0
-                                while j < ext.count {
-                                    if allBytes[off + len - ext.count + j] != ext[j] { ok = false; break }
-                                    j &+= 1
-                                }
-                                if !ok { matched = false; break }
-                            } else { matched = false; break }
-                            ei &+= 1
-                        }
-                    }
-                    if matched { extFiltered.append(id) }
+                    if extensionMatches(extIDs[id], byteOffsets[id], byteLengths[id]) { extFiltered.append(id) }
                     ci &+= 1
                 }
                 cands = extFiltered
@@ -2806,16 +2793,16 @@ final class SearchEngine: @unchecked Sendable {
 
     // MARK: - Search
 
-    // Sort dimensions (all descending: higher = better):
-    //   a = has_base:       1 if basename matched (non-slash queries), else 0
-    //   b = prefix_match:   1 if basename starts/ends with query or extension token
-    //   c = path_importance: 4=important user dir, 3=home, 2=library, 1=system, 0=hidden
-    //   d = basename:     fuzzy score of query vs basename (checked before tightness so boundary matches win)
-    //   e = tightness:    -(match window width), tighter = better
-    //   f = fullpath:     fuzzy score of query vs full path
-    //   g = dir_bonus:    +100 if dir and query ends with /, -100 if file, 0 if no /
-    //   h = depth:        -(segment count), shallower = better
-    //   i = shorter:      -(path byte length), shorter = better
+    /// Sort dimensions (all descending: higher = better):
+    ///   a = has_base:       1 if basename matched (non-slash queries), else 0
+    ///   b = prefix_match:   1 if basename starts/ends with query or extension token
+    ///   c = path_importance: 4=important user dir, 3=home, 2=library, 1=system, 0=hidden
+    ///   d = basename:     fuzzy score of query vs basename (checked before tightness so boundary matches win)
+    ///   e = tightness:    -(match window width), tighter = better
+    ///   f = fullpath:     fuzzy score of query vs full path
+    ///   g = dir_bonus:    +100 if dir and query ends with /, -100 if file, 0 if no /
+    ///   h = depth:        -(segment count), shallower = better
+    ///   i = shorter:      -(path byte length), shorter = better
     private struct SortKey: Comparable {
         let a, b, c, d, e, f, g, h, i: Int32
 
@@ -2885,7 +2872,7 @@ final class SearchEngine: @unchecked Sendable {
     /// Lock for thread-safe mutations during parallel walks
     private let lock = NSLock()
 
-    // Per-engine accessors that delegate to global state
+    /// Per-engine accessors that delegate to global state
     private var extToID: [String: UInt16] {
         get { Self.globalExtToID }
         set { Self.globalExtToID = newValue }

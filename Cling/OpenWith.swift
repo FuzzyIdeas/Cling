@@ -60,66 +60,9 @@ struct OpenWithPickerView: View {
     let fileURLs: [URL]
     /// When set, the unfiltered list shows these apps (a shared-letter group) instead of all common
     /// apps; typing still searches every installed app.
-    var initialApps: [URL]? = nil
+    var initialApps: [URL]?
 
     @Environment(\.dismiss) var dismiss
-    @State private var fuzzy: FuzzyClient = FUZZY
-    @State private var filterText = ""
-    @State private var keyMonitor: Any?
-    @FocusState private var filterFocused: Bool
-
-    private func matchedApps(_ filter: String) -> [URL] {
-        if filter.isEmpty {
-            return initialApps ?? fuzzy.commonOpenWithApps
-        }
-        let query = filter.lowercased()
-        return fuzzy.installedApps
-            .compactMap { url -> (URL, Int)? in
-                let name = url.lastPathComponent.ns.deletingPathExtension.lowercased()
-                guard let score = fuzzyMatchScore(query: query, target: name) else { return nil }
-                return (url, score)
-            }
-            .sorted(by: { $0.1 > $1.1 })
-            .map(\.0)
-    }
-
-    private var apps: [URL] { matchedApps(filterText) }
-
-    func openWithApp(_ app: URL) {
-        RH.trackRun(fileURLs.compactMap(\.existingFilePath))
-        NSWorkspace.shared.open(
-            fileURLs, withApplicationAt: app, configuration: .init(),
-            completionHandler: { _, _ in }
-        )
-        dismiss()
-    }
-
-    func appButton(_ app: URL, number: Int?) -> some View {
-        Button(action: { openWithApp(app) }) {
-            HStack(spacing: 8) {
-                numberBadge(number)
-                SwiftUI.Image(nsImage: icon(for: app))
-                Text(app.lastPathComponent.ns.deletingPathExtension)
-            }
-            .padding(.leading, 4)
-            .padding(.trailing, 24)
-            .padding(.vertical, 6)
-            .frame(minWidth: 300, maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    @ViewBuilder
-    private func numberBadge(_ number: Int?) -> some View {
-        if let number {
-            Text("\(number)")
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .frame(width: 17, height: 17)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-        } else {
-            Color.clear.frame(width: 17, height: 17)
-        }
-    }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -150,6 +93,66 @@ struct OpenWithPickerView: View {
         .onDisappear { removeKeyMonitor() }
     }
 
+    func appButton(_ app: URL, number: Int?) -> some View {
+        Button(action: { openWithApp(app) }) {
+            HStack(spacing: 8) {
+                numberBadge(number)
+                SwiftUI.Image(nsImage: icon(for: app))
+                Text(app.lastPathComponent.ns.deletingPathExtension)
+            }
+            .padding(.leading, 4)
+            .padding(.trailing, 24)
+            .padding(.vertical, 6)
+            .frame(minWidth: 300, maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    func openWithApp(_ app: URL) {
+        RH.trackRun(fileURLs.compactMap(\.existingFilePath))
+        NSWorkspace.shared.open(
+            fileURLs, withApplicationAt: app, configuration: .init(),
+            completionHandler: { _, _ in }
+        )
+        dismiss()
+    }
+
+    @State private var fuzzy: FuzzyClient = FUZZY
+    @State private var filterText = ""
+    @State private var keyMonitor: Any?
+    @FocusState private var filterFocused: Bool
+
+    private var apps: [URL] {
+        matchedApps(filterText)
+    }
+
+    @ViewBuilder
+    private func numberBadge(_ number: Int?) -> some View {
+        if let number {
+            Text("\(number)")
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 17, height: 17)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+        } else {
+            Color.clear.frame(width: 17, height: 17)
+        }
+    }
+
+    private func matchedApps(_ filter: String) -> [URL] {
+        if filter.isEmpty {
+            return initialApps ?? fuzzy.commonOpenWithApps
+        }
+        let query = filter.lowercased()
+        return fuzzy.installedApps
+            .compactMap { url -> (URL, Int)? in
+                let name = url.lastPathComponent.ns.deletingPathExtension.lowercased()
+                guard let score = fuzzyMatchScore(query: query, target: name) else { return nil }
+                return (url, score)
+            }
+            .sorted(by: { $0.1 > $1.1 })
+            .map(\.0)
+    }
+
     /// Captures bare 1–9 to open that row; letters and everything else keep flowing to the filter
     /// field. Runs as a local monitor (before the field) and reads the live filter via a binding.
     private func installKeyMonitor() {
@@ -177,28 +180,7 @@ struct OpenWithPickerView: View {
 struct OpenWithActionButtons: View {
     let selectedResults: Set<FilePath>
 
-    @State private var fuzzy: FuzzyClient = FUZZY
-    @ObservedObject private var km = KM
-    @Default(.toolbarLabelStyle) private var labelStyle
-    @Default(.toolbarDensity) private var density
-    @State private var comboHintVisible = false
-    @State private var pillHintsVisible = false
-
-    /// ⌘ held: surfaces the "⌘ + ⌥" discoverability hint and the leading button's ⌘O, without
-    /// flooding the row with every app's badge.
-    private var cmdHeld: Bool { km.lcmd || km.rcmd }
-    /// ⌥ held alongside ⌘: the actual combo for the app pills, so their ⌘⌥<key> badges reveal.
-    private var optHeld: Bool { km.lalt || km.ralt }
-    private var cmdOptHeld: Bool { cmdHeld && optHeld }
-
-    /// Apps grouped by their first-letter shortcut, ordered by name.
-    private var appGroups: [(letter: Character, apps: [URL])] {
-        Dictionary(grouping: fuzzy.openWithAppShortcuts.keys, by: { fuzzy.openWithAppShortcuts[$0]! })
-            .map { (letter: $0.key, apps: $0.value.sorted(by: \.lastPathComponent)) }
-            .sorted { ($0.apps.first?.lastPathComponent ?? "") < ($1.apps.first?.lastPathComponent ?? "") }
-    }
-
-    @ViewBuilder var buttons: some View {
+    var buttons: some View {
         ForEach(appGroups, id: \.letter) { group in
             if group.apps.count == 1, let app = group.apps.first {
                 appPill(app, letter: group.letter)
@@ -213,9 +195,65 @@ struct OpenWithActionButtons: View {
         }
     }
 
-    private func openApp(_ app: URL) {
-        RH.trackRun(selectedResults)
-        NSWorkspace.shared.open(selectedResults.map(\.url), withApplicationAt: app, configuration: .init(), completionHandler: { _, _ in })
+    var body: some View {
+        HStack(spacing: density.spacing) {
+            OpenWithMenuView(fileURLs: selectedResults.map(\.url), hintVisible: comboHintVisible)
+                .disabled(selectedResults.isEmpty || fuzzy.openWithAppShortcuts.isEmpty)
+
+            Divider().frame(height: 16)
+
+            if fuzzy.openWithAppShortcuts.isEmpty {
+                Text("Open with app hotkeys will appear here")
+                    .foregroundStyle(.secondary)
+                    .font(.system(size: density.fontSize))
+            } else {
+                if comboHintVisible {
+                    ModifierComboHint(secondary: "⌥", secondaryHeld: optHeld, tint: ShortcutTint.apps)
+                        .transition(.opacity)
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: density.spacing) { buttons }
+                        .padding(.vertical, ActionRowLayout.badgeClearance)
+                        .padding(.trailing, 6)
+                }
+                Divider().frame(height: 16)
+                ShareButton(urls: selectedResults.map(\.url))
+                    .bold()
+            }
+        }
+        .font(.system(size: density.fontSize))
+        .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
+        .lineLimit(1)
+        .revealShortcutHints(held: cmdHeld, visible: $comboHintVisible)
+        .revealShortcutHints(held: cmdOptHeld, visible: $pillHintsVisible, instant: comboHintVisible)
+    }
+
+    @State private var fuzzy: FuzzyClient = FUZZY
+    @ObservedObject private var km = KM
+    @State private var comboHintVisible = false
+    @State private var pillHintsVisible = false
+
+    @Default(.toolbarLabelStyle) private var labelStyle
+    @Default(.toolbarDensity) private var density
+
+    /// ⌘ held: surfaces the "⌘ + ⌥" discoverability hint and the leading button's ⌘O, without
+    /// flooding the row with every app's badge.
+    private var cmdHeld: Bool {
+        km.lcmd || km.rcmd
+    }
+    /// ⌥ held alongside ⌘: the actual combo for the app pills, so their ⌘⌥<key> badges reveal.
+    private var optHeld: Bool {
+        km.lalt || km.ralt
+    }
+    private var cmdOptHeld: Bool {
+        cmdHeld && optHeld
+    }
+
+    /// Apps grouped by their first-letter shortcut, ordered by name.
+    private var appGroups: [(letter: Character, apps: [URL])] {
+        Dictionary(grouping: fuzzy.openWithAppShortcuts.keys, by: { fuzzy.openWithAppShortcuts[$0]! })
+            .map { (letter: $0.key, apps: $0.value.sorted(by: \.lastPathComponent)) }
+            .sorted { ($0.apps.first?.lastPathComponent ?? "") < ($1.apps.first?.lastPathComponent ?? "") }
     }
 
     private func appPill(_ app: URL, letter: Character?) -> some View {
@@ -264,37 +302,9 @@ struct OpenWithActionButtons: View {
         .help("Open with: \(apps.map(\.lastPathComponent.ns.deletingPathExtension).joined(separator: ", "))")
     }
 
-    var body: some View {
-        HStack(spacing: density.spacing) {
-            OpenWithMenuView(fileURLs: selectedResults.map(\.url), hintVisible: comboHintVisible)
-                .disabled(selectedResults.isEmpty || fuzzy.openWithAppShortcuts.isEmpty)
-
-            Divider().frame(height: 16)
-
-            if fuzzy.openWithAppShortcuts.isEmpty {
-                Text("Open with app hotkeys will appear here")
-                    .foregroundStyle(.secondary)
-                    .font(.system(size: density.fontSize))
-            } else {
-                if comboHintVisible {
-                    ModifierComboHint(secondary: "⌥", secondaryHeld: optHeld, tint: ShortcutTint.apps)
-                        .transition(.opacity)
-                }
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: density.spacing) { buttons }
-                        .padding(.vertical, ActionRowLayout.badgeClearance)
-                        .padding(.trailing, 6)
-                }
-                Divider().frame(height: 16)
-                ShareButton(urls: selectedResults.map(\.url))
-                    .bold()
-            }
-        }
-        .font(.system(size: density.fontSize))
-        .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
-        .lineLimit(1)
-        .revealShortcutHints(held: cmdHeld, visible: $comboHintVisible)
-        .revealShortcutHints(held: cmdOptHeld, visible: $pillHintsVisible, instant: comboHintVisible)
+    private func openApp(_ app: URL) {
+        RH.trackRun(selectedResults)
+        NSWorkspace.shared.open(selectedResults.map(\.url), withApplicationAt: app, configuration: .init(), completionHandler: { _, _ in })
     }
 
 }

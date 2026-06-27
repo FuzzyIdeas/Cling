@@ -45,6 +45,8 @@ let sortComparator: MDQuerySortComparatorFunction = { values1, values2, context 
 /// ignore checks concurrently or assign results out of order.
 let recentsFilterQueue = DispatchQueue(label: "fyi.lowtechguys.cling.recents-filter", qos: .userInitiated)
 
+// MARK: - RecentsFilterState
+
 /// Main-actor snapshot of the state `filterRecentPaths` needs, so the filtering can run off-main.
 struct RecentsFilterState {
     let removedFiles: Set<String>
@@ -184,8 +186,8 @@ extension MDItem {
     }
 }
 
-// Filter to files modified in the last 7 days. $time.now(-604800) = 7 days in seconds.
-// Note: $time.today(-7) doesn't work with MDQueryCreate, but $time.now(-seconds) does.
+/// Filter to files modified in the last 7 days. $time.now(-604800) = 7 days in seconds.
+/// Note: $time.today(-7) doesn't work with MDQueryCreate, but $time.now(-seconds) does.
 let queryString =
     #"((kMDItemSupportFileType != "MDSystemFile")) && ((kMDItemFSContentChangeDate >= $time.now(-604800)) && ((kMDItemContentTypeTree = public.content) || (kMDItemContentTypeTree = "com.microsoft.*"cdw) || (kMDItemContentTypeTree = public.archive)))"#
 
@@ -197,7 +199,7 @@ private let icloudPrefixBytes: [UInt8] = Array("Library/Mobile Documents/com~app
 private let slashByte = UInt8(ascii: "/")
 private let dotByte = UInt8(ascii: ".")
 
-// Exact dotfiles in $HOME worth showing (e.g. ~/.<name>)
+/// Exact dotfiles in $HOME worth showing (e.g. ~/.<name>)
 private let allowedDotfiles: [[UInt8]] = [
     ".gitconfig", ".gitignore", ".zshrc", ".bashrc", ".bash_profile",
     ".zprofile", ".profile", ".vimrc", ".tmux.conf", ".npmrc", ".env",
@@ -205,7 +207,7 @@ private let allowedDotfiles: [[UInt8]] = [
     ".wgetrc", ".gemrc", ".tool-versions", ".fsignore",
 ].map { Array($0.utf8) }
 
-// Dotdirs where only direct children (depth 1) are relevant (config files, not caches)
+/// Dotdirs where only direct children (depth 1) are relevant (config files, not caches)
 private let allowedShallowDotdirs: [[UInt8]] = [
     ".config/", ".ssh/", ".aws/", ".kube/", ".gnupg/", ".docker/",
 ].map { Array($0.utf8) }
@@ -236,7 +238,6 @@ func isRelevantDefaultPath(_ path: String) -> Bool {
 
     var result = false
     path.utf8.withContiguousStorageIfAvailable { buf in
-
         // /Applications/*.app (top-level bundles only)
         if utf8HasPrefix(buf, applicationsBytes), utf8HasSuffix(buf, dotAppBytes) {
             // Check no slash after "/Applications/"

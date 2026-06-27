@@ -7,7 +7,7 @@ struct QuerySyntaxCheatsheet: View {
         let id = UUID()
         let syntax: String
         let desc: String
-        var example: String? = nil
+        var example: String?
     }
 
     struct Group: Identifiable {

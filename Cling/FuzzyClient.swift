@@ -19,7 +19,9 @@ let fsignoreString: String = (HOME / ".fsignore").string
 /// Fast in-memory blocklist for paths that should never be indexed, regardless of scope.
 /// Rebuilt from user settings. Checked with simple prefix/contains matching on UTF-8 bytes for speed.
 final class PathBlocklist: @unchecked Sendable {
-    init() { rebuild() }
+    init() {
+        rebuild()
+    }
 
     static let shared = PathBlocklist()
 
@@ -34,7 +36,9 @@ final class PathBlocklist: @unchecked Sendable {
     private(set) var allowPrefixesStr: [String] = []
     private(set) var allowComponentsStr: [String] = []
 
-    var hasAllows: Bool { !allowPrefixes.isEmpty || !allowComponents.isEmpty }
+    var hasAllows: Bool {
+        !allowPrefixes.isEmpty || !allowComponents.isEmpty
+    }
 
     func rebuild() {
         let (blockPrefixes, allowPfx) = Self.split(Defaults[.blockedPrefixes])
@@ -127,10 +131,14 @@ func pathAllowLength(_ path: String) -> Int {
 }
 
 /// Whether a path matches a block rule (ignoring exceptions).
-func pathBlockMatch(_ path: String) -> Bool { pathBlockLength(path) > 0 }
+func pathBlockMatch(_ path: String) -> Bool {
+    pathBlockLength(path) > 0
+}
 
 /// Whether a path matches an allow exception (`!` rule).
-func pathAllowMatch(_ path: String) -> Bool { pathAllowLength(path) > 0 }
+func pathAllowMatch(_ path: String) -> Bool {
+    pathAllowLength(path) > 0
+}
 
 /// Blocked when a block rule matches and no allow exception is at least as specific. The most specific
 /// (longest) matching rule wins, so a deep block can re-exclude inside a shallower allowed area.
@@ -176,6 +184,103 @@ private func suffixIsPrefix(of r: String, in s: String) -> Bool {
     return false
 }
 
+/// Diagnose why `rawPath` is or isn't in the index: existence on disk, current index membership, the scope
+/// it maps to and whether that scope is enabled, the path blocklist, and the gitignore-style ignore files —
+/// mirroring the order the indexer applies them (see `cleanRecentsEngine` and `SearchEngine.walkDirectory`).
+/// Returns a human-readable multi-line report for one path. Nonisolated so the CLI handler can call it off
+/// the main actor; every predicate it touches is thread-safe (Defaults reads, pure path matchers).
+nonisolated func explainPathExclusion(_ rawPath: String, coord: SearchCoordinator) -> String {
+    /// The index stores firmlink-resolved paths (/etc -> /private/etc, and the reverse), so probe both forms.
+    func firmlinkVariants(_ p: String) -> [String] {
+        var out = [p]
+        for fl in ["/tmp", "/var", "/etc"] {
+            if p == fl || p.hasPrefix(fl + "/") { out.append("/private" + p) }
+            if p == "/private" + fl || p.hasPrefix("/private" + fl + "/") { out.append(String(p.dropFirst("/private".count))) }
+        }
+        return out
+    }
+    let variants = firmlinkVariants(rawPath)
+    var lines = [rawPath]
+
+    // 1. Existence on disk.
+    var isDir: ObjCBool = false
+    let exists = variants.contains { FileManager.default.fileExists(atPath: $0, isDirectory: &isDir) }
+    lines.append("  on disk:   " + (exists ? "yes (\(isDir.boolValue ? "directory" : "file"))" : "NO — does not exist"))
+
+    // 2. Currently in the index (ground truth)?
+    let engines = Set(variants.flatMap { coord.hasPath($0) })
+    let indexed = !engines.isEmpty
+    lines.append("  indexed:   " + (indexed ? "yes — \(engines.sorted().joined(separator: ", "))" : "no"))
+
+    // 3. Scope membership + whether that scope is enabled.
+    let enabledScopes = Set(Defaults[.searchScopes])
+    let home = HOME.string
+    let library = home + "/Library"
+    let (scope, scopeNote): (SearchScope?, String) = {
+        if let (s, root) = ScopeIgnore.scopeAndRoot(forPath: rawPath) { return (s, " (root \(root))") }
+        if rawPath == library || rawPath.hasPrefix(library + "/") { return (.library, "") }
+        if rawPath == home || rawPath.hasPrefix(home + "/") { return (.home, "") }
+        return (nil, "")
+    }()
+    if let scope {
+        lines.append("  scope:     \(scope.rawValue)\(scopeNote) — \(enabledScopes.contains(scope) ? "enabled" : "DISABLED")")
+    } else {
+        lines.append("  scope:     none — not under any search scope (only /Volumes/* is also indexed)")
+    }
+
+    // 4. Path blocklist (built-in block rules + `!` exceptions).
+    let blocked = variants.contains { isPathBlocked($0) }
+    let blockHit = variants.contains { pathBlockMatch($0) }
+    let allowHit = variants.contains { pathAllowMatch($0) }
+    if blocked {
+        lines.append("  blocklist: BLOCKED by a block rule")
+    } else if blockHit, allowHit {
+        lines.append("  blocklist: matched a block rule, overridden by a more specific ! exception")
+    } else {
+        lines.append("  blocklist: no match")
+    }
+
+    // 5. Gitignore-style ignore files. The matcher anchors patterns to the ignore file's root, so only query
+    // it for strict descendants (querying the root itself or a non-descendant trips a precondition).
+    var ignoreReason: String?
+    if let (s, root) = ScopeIgnore.scopeAndRoot(forPath: rawPath), rawPath.hasPrefix(root + "/"),
+       let f = ScopeIgnore.activeFile(for: s), rawPath.isIgnored(in: f, root: root)
+    {
+        ignoreReason = "ignored by \((f as NSString).lastPathComponent) (scope \(s.rawValue), root \(root))"
+    } else if rawPath.hasPrefix(home + "/"), fsignore.exists, rawPath.isIgnored(in: fsignoreString) {
+        ignoreReason = "ignored by ~/.fsignore"
+    } else if rawPath.hasPrefix("/Volumes/") {
+        let parts = rawPath.dropFirst("/Volumes/".count).split(separator: "/", maxSplits: 1)
+        if let volName = parts.first {
+            let vIgnore = "/Volumes/\(volName)/.fsignore"
+            if FileManager.default.fileExists(atPath: vIgnore), rawPath.isIgnored(in: vIgnore) {
+                ignoreReason = "ignored by /Volumes/\(volName)/.fsignore"
+            }
+        }
+    }
+    lines.append("  ignore:    " + (ignoreReason ?? "not ignored"))
+
+    // 6. Verdict (first applicable cause, following the indexer's prune order).
+    let verdict = if indexed {
+        "INDEXED — searchable now"
+    } else if !exists {
+        "NOT INDEXED — path does not exist on disk"
+    } else if let scope, !enabledScopes.contains(scope) {
+        "EXCLUDED — the \(scope.rawValue) scope is disabled in Settings"
+    } else if scope == nil, !rawPath.hasPrefix("/Volumes/") {
+        "EXCLUDED — not under any enabled search scope"
+    } else if let ignoreReason {
+        "EXCLUDED — \(ignoreReason)"
+    } else if blocked {
+        "EXCLUDED — blocked by the path blocklist"
+    } else {
+        "NOT INDEXED — no exclusion rule matched the path itself; the scope may still be indexing, or an ancestor directory is excluded"
+    }
+    lines.append("  => \(verdict)")
+
+    return lines.joined(separator: "\n")
+}
+
 /// Bounds on the in-memory live-change history. To stay searchable over a long window (find a change from a
 /// day ago) without growing without limit, the history is deduplicated by (path, kind) keeping only the
 /// latest event per key, with a generous hard cap on distinct entries as the final backstop. Compaction is
@@ -210,7 +315,9 @@ enum SortField: String, CaseIterable, Identifiable {
     case date
     case kind
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 }
 
 private func computeEnabledVolumes(mounted: [FilePath], disabled: [FilePath]) -> [FilePath] {
@@ -235,7 +342,9 @@ class FuzzyClient {
             case removed = "-"
             case modified = "~"
 
-            static func < (lhs: Kind, rhs: Kind) -> Bool { lhs.rawValue < rhs.rawValue }
+            static func < (lhs: Kind, rhs: Kind) -> Bool {
+                lhs.rawValue < rhs.rawValue
+            }
         }
 
         let id = UUID()
@@ -243,8 +352,12 @@ class FuzzyClient {
         let kind: Kind
         let date = Date()
 
-        var name: String { (path as NSString).lastPathComponent }
-        var dir: String { (path as NSString).deletingLastPathComponent }
+        var name: String {
+            (path as NSString).lastPathComponent
+        }
+        var dir: String {
+            (path as NSString).deletingLastPathComponent
+        }
     }
 
     struct ActivityEntry: Identifiable {
@@ -341,7 +454,9 @@ class FuzzyClient {
     @ObservationIgnored var ongoingOperationCounts: [String: Int] = [:]
     var ongoingOperationsList: [(key: String, message: String)] = []
 
-    @ObservationIgnored var appDiscoveryQuery: MetaQuery? { didSet { _ = oldValue } }
+    @ObservationIgnored var appDiscoveryQuery: MetaQuery? {
+        didSet { _ = oldValue }
+    }
 
     var backgroundIndexing = false {
         didSet {
@@ -403,15 +518,17 @@ class FuzzyClient {
         return result
     }
 
-    var externalVolumes: [FilePath] = initialVolumes { didSet {
-        registerNewVolumes()
-        let mounted = Set(externalVolumes)
-        disconnectedVolumes = Set(Defaults[.indexedVolumePaths].filter { !mounted.contains($0) && !disabledVolumes.contains($0) })
-        enabledVolumes = computeEnabledVolumes(mounted: externalVolumes, disabled: disabledVolumes)
-        readOnlyVolumes = externalVolumes.filter(\.url.volumeIsReadOnly)
-        externalIndexes = getExternalIndexes()
-        indexStaleExternalVolumes()
-    }}
+    var externalVolumes: [FilePath] = initialVolumes {
+        didSet {
+            registerNewVolumes()
+            let mounted = Set(externalVolumes)
+            disconnectedVolumes = Set(Defaults[.indexedVolumePaths].filter { !mounted.contains($0) && !disabledVolumes.contains($0) })
+            enabledVolumes = computeEnabledVolumes(mounted: externalVolumes, disabled: disabledVolumes)
+            readOnlyVolumes = externalVolumes.filter(\.url.volumeIsReadOnly)
+            externalIndexes = getExternalIndexes()
+            indexStaleExternalVolumes()
+        }
+    }
 
     var volumeFilter: FilePath? {
         didSet {
@@ -502,10 +619,16 @@ class FuzzyClient {
         }
     }
 
-    @ObservationIgnored var querySendTask: DispatchWorkItem? { didSet { oldValue?.cancel() } }
-    @ObservationIgnored var indexConsolidationTask: DispatchWorkItem? { didSet { oldValue?.cancel() } }
+    @ObservationIgnored var querySendTask: DispatchWorkItem? {
+        didSet { oldValue?.cancel() }
+    }
+    @ObservationIgnored var indexConsolidationTask: DispatchWorkItem? {
+        didSet { oldValue?.cancel() }
+    }
 
-    var indexExists: Bool { scopeIndexesExist }
+    var indexExists: Bool {
+        scopeIndexesExist
+    }
     var indexIsStale: Bool {
         let scopes = Defaults[.searchScopes]
         return scopes.contains { scope in
@@ -514,8 +637,12 @@ class FuzzyClient {
         }
     }
 
-    @ObservationIgnored var computeOpenWithTask: DispatchWorkItem? { didSet { oldValue?.cancel() } }
-    @ObservationIgnored var updateDefaultResultsTask: DispatchWorkItem? { didSet { oldValue?.cancel() } }
+    @ObservationIgnored var computeOpenWithTask: DispatchWorkItem? {
+        didSet { oldValue?.cancel() }
+    }
+    @ObservationIgnored var updateDefaultResultsTask: DispatchWorkItem? {
+        didSet { oldValue?.cancel() }
+    }
 
     @ObservationIgnored var emptyQuery: Bool {
         query.isEmpty && folderFilter == nil && quickFilter == nil
@@ -1254,7 +1381,7 @@ class FuzzyClient {
                     if path.exists {
                         let isDir = path.isDir
                         if path.starts(with: HOME), pathStr.isIgnored(in: fsignoreString) { return }
-                        for volume in self.enabledVolumes where pathStr.hasPrefix(volume.string + "/") {
+                        for volume in enabledVolumes where pathStr.hasPrefix(volume.string + "/") {
                             let vfsignore = volume / ".fsignore"
                             if vfsignore.exists, pathStr.isIgnored(in: vfsignore.string) { return }
                             break
@@ -1320,7 +1447,7 @@ class FuzzyClient {
         guard validReq(), !indexing || indexedCount > 0 else { return }
 
         // Combine user query with QuickFilter's queryString
-        var query = constructQuery(self.query)
+        var query = constructQuery(query)
         if let qf = quickFilter {
             // The filter wraps the user's typed query: prefix (constraints + Prepend) before it,
             // suffix (Append) after it. Order matters for the fuzzy word ranking.
@@ -2209,8 +2336,7 @@ func commonApplications(for urls: [URL]) -> [URL] {
     }
     commonApps = commonApps.filter { $0.lastPathComponent != "Google Chrome for Testing.app" }
     let commonAppsDict: [String: [URL]] = commonApps.group(by: \.bundleIdentifier)
-    let uniqueAppsByShortestPath = commonAppsDict.values.compactMap { $0.min(by: \.path.count) }
-    return uniqueAppsByShortestPath
+    return commonAppsDict.values.compactMap { $0.min(by: \.path.count) }
 }
 
 @MainActor let FUZZY = FuzzyClient()

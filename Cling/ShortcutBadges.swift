@@ -47,7 +47,9 @@ struct ShortcutCoachmark: View {
 
     @Environment(\.colorScheme) private var scheme
 
-    private var accent: Color { .accentColor }
+    private var accent: Color {
+        .accentColor
+    }
 
 }
 
@@ -94,6 +96,6 @@ enum ShortcutTint {
     static let action = Color.blue
     static let alternate = Color.orange
     static let apps = Color.red
-    // A darker, less saturated red so it stays distinct from Apps and legible on light backgrounds.
+    /// A darker, less saturated red so it stays distinct from Apps and legible on light backgrounds.
     static let scripts = Color(red: 0.62, green: 0.26, blue: 0.26)
 }

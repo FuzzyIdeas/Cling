@@ -15,9 +15,13 @@ enum ScopeIgnore {
     /// Scopes that use a separate, rooted ignore file (everything not already covered by `~/.fsignore`).
     static let rootedScopes: [SearchScope] = [.applications, .system, .root]
 
-    static var dir: FilePath { indexFolder / "ignores" }
+    static var dir: FilePath {
+        indexFolder / "ignores"
+    }
 
-    static func file(for scope: SearchScope) -> FilePath { dir / "\(scope.rawValue).fsignore" }
+    static func file(for scope: SearchScope) -> FilePath {
+        dir / "\(scope.rawValue).fsignore"
+    }
 
     static func content(for scope: SearchScope) -> String {
         (try? String(contentsOf: file(for: scope).url, encoding: .utf8)) ?? ""

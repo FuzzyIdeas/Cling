@@ -50,7 +50,9 @@ struct TransfersPanel: View {
     @State private var now = Date()
     @State private var ticker: Task<Void, Never>?
 
-    private var activeCount: Int { manager.sessions.count }
+    private var activeCount: Int {
+        manager.sessions.count
+    }
 
     /// Tick `now` only while the popover is on screen, and only as often as needed: every second
     /// when the soonest expiry is under an hour out, every minute otherwise. Cancelled on disappear
@@ -141,7 +143,9 @@ private struct TransferRow: View {
         .opacity(session.stopped ? 0.65 : 1)
     }
 
-    private var accent: Color { session.stopped ? .secondary : .accentColor }
+    private var accent: Color {
+        session.stopped ? .secondary : .accentColor
+    }
 
     @ViewBuilder private var statusPill: some View {
         if session.stopped {

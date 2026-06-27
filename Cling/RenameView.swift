@@ -68,7 +68,9 @@ struct RenameView: View {
     @State private var text: String
     @State private var errorMessage: String? = nil
 
-    private var singleFile: Bool { originalPaths.count == 1 }
+    private var singleFile: Bool {
+        originalPaths.count == 1
+    }
 
     private func doRename() {
         if singleFile {

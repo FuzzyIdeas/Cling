@@ -202,43 +202,16 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         return parts.joined(separator: ", ")
     }
 
-    var subtitle: String { subtitleText() }
+    var subtitle: String {
+        subtitleText()
+    }
 
     /// Subtitle for the compact filter menu. Caps the extension and folder lists so a filter with
     /// dozens of extensions doesn't stretch the menu; native menu titles ignore SwiftUI width/truncation
     /// modifiers, so the only way to bound the width is to shorten the string. The full text stays
     /// available via the menu item's tooltip (`.help`).
-    var menuSubtitle: String { subtitleText(maxExtensions: 6, maxFolders: 3) }
-
-    private func subtitleText(maxExtensions: Int? = nil, maxFolders: Int? = nil) -> String {
-        var parts = [String]()
-        if let extensions {
-            var exts = extensions.replacingOccurrences(of: "|", with: " ").replacingOccurrences(of: ",", with: " ")
-                .split(separator: " ").filter { $0.hasPrefix(".") }.map { "*\($0)" }
-            if let maxExtensions, exts.count > maxExtensions {
-                let extra = exts.count - maxExtensions
-                exts = Array(exts.prefix(maxExtensions)) + ["+\(extra) more"]
-            }
-            parts.append(exts.joined(separator: " "))
-        }
-        switch match {
-        case .files: parts.append("files only")
-        case .folders: parts.append("folders only")
-        case .both: break
-        }
-        if let exclude, !exclude.isEmpty { parts.append("not " + exclude) }
-        if let preQuery { parts.append(preQuery) }
-        if let postQuery { parts.append("...\(postQuery)") }
-        if let folders, !folders.isEmpty {
-            var names = folders.map { FuzzyClient.friendlyName(for: $0) }
-            if let maxFolders, names.count > maxFolders {
-                let extra = names.count - maxFolders
-                names = Array(names.prefix(maxFolders)) + ["+\(extra) more"]
-            }
-            parts.append("in \(names.joined(separator: ", "))")
-        }
-        if let maxDepth { parts.append("depth ≤ \(maxDepth)") }
-        return parts.joined(separator: ", ")
+    var menuSubtitle: String {
+        subtitleText(maxExtensions: 6, maxFolders: 3)
     }
 
     /// The part of the query that goes BEFORE the user's typed search: the raw query when set,
@@ -266,10 +239,14 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     /// Directories-only is the one facet with no query token, so it is preserved even in raw mode
     /// (where the Match picker is hidden). Raw filters created fresh default to `.both`, so they
     /// are unaffected; only explicitly-Folders or legacy-migrated filters carry `.folders`.
-    var searchDirsOnly: Bool { match == .folders }
+    var searchDirsOnly: Bool {
+        match == .folders
+    }
 
     /// Extensions to pre-narrow the candidate pool. Raw filters skip the pool.
-    var poolExtensions: String? { rawQuery == nil ? extensions : nil }
+    var poolExtensions: String? {
+        rawQuery == nil ? extensions : nil
+    }
 
     func withKey(_ key: Character?) -> QuickFilter {
         QuickFilter(
@@ -320,6 +297,37 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
             extensions: extensions, exclude: exclude, match: match,
             folders: folders?.map { abbreviateHome($0.string, home: home) } ?? [], maxDepth: maxDepth
         )
+    }
+
+    private func subtitleText(maxExtensions: Int? = nil, maxFolders: Int? = nil) -> String {
+        var parts = [String]()
+        if let extensions {
+            var exts = extensions.replacingOccurrences(of: "|", with: " ").replacingOccurrences(of: ",", with: " ")
+                .split(separator: " ").filter { $0.hasPrefix(".") }.map { "*\($0)" }
+            if let maxExtensions, exts.count > maxExtensions {
+                let extra = exts.count - maxExtensions
+                exts = Array(exts.prefix(maxExtensions)) + ["+\(extra) more"]
+            }
+            parts.append(exts.joined(separator: " "))
+        }
+        switch match {
+        case .files: parts.append("files only")
+        case .folders: parts.append("folders only")
+        case .both: break
+        }
+        if let exclude, !exclude.isEmpty { parts.append("not " + exclude) }
+        if let preQuery { parts.append(preQuery) }
+        if let postQuery { parts.append("...\(postQuery)") }
+        if let folders, !folders.isEmpty {
+            var names = folders.map { FuzzyClient.friendlyName(for: $0) }
+            if let maxFolders, names.count > maxFolders {
+                let extra = names.count - maxFolders
+                names = Array(names.prefix(maxFolders)) + ["+\(extra) more"]
+            }
+            parts.append("in \(names.joined(separator: ", "))")
+        }
+        if let maxDepth { parts.append("depth ≤ \(maxDepth)") }
+        return parts.joined(separator: ", ")
     }
 
 }
@@ -433,8 +441,12 @@ enum ToolbarLabelStyle: String, Codable, Defaults.Serializable, CaseIterable { c
 enum ToolbarDensity: String, Codable, Defaults.Serializable, CaseIterable { case regular, compact }
 
 extension ToolbarDensity {
-    var fontSize: CGFloat { self == .compact ? 9 : 10 }
-    var spacing: CGFloat { self == .compact ? 6 : 8 }
+    var fontSize: CGFloat {
+        self == .compact ? 9 : 10
+    }
+    var spacing: CGFloat {
+        self == .compact ? 6 : 8
+    }
 }
 
 // MARK: - HiddenActionButton
@@ -517,9 +529,15 @@ enum WindowAppearance: String, CaseIterable, Defaults.Serializable {
         return .vibrant
     }
 
-    var isGlassy: Bool { self == .glassy }
-    var isVibrant: Bool { self == .vibrant }
-    var isOpaque: Bool { self == .opaque }
+    var isGlassy: Bool {
+        self == .glassy
+    }
+    var isVibrant: Bool {
+        self == .vibrant
+    }
+    var isOpaque: Bool {
+        self == .opaque
+    }
 
     var available: Bool {
         if self == .glassy {
@@ -593,9 +611,9 @@ extension Defaults.Keys {
     /// scope, so build output is excluded per project. Off by default (some gitignored files are worth finding).
     static let honorGitignore = Key<Bool>("honorGitignore", default: false)
 
-    // Lines starting with "#" are comments. "#:group id=… name=…" headers mark a block of rules so a future
-    // settings UI can toggle whole groups; rules you add yourself land under "#:custom". Both are ignored by
-    // the parser (PathBlocklist.split skips "#" and blank lines). Prefixes match the start of an absolute path.
+    /// Lines starting with "#" are comments. "#:group id=… name=…" headers mark a block of rules so a future
+    /// settings UI can toggle whole groups; rules you add yourself land under "#:custom". Both are ignored by
+    /// the parser (PathBlocklist.split skips "#" and blank lines). Prefixes match the start of an absolute path.
     static let blockedPrefixes = Key<String>("blockedPrefixes", default: """
     #:group id=ephemeral name=Temporary & ephemeral
     /tmp/com.apple.
@@ -608,7 +626,7 @@ extension Defaults.Keys {
 
     #:custom name=Your rules
     """)
-    // Contains rules match anywhere inside an absolute path (directory prune).
+    /// Contains rules match anywhere inside an absolute path (directory prune).
     static let blockedContains = Key<String>("blockedContains", default: """
     #:group id=cling-internal name=Cling internal
     -Users-

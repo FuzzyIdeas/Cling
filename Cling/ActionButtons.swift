@@ -14,9 +14,6 @@ struct ActionButtons: View {
     @Binding var selectedResultIDs: Set<String>
     var focused: FocusState<FocusedField?>.Binding
 
-    @State private var appManager: AppManager = APP_MANAGER
-    @State private var fuzzy: FuzzyClient = FUZZY
-    @State private var scriptManager: ScriptManager = SM
     @Default(.suppressTrashConfirm) var suppressTrashConfirm: Bool
     @Default(.enterPastesToFrontmostTerminal) var enterPastesToFrontmostTerminal: Bool
     @Default(.terminalApp) var terminalApp
@@ -30,11 +27,34 @@ struct ActionButtons: View {
     @Default(.showActionMenu) var showActionMenu
     @Default(.toolbarLabelStyle) var labelStyle
     @Default(.toolbarDensity) var density
+
     @ObservedObject var km = KM
-    @ObservedObject private var sendManager = SendManager.shared
-    @Default(.shortcutBadgesRevealedOnce) private var badgesRevealedOnce
-    @State private var badgesVisible = false
-    @State private var badgeRevealTask: Task<Void, Never>?
+
+    /// Held state of the modifiers that reveal shortcut hints: ⌘ for the main row, ⌥ for the
+    /// Option-held alternate row (only one row is on screen at a time, so one flag drives both).
+    var badgeModifierHeld: Bool {
+        (km.rcmd || km.lcmd || km.ralt || km.lalt) && !isAnySheetOpen
+    }
+
+    var visibleBarActions: [ToolbarAction] {
+        barActions.compactMap { ToolbarAction.byID[$0] }
+            .filter { !hiddenActions.contains($0.id) && isConfigured($0.id) && $0.segment != .alternate }
+    }
+
+    var overflowActions: [ToolbarAction] {
+        ToolbarAction.all.filter {
+            $0.segment != .alternate && !hiddenActions.contains($0.id) && !barActions.contains($0.id)
+                && isConfigured($0.id)
+        }
+    }
+
+    /// Overflow actions grouped into the menu's sections, dropping empty ones.
+    var overflowSections: [(title: String, items: [ToolbarAction])] {
+        ActionSegment.segmentSections.compactMap { segment in
+            let items = overflowActions.filter { $0.segment == segment }
+            return items.isEmpty ? nil : (segment.title, items)
+        }
+    }
 
     var body: some View {
         let inTerminal = appManager.frontmostAppIsTerminal
@@ -151,7 +171,387 @@ struct ActionButtons: View {
         }
     }
 
+    @ViewBuilder var overflowButton: some View {
+        if showActionMenu, !overflowActions.isEmpty {
+            OverflowMenuButton(
+                sections: overflowSections,
+                isEnabled: { isAvailable($0) },
+                shortcut: { appKitShortcut(for: $0) },
+                onSelect: { execute($0) }
+            )
+            .fixedSize()
+        }
+    }
+
+    @ViewBuilder func actionButton(_ action: ToolbarAction) -> some View {
+        let color: Color = action.isDestructive ? .red.opacity(0.9) : .fg.warm.opacity(0.9)
+        let isSend = action.id == .sendSecurely
+        let sendActive = isSend && !sendManager.sessions.isEmpty
+        let activeCount = sendManager.sessions.count
+        Button { execute(action.id) } label: {
+            Group {
+                if sendActive {
+                    switch labelStyle {
+                    case .iconAndText:
+                        Label {
+                            Text(action.title)
+                        } icon: {
+                            Image(systemName: "paperplane.fill")
+                                .overlay(alignment: .topTrailing) {
+                                    if activeCount > 1 {
+                                        Text("\(activeCount)")
+                                            .font(.system(size: 7, weight: .bold))
+                                            .padding(1.5)
+                                            .background(Color.accentColor, in: Circle())
+                                            .foregroundStyle(.white)
+                                            .offset(x: 5, y: -5)
+                                    }
+                                }
+                        }
+                    case .textOnly:
+                        Text(action.title)
+                    case .iconOnly:
+                        Image(systemName: "paperplane.fill")
+                            .overlay(alignment: .topTrailing) {
+                                if activeCount > 1 {
+                                    Text("\(activeCount)")
+                                        .font(.system(size: 7, weight: .bold))
+                                        .padding(1.5)
+                                        .background(Color.accentColor, in: Circle())
+                                        .foregroundStyle(.white)
+                                        .offset(x: 5, y: -5)
+                                }
+                            }
+                    }
+                } else {
+                    switch labelStyle {
+                    case .iconAndText: Label(action.title, systemImage: action.systemImage)
+                    case .textOnly: Text(action.title)
+                    case .iconOnly: Image(systemName: action.systemImage)
+                    }
+                }
+            }
+            .shortcutPrefix(shortcutString(action.id), visible: badgesVisible, color: ShortcutTint.action)
+        }
+        .buttonStyle(.text(color: sendActive ? Color.accentColor : color))
+        .disabled(!isAvailable(action.id))
+        .buttonFlash(copiedFeedbackText, visible: copiedFeedbackAction == action.id, fontSize: density.fontSize)
+        .popover(isPresented: isSend ? $sendManager.showingSendPopover : .constant(false), arrowEdge: .bottom) {
+            if isSend {
+                SendExpirationPopover(files: selectedResults.map(\.url), expiration: $sendExpiration) { sendManager.showingSendPopover = false }
+            }
+        }
+        .popover(isPresented: isSend ? $sendManager.showingTransfers : .constant(false), arrowEdge: .bottom) {
+            if isSend { TransfersPanel() }
+        }
+    }
+
+    @MainActor func shortcutString(_ id: ActionID) -> String {
+        guard ToolbarAction.rebindable.contains(where: { $0.id == id }),
+              let sc = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: id)) else { return "" }
+        return sc.description
+    }
+
+    /// AppKit key equivalent + modifier mask for an action's shortcut, for the native menu display.
+    @MainActor func appKitShortcut(for id: ActionID) -> (key: String, modifiers: NSEvent.ModifierFlags)? {
+        guard ToolbarAction.rebindable.contains(where: { $0.id == id }),
+              let sc = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: id)),
+              let key = sc.nsMenuItemKeyEquivalent else { return nil }
+        return (key, sc.modifiers)
+    }
+
+    // MARK: - Action dispatch
+
+    func execute(_ id: ActionID) {
+        switch id {
+        case .open: openSelectedResults()
+        case .showInFinder: showInFinder()
+        case .quickLook: quicklook()
+        case .openWith: openWithPicker()
+        case .openInTerminal: openInTerminal()
+        case .openInEditor: openInEditor()
+        case .copy: copyFiles(); flashCopied(.copy)
+        case .copyPaths: copyPaths()
+        case .moveTo: moveTo()
+        case .rename: renameSelected()
+        case .shelve: shelve()
+        case .sendSecurely: startSecureSend()
+        case .pasteToFrontmost: pasteToFrontmostApp(inTerminal: appManager.frontmostAppIsTerminal)
+        case .trash: trashSelected()
+        case .togglePreview: Defaults[.showFilePreview].toggle()
+        case .dropToFocusedElement: dropToFocusedElement()
+        case .dropToZone: dropToZone()
+        case .openWithFrontmost: openWithFrontmostApp()
+        }
+    }
+
+    /// isAvailable gates executability (used by the shortcut monitor and toolbar button disabling).
+    /// isConfigured gates toolbar VISIBILITY (external tool configured vs not); do not conflate them —
+    /// e.g. openInTerminal belongs in isAvailable so ⌘T does nothing when no terminal is set.
+    /// NOTE: focus guards for copy/trash belong in the shortcut dispatch loop, NOT here — the toolbar
+    /// buttons must stay enabled regardless of which field is focused.
+    func isAvailable(_ id: ActionID) -> Bool {
+        switch id {
+        case .openInTerminal: terminalApp.existingFilePath != nil
+        case .openInEditor: editorApp.existingFilePath != nil
+        case .copy: !selectedResults.isEmpty
+        case .trash: !selectedResults.isEmpty && !selectedResults.contains(where: \.isOnReadOnlyVolume)
+        case .openWith: !selectedResults.isEmpty && !fuzzy.openWithAppShortcuts.isEmpty
+        case .sendSecurely: !selectedResults.isEmpty
+        default: true
+        }
+    }
+
+    func flashCopied(_ id: ActionID, text: String = "Copied") {
+        copiedClearTask?.cancel()
+        copiedFeedbackText = text
+        withAnimation(.easeOut(duration: 0.18)) { copiedFeedbackAction = id }
+        copiedClearTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            withAnimation(.easeIn(duration: 0.25)) {
+                if copiedFeedbackAction == id { copiedFeedbackAction = nil }
+            }
+        }
+    }
+
+    @State private var appManager: AppManager = APP_MANAGER
+    @State private var fuzzy: FuzzyClient = FUZZY
+    @State private var scriptManager: ScriptManager = SM
+    @ObservedObject private var sendManager = SendManager.shared
+    @State private var badgesVisible = false
+    @State private var badgeRevealTask: Task<Void, Never>?
     @State private var shortcutMonitor: Any?
+
+    @State private var copiedPaths = false
+    @State private var copiedFiles = false
+
+    @State private var isPresentingRenameView = false
+    @State private var renameSubmission: RenameSubmission? = nil
+    @State private var isPresentingOpenWithPicker = false
+    @State private var isPresentingConfirm = false
+    @State private var isPresentingCopyToSheet = false
+    @State private var isPresentingMoveToSheet = false
+    @State private var showingSendIntro = false
+    @State private var introWantsSend = false
+    @State private var sendExpiration: TimeInterval = Defaults[.defaultLinkExpiration]
+    @State private var copiedFeedbackAction: ActionID?
+    @State private var copiedFeedbackText = "Copied"
+    @State private var copiedClearTask: Task<Void, Never>?
+
+    @Default(.shortcutBadgesRevealedOnce) private var badgesRevealedOnce
+
+    @Default(.sendSecurelyIntroShown) private var sendSecurelyIntroShown
+
+    private var results: [FilePath] {
+        (fuzzy.noQuery && fuzzy.volumeFilter == nil)
+            ? (fuzzy.sortField == .score ? fuzzy.recents : fuzzy.sortedRecents)
+            : fuzzy.results
+    }
+
+    private var isAnySheetOpen: Bool {
+        isPresentingRenameView || isPresentingOpenWithPicker || isPresentingConfirm
+            || isPresentingCopyToSheet || isPresentingMoveToSheet || sendManager.showingSendPopover || sendManager.showingTransfers
+            || showingSendIntro || sendManager.pendingFolderConfirm != nil
+    }
+
+    private var showInFinderButton: some View {
+        Button("⌘⏎ Show in Finder") {
+            showInFinder()
+        }
+        .help("Show the selected files in Finder")
+    }
+
+    @ViewBuilder
+    private var openInTerminalButton: some View {
+        if terminalApp.existingFilePath != nil {
+            Button("⌘T Open in \(terminalApp.filePath?.stem ?? "Terminal")") {
+                openInTerminal()
+            }
+            .help("Open the selected files in Terminal")
+        }
+    }
+    @ViewBuilder
+    private var openInEditorButton: some View {
+        if editorApp.existingFilePath != nil {
+            Button("⌘E Edit") {
+                openInEditor()
+            }
+            .help("Open the selected files in the configured editor (\(editorApp.filePath?.stem ?? "TextEdit"))")
+        }
+    }
+    @ViewBuilder
+    private var shelveButton: some View {
+        if shelfApp.existingFilePath != nil {
+            Button("⌘S Shelve in \(shelfApp.filePath?.stem ?? "shelf app")") {
+                shelve()
+            }
+            .help("Shelve the selected files in \(shelfApp.filePath?.stem ?? "shelf app")")
+        }
+    }
+
+    private var copyFilesButton: some View {
+        alternateButton("Copy to…", systemImage: "doc.on.doc", shortcut: "⌘⌥C", help: "Copy the selected files to a folder") {
+            isPresentingCopyToSheet = true
+        }
+    }
+
+    private var copyPathsButton: some View {
+        alternateButton("Copy filenames", systemImage: "text.alignleft", shortcut: "⌘⌥⇧C", help: "Copy the filenames of the selected files") {
+            copyFilenames()
+        }
+        .background(Color.inverted.opacity(copiedPaths ? 1.0 : 0.0))
+        .shadow(color: Color.black.opacity(copiedPaths ? 0.1 : 0.0), radius: 3)
+        .scaleEffect(copiedPaths ? 1.1 : 1)
+    }
+
+    private var openWithPickerButton: some View {
+        Button("") {
+            openWithPicker()
+        }
+        .buttonStyle(.plain)
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .sheet(isPresented: $isPresentingOpenWithPicker) {
+            OpenWithPickerView(fileURLs: selectedResults.map(\.url))
+                .font(.medium(13))
+                .focused(focused, equals: .openWith)
+        }
+        .disabled(selectedResults.isEmpty || fuzzy.openWithAppShortcuts.isEmpty)
+    }
+
+    private var trashButton: some View {
+        alternateButton("Delete", systemImage: "trash.slash", shortcut: "⌘⌥⌫", help: "Permanently delete the selected files", role: .destructive) {
+            permanentlyDelete()
+        }
+        .disabled(selectedResults.contains(where: \.isOnReadOnlyVolume))
+    }
+
+    private var quicklookButton: some View {
+        Button(action: quicklook) {
+            Text("\(focused.wrappedValue == .search ? "⌘Y" : "⎵") Quicklook")
+        }
+        .help("Preview the selected files")
+    }
+
+    private var renameButton: some View {
+        Button("⌘R Rename") {
+            renameSelected()
+        }
+        .sheet(isPresented: $isPresentingRenameView) {
+            RenameView(originalPaths: selectedResults.arr, submission: $renameSubmission)
+        }
+        .onChange(of: renameSubmission) {
+            renameFiles()
+        }
+        .help("Rename the selected files")
+    }
+
+    @ViewBuilder
+    private var dropToFocusedElementButton: some View {
+        if let app = appManager.lastFrontmostApp,
+           let target = appManager.axDropTarget(for: app)
+        {
+            alternateButton("Drop into \(target.name)", systemImage: "arrow.down.to.line", shortcut: "⌥⏎", help: "Drop into \(target.name) using a real drag-drop event") {
+                dropToFocusedElement()
+            }
+            .disabled(selectedResults.isEmpty)
+        }
+    }
+
+    private var dropToZoneButton: some View {
+        alternateButton("Drag and drop to zone", systemImage: "rectangle.dashed", shortcut: "⌥⇧⏎", help: "Pick a screen zone with the keyboard, then drop the files there") {
+            dropToZone()
+        }
+        .disabled(selectedResults.isEmpty)
+    }
+
+    @ViewBuilder
+    private var openWithFrontmostAppButton: some View {
+        if let app = appManager.lastFrontmostApp,
+           let appURL = app.bundleURL,
+           !isConfiguredHelperApp(appURL)
+        {
+            alternateButton("Open with \(app.name ?? "frontmost app")", systemImage: "app.badge", shortcut: "⌘⌥⏎", help: "Open the selected files with \(app.name ?? "the frontmost app")") {
+                openWithFrontmostApp()
+            }
+            .disabled(selectedResults.isEmpty)
+        }
+    }
+
+    private var moveToButton: some View {
+        Button("⌘M Move to...") {
+            moveTo()
+        }
+        .help("Move the selected files to a folder")
+    }
+
+    /// Renders an Option-held alternate action with the icon/text style from settings, plus a
+    /// shortcut hint badge that follows the same reveal timing as the main row.
+    private func alternateButton(
+        _ title: String,
+        systemImage: String,
+        shortcut: String,
+        help: String? = nil,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(role: role, action: action) {
+            Group {
+                switch labelStyle {
+                case .iconAndText: Label(title, systemImage: systemImage)
+                case .textOnly: Text(title)
+                case .iconOnly: Image(systemName: systemImage)
+                }
+            }
+            .shortcutPrefix(shortcut, visible: badgesVisible, color: ShortcutTint.alternate)
+        }
+        .help(help ?? title)
+    }
+
+    private func openButton(inTerminal: Bool) -> some View {
+        Button(action: openSelectedResults) {
+            Text(inTerminal ? "⌘⇧⏎" : "⏎") + Text(" Open")
+        }
+        .help("Open the selected files with their default app")
+    }
+
+    private func pasteToFrontmostAppButton(inTerminal: Bool) -> some View {
+        Button(action: { pasteToFrontmostApp(inTerminal: inTerminal) }) {
+            Text(inTerminal ? "⏎" : "⌘⇧⏎")
+                + Text(" Paste to \(appManager.lastFrontmostApp?.name ?? "frontmost app")")
+        }
+        .help("Paste the paths of the selected files to the frontmost app")
+    }
+
+    private static func performTrash(selection: Binding<Set<FilePath>>) {
+        var removed = Set<FilePath>()
+        for path in selection.wrappedValue {
+            log.info("Trashing \(path.shellString)")
+            do {
+                try FileManager.default.trashItem(at: path.url, resultingItemURL: nil)
+                removed.insert(path)
+            } catch {
+                log.error("Error trashing \(path.shellString): \(error.localizedDescription)")
+            }
+        }
+        selection.wrappedValue.subtract(removed)
+        FUZZY.results = FUZZY.results.filter { !removed.contains($0) && $0.exists }
+    }
+
+    private static func performDelete(selection: Binding<Set<FilePath>>) {
+        var removed = Set<FilePath>()
+        for path in selection.wrappedValue {
+            log.info("Permanently deleting \(path.shellString)")
+            do {
+                try FileManager.default.removeItem(at: path.url)
+                removed.insert(path)
+            } catch {
+                log.error("Error deleting \(path.shellString): \(error.localizedDescription)")
+            }
+        }
+        selection.wrappedValue.subtract(removed)
+        FUZZY.results = FUZZY.results.filter { !removed.contains($0) && $0.exists }
+    }
 
     private func installShortcutMonitor() {
         guard shortcutMonitor == nil else { return }
@@ -306,36 +706,6 @@ struct ActionButtons: View {
         }
     }
 
-    private static func performTrash(selection: Binding<Set<FilePath>>) {
-        var removed = Set<FilePath>()
-        for path in selection.wrappedValue {
-            log.info("Trashing \(path.shellString)")
-            do {
-                try FileManager.default.trashItem(at: path.url, resultingItemURL: nil)
-                removed.insert(path)
-            } catch {
-                log.error("Error trashing \(path.shellString): \(error.localizedDescription)")
-            }
-        }
-        selection.wrappedValue.subtract(removed)
-        FUZZY.results = FUZZY.results.filter { !removed.contains($0) && $0.exists }
-    }
-
-    private static func performDelete(selection: Binding<Set<FilePath>>) {
-        var removed = Set<FilePath>()
-        for path in selection.wrappedValue {
-            log.info("Permanently deleting \(path.shellString)")
-            do {
-                try FileManager.default.removeItem(at: path.url)
-                removed.insert(path)
-            } catch {
-                log.error("Error deleting \(path.shellString): \(error.localizedDescription)")
-            }
-        }
-        selection.wrappedValue.subtract(removed)
-        FUZZY.results = FUZZY.results.filter { !removed.contains($0) && $0.exists }
-    }
-
     private func pasteToFrontmostApp(inTerminal: Bool) {
         RH.trackRun(selectedResults)
         if inTerminal {
@@ -345,105 +715,6 @@ struct ActionButtons: View {
                 paths: selectedResults.arr, separator: "\n", quoted: false
             )
         }
-    }
-
-    private var showInFinderButton: some View {
-        Button("⌘⏎ Show in Finder") {
-            showInFinder()
-        }
-        .help("Show the selected files in Finder")
-    }
-
-    @ViewBuilder
-    private var openInTerminalButton: some View {
-        if terminalApp.existingFilePath != nil {
-            Button("⌘T Open in \(terminalApp.filePath?.stem ?? "Terminal")") {
-                openInTerminal()
-            }
-            .help("Open the selected files in Terminal")
-        }
-    }
-    @ViewBuilder
-    private var openInEditorButton: some View {
-        if editorApp.existingFilePath != nil {
-            Button("⌘E Edit") {
-                openInEditor()
-            }
-            .help("Open the selected files in the configured editor (\(editorApp.filePath?.stem ?? "TextEdit"))")
-        }
-    }
-    @ViewBuilder
-    private var shelveButton: some View {
-        if shelfApp.existingFilePath != nil {
-            Button("⌘S Shelve in \(shelfApp.filePath?.stem ?? "shelf app")") {
-                shelve()
-            }
-            .help("Shelve the selected files in \(shelfApp.filePath?.stem ?? "shelf app")")
-        }
-    }
-
-    /// Renders an Option-held alternate action with the icon/text style from settings, plus a
-    /// shortcut hint badge that follows the same reveal timing as the main row.
-    @ViewBuilder
-    private func alternateButton(
-        _ title: String,
-        systemImage: String,
-        shortcut: String,
-        help: String? = nil,
-        role: ButtonRole? = nil,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(role: role, action: action) {
-            Group {
-                switch labelStyle {
-                case .iconAndText: Label(title, systemImage: systemImage)
-                case .textOnly: Text(title)
-                case .iconOnly: Image(systemName: systemImage)
-                }
-            }
-            .shortcutPrefix(shortcut, visible: badgesVisible, color: ShortcutTint.alternate)
-        }
-        .help(help ?? title)
-    }
-
-    private var copyFilesButton: some View {
-        alternateButton("Copy to…", systemImage: "doc.on.doc", shortcut: "⌘⌥C", help: "Copy the selected files to a folder") {
-            isPresentingCopyToSheet = true
-        }
-    }
-
-    private var copyPathsButton: some View {
-        alternateButton("Copy filenames", systemImage: "text.alignleft", shortcut: "⌘⌥⇧C", help: "Copy the filenames of the selected files") {
-            copyFilenames()
-        }
-        .background(Color.inverted.opacity(copiedPaths ? 1.0 : 0.0))
-        .shadow(color: Color.black.opacity(copiedPaths ? 0.1 : 0.0), radius: 3)
-        .scaleEffect(copiedPaths ? 1.1 : 1)
-    }
-
-    @State private var copiedPaths = false
-    @State private var copiedFiles = false
-
-    private var openWithPickerButton: some View {
-        Button("") {
-            openWithPicker()
-        }
-        .buttonStyle(.plain)
-        .opacity(0)
-        .frame(width: 0, height: 0)
-        .sheet(isPresented: $isPresentingOpenWithPicker) {
-            OpenWithPickerView(fileURLs: selectedResults.map(\.url))
-                .font(.medium(13))
-                .focused(focused, equals: .openWith)
-        }
-        .disabled(selectedResults.isEmpty || fuzzy.openWithAppShortcuts.isEmpty)
-    }
-
-    private var trashButton: some View {
-        alternateButton("Delete", systemImage: "trash.slash", shortcut: "⌘⌥⌫", help: "Permanently delete the selected files", role: .destructive) {
-            permanentlyDelete()
-        }
-        .disabled(selectedResults.contains(where: \.isOnReadOnlyVolume))
     }
 
     private func permanentlyDelete() {
@@ -460,71 +731,6 @@ struct ActionButtons: View {
 
         selectedResults.subtract(removed)
         fuzzy.results = fuzzy.results.filter { !removed.contains($0) && $0.exists }
-    }
-
-    private var results: [FilePath] {
-        (fuzzy.noQuery && fuzzy.volumeFilter == nil)
-            ? (fuzzy.sortField == .score ? fuzzy.recents : fuzzy.sortedRecents)
-            : fuzzy.results
-    }
-
-    private var quicklookButton: some View {
-        Button(action: quicklook) {
-            Text("\(focused.wrappedValue == .search ? "⌘Y" : "⎵") Quicklook")
-        }
-        .help("Preview the selected files")
-    }
-
-    private var renameButton: some View {
-        Button("⌘R Rename") {
-            renameSelected()
-        }
-        .sheet(isPresented: $isPresentingRenameView) {
-            RenameView(originalPaths: selectedResults.arr, submission: $renameSubmission)
-        }
-        .onChange(of: renameSubmission) {
-            renameFiles()
-        }
-        .help("Rename the selected files")
-    }
-
-    private func openButton(inTerminal: Bool) -> some View {
-        Button(action: openSelectedResults) {
-            Text(inTerminal ? "⌘⇧⏎" : "⏎") + Text(" Open")
-        }
-        .help("Open the selected files with their default app")
-    }
-
-    @ViewBuilder
-    private var dropToFocusedElementButton: some View {
-        if let app = appManager.lastFrontmostApp,
-           let target = appManager.axDropTarget(for: app)
-        {
-            alternateButton("Drop into \(target.name)", systemImage: "arrow.down.to.line", shortcut: "⌥⏎", help: "Drop into \(target.name) using a real drag-drop event") {
-                dropToFocusedElement()
-            }
-            .disabled(selectedResults.isEmpty)
-        }
-    }
-
-    private var dropToZoneButton: some View {
-        alternateButton("Drag and drop to zone", systemImage: "rectangle.dashed", shortcut: "⌥⇧⏎", help: "Pick a screen zone with the keyboard, then drop the files there") {
-            dropToZone()
-        }
-        .disabled(selectedResults.isEmpty)
-    }
-
-    @ViewBuilder
-    private var openWithFrontmostAppButton: some View {
-        if let app = appManager.lastFrontmostApp,
-           let appURL = app.bundleURL,
-           !isConfiguredHelperApp(appURL)
-        {
-            alternateButton("Open with \(app.name ?? "frontmost app")", systemImage: "app.badge", shortcut: "⌘⌥⏎", help: "Open the selected files with \(app.name ?? "the frontmost app")") {
-                openWithFrontmostApp()
-            }
-            .disabled(selectedResults.isEmpty)
-        }
     }
 
     private func isConfiguredHelperApp(_ url: URL) -> Bool {
@@ -544,161 +750,6 @@ struct ActionButtons: View {
         case .openInTerminal: terminalApp.existingFilePath != nil
         case .openInEditor: editorApp.existingFilePath != nil
         case .shelve: shelfApp.existingFilePath != nil
-        default: true
-        }
-    }
-
-    /// Held state of the modifiers that reveal shortcut hints: ⌘ for the main row, ⌥ for the
-    /// Option-held alternate row (only one row is on screen at a time, so one flag drives both).
-    var badgeModifierHeld: Bool { (km.rcmd || km.lcmd || km.ralt || km.lalt) && !isAnySheetOpen }
-
-    var visibleBarActions: [ToolbarAction] {
-        barActions.compactMap { ToolbarAction.byID[$0] }
-            .filter { !hiddenActions.contains($0.id) && isConfigured($0.id) && $0.segment != .alternate }
-    }
-
-    var overflowActions: [ToolbarAction] {
-        ToolbarAction.all.filter {
-            $0.segment != .alternate && !hiddenActions.contains($0.id) && !barActions.contains($0.id)
-                && isConfigured($0.id)
-        }
-    }
-
-    @ViewBuilder func actionButton(_ action: ToolbarAction) -> some View {
-        let color: Color = action.isDestructive ? .red.opacity(0.9) : .fg.warm.opacity(0.9)
-        let isSend = action.id == .sendSecurely
-        let sendActive = isSend && !sendManager.sessions.isEmpty
-        let activeCount = sendManager.sessions.count
-        Button { execute(action.id) } label: {
-            Group {
-                if sendActive {
-                    switch labelStyle {
-                    case .iconAndText:
-                        Label {
-                            Text(action.title)
-                        } icon: {
-                            Image(systemName: "paperplane.fill")
-                                .overlay(alignment: .topTrailing) {
-                                    if activeCount > 1 {
-                                        Text("\(activeCount)")
-                                            .font(.system(size: 7, weight: .bold))
-                                            .padding(1.5)
-                                            .background(Color.accentColor, in: Circle())
-                                            .foregroundStyle(.white)
-                                            .offset(x: 5, y: -5)
-                                    }
-                                }
-                        }
-                    case .textOnly:
-                        Text(action.title)
-                    case .iconOnly:
-                        Image(systemName: "paperplane.fill")
-                            .overlay(alignment: .topTrailing) {
-                                if activeCount > 1 {
-                                    Text("\(activeCount)")
-                                        .font(.system(size: 7, weight: .bold))
-                                        .padding(1.5)
-                                        .background(Color.accentColor, in: Circle())
-                                        .foregroundStyle(.white)
-                                        .offset(x: 5, y: -5)
-                                }
-                            }
-                    }
-                } else {
-                    switch labelStyle {
-                    case .iconAndText: Label(action.title, systemImage: action.systemImage)
-                    case .textOnly: Text(action.title)
-                    case .iconOnly: Image(systemName: action.systemImage)
-                    }
-                }
-            }
-            .shortcutPrefix(shortcutString(action.id), visible: badgesVisible, color: ShortcutTint.action)
-        }
-        .buttonStyle(.text(color: sendActive ? Color.accentColor : color))
-        .disabled(!isAvailable(action.id))
-        .buttonFlash(copiedFeedbackText, visible: copiedFeedbackAction == action.id, fontSize: density.fontSize)
-        .popover(isPresented: isSend ? $sendManager.showingSendPopover : .constant(false), arrowEdge: .bottom) {
-            if isSend {
-                SendExpirationPopover(files: selectedResults.map(\.url), expiration: $sendExpiration) { sendManager.showingSendPopover = false }
-            }
-        }
-        .popover(isPresented: isSend ? $sendManager.showingTransfers : .constant(false), arrowEdge: .bottom) {
-            if isSend { TransfersPanel() }
-        }
-    }
-
-    @MainActor func shortcutString(_ id: ActionID) -> String {
-        guard ToolbarAction.rebindable.contains(where: { $0.id == id }),
-              let sc = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: id)) else { return "" }
-        return sc.description
-    }
-
-    /// Overflow actions grouped into the menu's sections, dropping empty ones.
-    var overflowSections: [(title: String, items: [ToolbarAction])] {
-        ActionSegment.segmentSections.compactMap { segment in
-            let items = overflowActions.filter { $0.segment == segment }
-            return items.isEmpty ? nil : (segment.title, items)
-        }
-    }
-
-    /// AppKit key equivalent + modifier mask for an action's shortcut, for the native menu display.
-    @MainActor func appKitShortcut(for id: ActionID) -> (key: String, modifiers: NSEvent.ModifierFlags)? {
-        guard ToolbarAction.rebindable.contains(where: { $0.id == id }),
-              let sc = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: id)),
-              let key = sc.nsMenuItemKeyEquivalent else { return nil }
-        return (key, sc.modifiers)
-    }
-
-    @ViewBuilder var overflowButton: some View {
-        if showActionMenu, !overflowActions.isEmpty {
-            OverflowMenuButton(
-                sections: overflowSections,
-                isEnabled: { isAvailable($0) },
-                shortcut: { appKitShortcut(for: $0) },
-                onSelect: { execute($0) }
-            )
-            .fixedSize()
-        }
-    }
-
-    // MARK: - Action dispatch
-
-    func execute(_ id: ActionID) {
-        switch id {
-        case .open: openSelectedResults()
-        case .showInFinder: showInFinder()
-        case .quickLook: quicklook()
-        case .openWith: openWithPicker()
-        case .openInTerminal: openInTerminal()
-        case .openInEditor: openInEditor()
-        case .copy: copyFiles(); flashCopied(.copy)
-        case .copyPaths: copyPaths()
-        case .moveTo: moveTo()
-        case .rename: renameSelected()
-        case .shelve: shelve()
-        case .sendSecurely: startSecureSend()
-        case .pasteToFrontmost: pasteToFrontmostApp(inTerminal: appManager.frontmostAppIsTerminal)
-        case .trash: trashSelected()
-        case .togglePreview: Defaults[.showFilePreview].toggle()
-        case .dropToFocusedElement: dropToFocusedElement()
-        case .dropToZone: dropToZone()
-        case .openWithFrontmost: openWithFrontmostApp()
-        }
-    }
-
-    // isAvailable gates executability (used by the shortcut monitor and toolbar button disabling).
-    // isConfigured gates toolbar VISIBILITY (external tool configured vs not); do not conflate them —
-    // e.g. openInTerminal belongs in isAvailable so ⌘T does nothing when no terminal is set.
-    // NOTE: focus guards for copy/trash belong in the shortcut dispatch loop, NOT here — the toolbar
-    // buttons must stay enabled regardless of which field is focused.
-    func isAvailable(_ id: ActionID) -> Bool {
-        switch id {
-        case .openInTerminal: terminalApp.existingFilePath != nil
-        case .openInEditor: editorApp.existingFilePath != nil
-        case .copy: !selectedResults.isEmpty
-        case .trash: !selectedResults.isEmpty && !selectedResults.contains(where: \.isOnReadOnlyVolume)
-        case .openWith: !selectedResults.isEmpty && !fuzzy.openWithAppShortcuts.isEmpty
-        case .sendSecurely: !selectedResults.isEmpty
         default: true
         }
     }
@@ -791,14 +842,6 @@ struct ActionButtons: View {
         }
     }
 
-    private func pasteToFrontmostAppButton(inTerminal: Bool) -> some View {
-        Button(action: { pasteToFrontmostApp(inTerminal: inTerminal) }) {
-            Text(inTerminal ? "⏎" : "⌘⇧⏎")
-                + Text(" Paste to \(appManager.lastFrontmostApp?.name ?? "frontmost app")")
-        }
-        .help("Paste the paths of the selected files to the frontmost app")
-    }
-
     private func copyFiles() {
         RH.trackRun(selectedResults)
         withAnimation(.fastSpring) { copiedFiles = true }
@@ -885,45 +928,6 @@ struct ActionButtons: View {
         self.renameSubmission = nil
     }
 
-    private var moveToButton: some View {
-        Button("⌘M Move to...") {
-            moveTo()
-        }
-        .help("Move the selected files to a folder")
-    }
-
-    @State private var isPresentingRenameView = false
-    @State private var renameSubmission: RenameSubmission? = nil
-    @State private var isPresentingOpenWithPicker = false
-    @State private var isPresentingConfirm = false
-    @State private var isPresentingCopyToSheet = false
-    @State private var isPresentingMoveToSheet = false
-    @State private var showingSendIntro = false
-    @State private var introWantsSend = false
-    @State private var sendExpiration: TimeInterval = Defaults[.defaultLinkExpiration]
-    @Default(.sendSecurelyIntroShown) private var sendSecurelyIntroShown
-
-    @State private var copiedFeedbackAction: ActionID?
-    @State private var copiedFeedbackText = "Copied"
-    @State private var copiedClearTask: Task<Void, Never>?
-
-    func flashCopied(_ id: ActionID, text: String = "Copied") {
-        copiedClearTask?.cancel()
-        copiedFeedbackText = text
-        withAnimation(.easeOut(duration: 0.18)) { copiedFeedbackAction = id }
-        copiedClearTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            withAnimation(.easeIn(duration: 0.25)) {
-                if copiedFeedbackAction == id { copiedFeedbackAction = nil }
-            }
-        }
-    }
-
-    private var isAnySheetOpen: Bool {
-        isPresentingRenameView || isPresentingOpenWithPicker || isPresentingConfirm
-            || isPresentingCopyToSheet || isPresentingMoveToSheet || sendManager.showingSendPopover || sendManager.showingTransfers
-            || showingSendIntro || sendManager.pendingFolderConfirm != nil
-    }
 }
 
 // MARK: - FileOperationSheet

@@ -28,9 +28,9 @@ enum Migration {
         Defaults[.migrationVersion] = CURRENT_VERSION
     }
 
-    // New default blocklist groups added in this version. Existing users get these appended (deduped); they
-    // were never shipped before, so appending won't override a deliberate choice. Group header comments ride
-    // along so a future toggle UI sees the grouping too.
+    /// New default blocklist groups added in this version. Existing users get these appended (deduped); they
+    /// were never shipped before, so appending won't override a deliberate choice. Group header comments ride
+    /// along so a future toggle UI sees the grouping too.
     private static let NEW_BLOCKED_CONTAINS = """
     #:group id=vcs name=Version control
     /.svn/

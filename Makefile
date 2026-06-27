@@ -139,3 +139,7 @@ ifneq (, $(BETA))
 else
 	{ cat ReleaseNotes/$(VERSION).md; for v in $(subst /, ,$(INCLUDE_RELEASES)); do echo; echo "## From v$$v"; echo; cat "ReleaseNotes/$$v.md"; done; } | pandoc -f gfm --section-divs -o $@ --standalone --metadata title="$(NAME) $(FULL_VERSION) - Release Notes" --css https://files.lowtechguys.com/release.css
 endif
+
+.PHONY: hooks
+hooks:
+	@ln -sf "$(CURDIR)/.pre-commit.sh" .git/hooks/pre-commit && echo "pre-commit hook installed -> .pre-commit.sh"

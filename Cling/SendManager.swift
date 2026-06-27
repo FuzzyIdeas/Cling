@@ -64,10 +64,18 @@ func expirationCountdownLabel(_ seconds: TimeInterval) -> String {
     @Published var expiresAt: Date?
     @Published var stopped = false
 
-    var directURL: String { "https://drop.lowtechguys.com/d/\(id)" }
-    var roomURL: String { "https://drop.lowtechguys.com/r/\(id)" }
-    var shareURL: String { files.count == 1 ? directURL : roomURL }
-    var fileNames: String { files.map(\.lastPathComponent).joined(separator: ", ") }
+    var directURL: String {
+        "https://drop.lowtechguys.com/d/\(id)"
+    }
+    var roomURL: String {
+        "https://drop.lowtechguys.com/r/\(id)"
+    }
+    var shareURL: String {
+        files.count == 1 ? directURL : roomURL
+    }
+    var fileNames: String {
+        files.map(\.lastPathComponent).joined(separator: ", ")
+    }
     /// Glanceable summary: lists up to 3 names, then collapses to "<first> + N more files"
     /// so large selections don't balloon the Transfers row or download notifications.
     var fileSummary: String {
@@ -95,7 +103,9 @@ func expirationCountdownLabel(_ seconds: TimeInterval) -> String {
 // MARK: - Box
 
 final class Box<T>: @unchecked Sendable {
-    init(_ v: T) { _value = v }
+    init(_ v: T) {
+        _value = v
+    }
 
     var value: T {
         get { lock.lock(); defer { lock.unlock() }; return _value }
@@ -137,7 +147,9 @@ extension SendManager {
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
     }
 
-    func folderCount(in files: [URL]) -> Int { files.filter { isDirectory($0) }.count }
+    func folderCount(in files: [URL]) -> Int {
+        files.filter { isDirectory($0) }.count
+    }
 
     // MARK: - Confirmation gate
 
@@ -158,7 +170,9 @@ extension SendManager {
         send(files: p.files, expiration: p.expiration)
     }
 
-    func cancelPendingSend() { pendingFolderConfirm = nil }
+    func cancelPendingSend() {
+        pendingFolderConfirm = nil
+    }
 
     // MARK: - Zip helper (nonisolated — runs off-main inside detached tasks)
 
@@ -322,7 +336,9 @@ extension SendManager {
         // session stays in recentSessions (session-only history)
     }
 
-    func stopAll() { sessions.forEach { stop($0) } }
+    func stopAll() {
+        sessions.forEach { stop($0) }
+    }
 
     func didCompleteDownload(roomID: String, count: Int) {
         guard let s = sessions.first(where: { $0.id == roomID }) else { return }

@@ -18,7 +18,9 @@ enum ExcludeMechanism: Equatable, Hashable {
     case scopeIgnore(SearchScope)
     case blocklist
 
-    var supportsGlobs: Bool { self != .blocklist }
+    var supportsGlobs: Bool {
+        self != .blocklist
+    }
 
     var fileLabel: String {
         switch self {
@@ -65,7 +67,9 @@ struct ExcludeOption: Identifiable, Equatable {
     /// rules only touch the selected paths, which are removed from the live index immediately.
     var needsReindex = false
 
-    static func == (lhs: ExcludeOption, rhs: ExcludeOption) -> Bool { lhs.id == rhs.id }
+    static func == (lhs: ExcludeOption, rhs: ExcludeOption) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 // MARK: - ExcludePathInfo
@@ -101,10 +105,16 @@ struct ExcludePathInfo {
     let rel: String // path relative to root (fsignore); the absolute path for blocklist
 
     /// Lazily stat'd so huge selections (exact-only bulk mode) never touch the filesystem.
-    var isDir: Bool { path.isDir }
+    var isDir: Bool {
+        path.isDir
+    }
 
-    var leaf: String { (abs as NSString).lastPathComponent }
-    var ext: String? { IndexInclusionAnalyzer.fileExtension(of: leaf) }
+    var leaf: String {
+        (abs as NSString).lastPathComponent
+    }
+    var ext: String? {
+        IndexInclusionAnalyzer.fileExtension(of: leaf)
+    }
     var rootKey: String {
         switch mechanism {
         case .homeIgnore: "home"
@@ -123,7 +133,9 @@ struct ExcludePathInfo {
     static func relativize(_ p: String, _ r: String) -> String {
         guard p.hasPrefix(r) else { return p }
         var s = String(p.dropFirst(r.count))
-        while s.hasPrefix("/") { s.removeFirst() }
+        while s.hasPrefix("/") {
+            s.removeFirst()
+        }
         return s
     }
 }
