@@ -251,7 +251,8 @@ extension FuzzyClient {
                     self.backgroundIndexing = self.indexing
                 }
                 self.invalidateSearch()
-                if !self.emptyQuery || self.volumeFilter != nil {
+                // The volume engine was replaced; rebuild stale QuickFilter pools first.
+                if !self.refreshPoolsAfterReindex(), !self.emptyQuery || self.volumeFilter != nil {
                     self.performSearch()
                 }
                 batchTracker?.runCompletionIfNeeded(shouldRunCompletion)

@@ -2229,10 +2229,16 @@ final class SearchEngine: @unchecked Sendable {
         if let pool = candidatePool {
             // Pre-filtered candidate pool (from QuickFilter prefilter)
             // suffix/dirsOnly already applied, also apply folder prefix + mask + excluded
+            //
+            // The pool is a snapshot of entry indices captured by prefilter() against the engine
+            // as it was then. A reindex/reload since then (clear() or loadBinaryIndex()) can have
+            // replaced the parallel arrays with a shorter set, leaving stale indices that now point
+            // past the end. All parallel arrays are length n under the lock, so n is the authoritative
+            // bound: skip anything out of range rather than trapping on masks[i]/byteOffsets[i]/etc.
             var pi = 0
             while pi < pool.count {
                 let i = pool[pi]
-                if applyBaseFilters(i), matchesFolderPrefix(i), depthOK(i) { cands.append(i) }
+                if i >= 0, i < n, applyBaseFilters(i), matchesFolderPrefix(i), depthOK(i) { cands.append(i) }
                 pi &+= 1
             }
         } else if let prefixBytes = folderPrefixBytes, let sorted = sortedByPath {

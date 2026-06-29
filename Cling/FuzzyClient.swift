@@ -847,6 +847,18 @@ class FuzzyClient {
         }
     }
 
+    /// A reindex/reload swaps in brand-new SearchEngine instances, so any cached QuickFilter pools
+    /// still hold entry indices from the now-discarded engines (which can point past the shorter
+    /// new arrays). When a pool-based filter is active, rebuild the pools against the current engines;
+    /// recomputeQuickFilterPool() re-runs the search itself. Returns true when it took over the
+    /// post-reindex search refresh, so the caller can skip its own performSearch().
+    @discardableResult
+    func refreshPoolsAfterReindex() -> Bool {
+        guard let qf = quickFilter, qf.poolExtensions != nil || qf.searchDirsOnly else { return false }
+        recomputeQuickFilterPool()
+        return true
+    }
+
     /// Recalculate total indexed count from all engines
     func updateIndexedCount() {
         indexedCount = scopeEngines.values.reduce(0) { $0 + $1.count }
@@ -1304,7 +1316,8 @@ class FuzzyClient {
                 self.indexing = false
                 self.backgroundIndexing = !self.volumesIndexing.isEmpty
                 self.invalidateSearch()
-                if !self.emptyQuery || self.volumeFilter != nil {
+                // Engines were replaced by the reindex; rebuild stale QuickFilter pools first.
+                if !self.refreshPoolsAfterReindex(), !self.emptyQuery || self.volumeFilter != nil {
                     self.performSearch()
                 }
             }

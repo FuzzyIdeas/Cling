@@ -182,6 +182,63 @@ private func axCopyString(_ element: AXUIElement, _ attribute: String) -> String
     return value as? String
 }
 
+/// Lightweight, permission-free heuristic for "is the active space a fullscreen space?".
+///
+/// A green-button fullscreen window fills the display *below* the menu-bar line: its bounds start
+/// at the menu-bar height (not y=0 — the menu-bar strip stays outside the window even though it
+/// auto-hides) and run to the very bottom edge, spanning the full width with no Dock gap (the Dock
+/// auto-hides too). Ordinary/zoomed windows don't reach the bottom edge when the Dock is shown.
+/// So if the display under the cursor carries an on-screen, layer-0 window from another app with
+/// that signature, treat the active space as fullscreen. Uses only CGWindowList (same API as
+/// `appAtCGPoint`), so it needs no extra permission and no private SkyLight calls.
+@MainActor
+func isActiveSpaceFullscreen() -> Bool {
+    let screens = NSScreen.screens
+    guard let primaryHeight = screens.first?.frame.height else { return false }
+
+    /// CGWindowList reports bounds with a top-left origin on the primary display; convert each
+    /// NSScreen's (bottom-left) frame into that space so we can compare like-for-like.
+    func cgFrame(_ s: NSScreen) -> CGRect {
+        CGRect(x: s.frame.minX, y: primaryHeight - s.frame.maxY, width: s.frame.width, height: s.frame.height)
+    }
+
+    // The active display is the one under the cursor — that's where `.moveToActiveSpace` lands the
+    // window, so it's the only display whose fullscreen state matters for this summon.
+    let mouse = NSEvent.mouseLocation
+    let mouseCG = CGPoint(x: mouse.x, y: primaryHeight - mouse.y)
+    guard let activeScreen = screens.first(where: { cgFrame($0).contains(mouseCG) }) ?? NSScreen.main ?? screens.first else {
+        return false
+    }
+    let target = cgFrame(activeScreen)
+    // Top inset of the active display = menu-bar height. A fullscreen window's top edge sits on
+    // this line; a borderless fullscreen window may instead start at y=0, so allow either.
+    let menuBarH = max(0, activeScreen.frame.maxY - activeScreen.visibleFrame.maxY)
+
+    let myPID = ProcessInfo.processInfo.processIdentifier
+    let opts: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    guard let infoList = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else {
+        return false
+    }
+    for info in infoList {
+        // Only ordinary app windows (layer 0); skip our own and system/menu-bar layers.
+        guard (info[kCGWindowLayer as String] as? Int ?? 0) == 0 else { continue }
+        if (info[kCGWindowOwnerPID as String] as? pid_t ?? 0) == myPID { continue }
+        guard let bounds = info[kCGWindowBounds as String] as? [String: CGFloat] else { continue }
+        let rect = CGRect(
+            x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0,
+            width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0
+        )
+        // Fullscreen signature: full width, top at the menu-bar line (or y=0), bottom at the
+        // display edge.
+        if abs(rect.minX - target.minX) <= 2, rect.width >= target.width - 2,
+           rect.minY <= menuBarH + 4, rect.maxY >= target.maxY - 2
+        {
+            return true
+        }
+    }
+    return false
+}
+
 func appAtCGPoint(_ point: CGPoint) -> NSRunningApplication? {
     let opts: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
     guard let infoList = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else { return nil }
