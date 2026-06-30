@@ -367,6 +367,54 @@ extension NSView {
     }
 }
 
+extension View {
+    /// SwiftUI's `Table` leaves the backing `NSTableView` on automatic row heights,
+    /// which forces an Auto Layout measuring pass over EVERY inserted row when the
+    /// data changes in bulk (a fresh search replacing the whole result set). Each
+    /// measured row instantiates its cells, and those read `path.memoz.size/.date/.icon`
+    /// — synchronous `stat` + icon fetches for local files — so a search returning
+    /// thousands of rows ran thousands of disk calls on the main thread inside one
+    /// `endUpdates`, freezing the app for 30s+ (CLING-B). The rows here are uniform
+    /// single-line cells, so we pin a fixed row height and turn automatic heights off:
+    /// `NSTableView` then derives the total content height as `rowCount × rowHeight`
+    /// without measuring off-screen rows, and only ever instantiates cells (and touches
+    /// `memoz`) for the handful that are actually visible.
+    func fixedTableRowHeight(_ height: CGFloat) -> some View {
+        background(TableRowHeightConfigurator(rowHeight: height))
+    }
+}
+
+// MARK: - TableRowHeightConfigurator
+
+private struct TableRowHeightConfigurator: NSViewRepresentable {
+    let rowHeight: CGFloat
+
+    func makeNSView(context _: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        apply(from: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context _: Context) {
+        apply(from: nsView)
+    }
+
+    /// The table may not be in the window hierarchy yet on the first pass, so run on
+    /// the next tick and re-run on every SwiftUI update (which fires when results
+    /// change, covering a table that gets rebuilt). Scoped to this view's own window
+    /// so it never touches tables in other windows (e.g. Settings).
+    private func apply(from view: NSView) {
+        DispatchQueue.main.async {
+            guard let contentView = view.window?.contentView else { return }
+            for table in contentView.findViews(ofType: NSTableView.self) {
+                guard table.usesAutomaticRowHeights || table.rowHeight != rowHeight else { continue }
+                table.usesAutomaticRowHeights = false
+                table.rowHeight = rowHeight
+            }
+        }
+    }
+}
+
 // MARK: - DoubleClickHandler
 
 struct DoubleClickHandler: ViewModifier {

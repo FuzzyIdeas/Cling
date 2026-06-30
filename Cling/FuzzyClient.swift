@@ -923,7 +923,15 @@ class FuzzyClient {
             .publisher(for: NSWorkspace.didMountNotification)
             .merge(with: NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didUnmountNotification))
             .sink { _ in
-                self.externalVolumes = Self.getVolumes()
+                // getVolumes() does blocking file IO per volume (lstat on each volume's
+                // /Applications, contentsOfDirectory, and a diskutil subprocess with a 3s
+                // timeout). On a slow or stalled mount that lstat can block for tens of
+                // seconds, and this notification fires on the main run loop, so running it
+                // inline froze the app (CLING-V). Compute off-main, assign back on main.
+                asyncNow {
+                    let volumes = Self.getVolumes()
+                    mainActor { self.externalVolumes = volumes }
+                }
             }
             .store(in: &observers)
 

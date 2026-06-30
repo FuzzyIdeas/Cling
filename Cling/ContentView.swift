@@ -996,6 +996,11 @@ struct ContentView: View {
                 }
                 .scrollContentBackground(.hidden)
                 .alternatingRowBackgrounds(.disabled)
+                // Fixed row height keeps NSTableView from measuring every inserted row
+                // (which would force synchronous per-row stat/icon fetches on a bulk
+                // result update and freeze the app — CLING-B). Rows are uniform single
+                // line cells, so a constant height is exact, not just an approximation.
+                .fixedTableRowHeight(24)
                 .onChange(of: sortOrder) { _, newOrder in
                     applySortOrder(newOrder)
                 }
