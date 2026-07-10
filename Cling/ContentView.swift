@@ -1001,7 +1001,15 @@ struct ContentView: View {
                 // result update and freeze the app — CLING-B). Rows are uniform single
                 // line cells, so a constant height is exact, not just an approximation.
                 .fixedTableRowHeight(24)
-                .onChange(of: sortOrder) { _, newOrder in
+                .onChange(of: sortOrder) { oldOrder, newOrder in
+                    // SwiftUI resets a newly-clicked column to ascending. Size and Date read more
+                    // naturally largest/newest first, so flip those to descending the first time
+                    // they become the sort column. Name and Path stay ascending, and re-clicking
+                    // the same column still toggles freely.
+                    if let adjusted = descendingDefaultAdjustment(from: oldOrder, to: newOrder) {
+                        sortOrder = adjusted // re-fires onChange; applySortOrder runs on the settled value
+                        return
+                    }
                     applySortOrder(newOrder)
                 }
                 .onChange(of: results) {
@@ -1384,10 +1392,13 @@ struct ContentView: View {
                 }
                 return nil
             }
-            // ⌃0 → sort by score
-            if mods == .control, chars == "0" {
-                fuzzy.sortField = .score
-                fuzzy.reverseSort = true
+            // Rebindable sort shortcuts (defaults ⌃N Name, ⌃P Path, ⌃S Size, ⌃D Date, ⌃0
+            // Relevance). Dispatched here rather than the ActionButtons monitor so they work with
+            // no selection and while the search field has focus.
+            if let pressed = KeyboardShortcuts.Shortcut(event: event),
+               let field = ClingShortcuts.sortField(for: pressed)
+            {
+                applySortShortcut(field)
                 return nil
             }
             // Esc → quicklook close / dismiss / clear query (xButton behavior)
@@ -1489,6 +1500,45 @@ struct ContentView: View {
         case .added: .green
         case .removed: .red
         case .modified: .orange
+        }
+    }
+
+    /// When the sort column *switches* to Size or Date and SwiftUI defaulted it to ascending,
+    /// return the descending variant to apply instead (largest / most recent first). Returns nil
+    /// when no change is needed: the same column was re-clicked (let it toggle), it's already
+    /// descending, or it's a column that should stay ascending (Name, Path).
+    private func descendingDefaultAdjustment(from old: [KeyPathComparator<FilePath>], to new: [KeyPathComparator<FilePath>]) -> [KeyPathComparator<FilePath>]? {
+        guard let first = new.first, first.order == .forward,
+              old.first?.keyPath != first.keyPath else { return nil }
+        var adjusted = new
+        switch first.keyPath {
+        case \FilePath.memoz.size:
+            adjusted[0] = KeyPathComparator(\FilePath.memoz.size, order: .reverse)
+        case \FilePath.memoz.date:
+            adjusted[0] = KeyPathComparator(\FilePath.memoz.date, order: .reverse)
+        default:
+            return nil
+        }
+        return adjusted
+    }
+
+    /// Keyboard-driven sort (rebindable ⌃N/⌃P/⌃S/⌃D/⌃0). Sets the sort field directly, then
+    /// mirrors it onto the Table's `sortOrder` so the column header's sort indicator stays in sync
+    /// for the four sortable columns (Relevance has no column). Pressing the field that's already
+    /// active flips its direction; switching to a new field uses its natural default (Name/Path
+    /// ascending, Size/Date/Relevance descending), matching a header click.
+    private func applySortShortcut(_ field: SortField) {
+        let ascendingDefault = field == .name || field == .path
+        let reverse = fuzzy.sortField == field ? !fuzzy.reverseSort : !ascendingDefault
+        fuzzy.sortField = field
+        fuzzy.reverseSort = reverse
+        let order: SortOrder = reverse ? .reverse : .forward
+        switch field {
+        case .name: sortOrder = [KeyPathComparator(\FilePath.name.string, order: order)]
+        case .path: sortOrder = [KeyPathComparator(\FilePath.dir.string, order: order)]
+        case .size: sortOrder = [KeyPathComparator(\FilePath.memoz.size, order: order)]
+        case .date: sortOrder = [KeyPathComparator(\FilePath.memoz.date, order: order)]
+        case .score, .kind: break
         }
     }
 

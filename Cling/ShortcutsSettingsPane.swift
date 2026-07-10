@@ -22,6 +22,17 @@ struct ShortcutsSettingsPane: View {
                     }
                 }
             }
+            Section("Sorting") {
+                ForEach(ClingShortcuts.sortShortcuts) { sort in
+                    LabeledContent {
+                        ShortcutRecorder(name: sort.name) { _ in
+                            validate(name: sort.name, title: sort.title)
+                        }
+                    } label: {
+                        Label(sort.title, systemImage: sort.systemImage)
+                    }
+                }
+            }
             if let conflict {
                 Section {
                     Text(conflict).foregroundStyle(.red).font(.callout)
@@ -43,15 +54,18 @@ struct ShortcutsSettingsPane: View {
     private let displaySegments: [ActionSegment] = [.open, .fileOps, .share, .destructive, .alternate]
 
     private func validate(_ id: ActionID) {
-        guard let new = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: id)),
-              let owner = ClingShortcuts.duplicateOwner(of: new, excluding: id)
+        validate(name: ClingShortcuts.name(for: id), title: ToolbarAction.byID[id]?.title ?? id.rawValue)
+    }
+
+    /// Reject a just-recorded shortcut that duplicates another of ours (file action or sort):
+    /// clear it and tell the user. Works for both the toolbar-action rows and the sorting rows.
+    private func validate(name: KeyboardShortcuts.Name, title: String) {
+        guard let new = KeyboardShortcuts.getShortcut(for: name),
+              let other = ClingShortcuts.conflictingTitle(with: new, excluding: name)
         else {
             conflict = nil; return
         }
-        // Reject the duplicate: clear it and tell the user.
-        KeyboardShortcuts.setShortcut(nil, for: ClingShortcuts.name(for: id))
-        let a = ToolbarAction.byID[id]?.title ?? id.rawValue
-        let b = ToolbarAction.byID[owner]?.title ?? owner.rawValue
-        conflict = "\(a) conflicts with \(b). Shortcut cleared."
+        KeyboardShortcuts.setShortcut(nil, for: name)
+        conflict = "\(title) conflicts with \(other). Shortcut cleared."
     }
 }

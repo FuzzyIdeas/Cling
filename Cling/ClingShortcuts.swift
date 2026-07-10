@@ -37,11 +37,33 @@ extension KeyboardShortcuts.Name {
     static let clDropToFocusedElement = Self("cl_dropToFocusedElement", initial: sc(kVK_Return, [.option]))
     static let clDropToZone = Self("cl_dropToZone", initial: sc(kVK_Return, [.option, .shift]))
     static let clOpenWithFrontmost = Self("cl_openWithFrontmost", initial: sc(kVK_Return, [.command, .option]))
+
+    // Sort shortcuts. Dispatched window-locally by ContentView's key monitor (never global
+    // hotkeys, like the rest here). Defaults use Control+letter to stay clear of the saturated
+    // ⌘-letter file-action space.
+    static let clSortByScore = Self("cl_sortByScore", initial: sc(kVK_ANSI_0, [.control]))
+    static let clSortByName = Self("cl_sortByName", initial: sc(kVK_ANSI_N, [.control]))
+    static let clSortByPath = Self("cl_sortByPath", initial: sc(kVK_ANSI_P, [.control]))
+    static let clSortBySize = Self("cl_sortBySize", initial: sc(kVK_ANSI_S, [.control]))
+    static let clSortByDate = Self("cl_sortByDate", initial: sc(kVK_ANSI_D, [.control]))
 }
 
 // MARK: - ClingShortcuts
 
 enum ClingShortcuts {
+    // MARK: Sorting
+
+    struct SortShortcut: Identifiable {
+        let field: SortField
+        let name: KeyboardShortcuts.Name
+        let title: String
+        let systemImage: String
+
+        var id: String {
+            field.rawValue
+        }
+    }
+
     static let nameByAction: [ActionID: KeyboardShortcuts.Name] = [
         .open: .clOpen,
         .showInFinder: .clShowInFinder,
@@ -63,18 +85,46 @@ enum ClingShortcuts {
         .openWithFrontmost: .clOpenWithFrontmost,
     ]
 
-    static let allNames = Array(nameByAction.values)
+    /// Rebindable sort shortcuts, shown in the Shortcuts settings pane and dispatched by
+    /// ContentView's key monitor. Kept separate from `ToolbarAction` on purpose: sorting is not a
+    /// per-file action and must never surface as a toolbar button or in the action overflow menu.
+    static let sortShortcuts: [SortShortcut] = [
+        .init(field: .score, name: .clSortByScore, title: "Sort by Relevance", systemImage: "sparkles"),
+        .init(field: .name, name: .clSortByName, title: "Sort by Name", systemImage: "textformat"),
+        .init(field: .path, name: .clSortByPath, title: "Sort by Path", systemImage: "folder"),
+        .init(field: .size, name: .clSortBySize, title: "Sort by Size", systemImage: "arrow.up.arrow.down"),
+        .init(field: .date, name: .clSortByDate, title: "Sort by Date", systemImage: "calendar"),
+    ]
+
+    static let sortNames = sortShortcuts.map(\.name)
+
+    /// Every name we own, for "Reset all" and to keep them disabled at the package's global layer
+    /// (all of ours are dispatched window-locally, so none may register a real global hotkey).
+    static let allNames = Array(nameByAction.values) + sortNames
 
     static func name(for id: ActionID) -> KeyboardShortcuts.Name {
         nameByAction[id]!
     }
 
-    /// We dispatch locally (not via global hotkeys), so the package's own conflict alert
-    /// does not catch duplicates among OUR names. This finds another action using the same combo.
+    /// The sort field bound to `shortcut`, if any — reverse lookup for the key monitor.
     @MainActor
-    static func duplicateOwner(of shortcut: KeyboardShortcuts.Shortcut, excluding id: ActionID) -> ActionID? {
-        for (actionID, name) in nameByAction where actionID != id {
-            if KeyboardShortcuts.getShortcut(for: name) == shortcut { return actionID }
+    static func sortField(for shortcut: KeyboardShortcuts.Shortcut) -> SortField? {
+        sortShortcuts.first { KeyboardShortcuts.getShortcut(for: $0.name) == shortcut }?.field
+    }
+
+    /// We dispatch locally (not via global hotkeys), so the package's own conflict alert does not
+    /// catch duplicates among OUR names. This returns the display title of any OTHER of our
+    /// shortcuts (file action or sort) already bound to `shortcut`, so the two sets can't silently
+    /// share a combo.
+    @MainActor
+    static func conflictingTitle(with shortcut: KeyboardShortcuts.Shortcut, excluding name: KeyboardShortcuts.Name) -> String? {
+        for (actionID, other) in nameByAction where other != name {
+            if KeyboardShortcuts.getShortcut(for: other) == shortcut {
+                return ToolbarAction.byID[actionID]?.title ?? actionID.rawValue
+            }
+        }
+        for sort in sortShortcuts where sort.name != name {
+            if KeyboardShortcuts.getShortcut(for: sort.name) == shortcut { return sort.title }
         }
         return nil
     }
