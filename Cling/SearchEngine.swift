@@ -1777,8 +1777,31 @@ final class SearchEngine: @unchecked Sendable {
             guard let alt = qAltBytes else { return m1 }
             return m1 & alt.withUnsafeBufferPointer { letterMaskBytes($0) }
         }()
-        // Per-token byte arrays for independent multi-token scoring
-        let tokenBytes: [[UInt8]]? = fuzzyTokens.count > 1 ? fuzzyTokens.map { Array($0.utf8) } : nil
+        // Per-token byte arrays for independent multi-token scoring. NFD-normalized to match APFS
+        // storage (like qBytes), with a per-token NFC alternate (like qAltBytes) so an IME-typed
+        // CJK/accented token still matches a path stored in the other normalization form. Without
+        // this, a query like "게임플라자 공지 2026" (typed NFC) never matches the NFD-stored path in
+        // the multi-token pass, silently dropping the gap-free per-token score and its boundary
+        // bonuses, so the file sinks below less relevant results.
+        let tokenBytes: [[UInt8]]?
+        let tokenAltBytes: [[UInt8]?]
+        if fuzzyTokens.count > 1 {
+            var prim: [[UInt8]] = []
+            var alt: [[UInt8]?] = []
+            prim.reserveCapacity(fuzzyTokens.count)
+            alt.reserveCapacity(fuzzyTokens.count)
+            for tok in fuzzyTokens {
+                let nfd = Array(tok.decomposedStringWithCanonicalMapping.utf8)
+                let nfc = Array(tok.precomposedStringWithCanonicalMapping.utf8)
+                prim.append(nfd)
+                alt.append(nfc != nfd ? nfc : nil)
+            }
+            tokenBytes = prim
+            tokenAltBytes = alt
+        } else {
+            tokenBytes = nil
+            tokenAltBytes = []
+        }
         // Bitmask filter uses only ASCII letters/digits, which are identical across NFC/NFD, so no alt mask needed
         // Include extension token letters in the mask for candidate filtering
         // Only a SINGLE extension folds its letters into the conjunctive candidate-prefilter mask.
@@ -2502,25 +2525,33 @@ final class SearchEngine: @unchecked Sendable {
                                     var allTokensMatchPath = true
                                     var pathSearchFrom = 0
                                     var tokenSegMatches = 0
-                                    for token in tokens {
-                                        token.withUnsafeBufferPointer { tBuf in
-                                            guard allTokensMatchPath, pathSearchFrom < len else {
-                                                allTokensMatchPath = false; return
-                                            }
-                                            let slice = UnsafeBufferPointer(start: allBase + off + pathSearchFrom, count: len - pathSearchFrom)
-                                            if let r = fuzzyScoreBytes(tBuf, slice, boundaries: bnBounds, boundariesOffset: max(0, bnOff - pathSearchFrom)) {
-                                                tokenPathScore &+= r.score
-                                                let absStart = pathSearchFrom + r.start
-                                                let absEnd = pathSearchFrom + r.end
-                                                tokenPathStart = min(tokenPathStart, absStart)
-                                                tokenPathEnd = max(tokenPathEnd, absEnd)
-                                                // Check if match starts at a segment boundary (after / or start of path)
-                                                if absStart == 0 || allBase[off + absStart - 1] == 0x2F {
-                                                    tokenSegMatches &+= 1
-                                                }
-                                                pathSearchFrom = absEnd
-                                            } else { allTokensMatchPath = false }
+                                    for (ti, token) in tokens.enumerated() {
+                                        guard allTokensMatchPath, pathSearchFrom < len else {
+                                            allTokensMatchPath = false; break
                                         }
+                                        let slice = UnsafeBufferPointer(start: allBase + off + pathSearchFrom, count: len - pathSearchFrom)
+                                        let boff = max(0, bnOff - pathSearchFrom)
+                                        var r = token.withUnsafeBufferPointer {
+                                            fuzzyScoreBytes($0, slice, boundaries: bnBounds, boundariesOffset: boff)
+                                        }
+                                        // NFC fallback: the stored path may be in the other normalization form
+                                        if r == nil, let alt = tokenAltBytes[ti] {
+                                            r = alt.withUnsafeBufferPointer {
+                                                fuzzyScoreBytes($0, slice, boundaries: bnBounds, boundariesOffset: boff)
+                                            }
+                                        }
+                                        if let r {
+                                            tokenPathScore &+= r.score
+                                            let absStart = pathSearchFrom + r.start
+                                            let absEnd = pathSearchFrom + r.end
+                                            tokenPathStart = min(tokenPathStart, absStart)
+                                            tokenPathEnd = max(tokenPathEnd, absEnd)
+                                            // Check if match starts at a segment boundary (after / or start of path)
+                                            if absStart == 0 || allBase[off + absStart - 1] == 0x2F {
+                                                tokenSegMatches &+= 1
+                                            }
+                                            pathSearchFrom = absEnd
+                                        } else { allTokensMatchPath = false; break }
                                     }
                                     if allTokensMatchPath, tokenPathScore > pathScore {
                                         pathScore = tokenPathScore; pathWindow = tokenPathEnd - tokenPathStart
@@ -2531,19 +2562,25 @@ final class SearchEngine: @unchecked Sendable {
                                     var allTokensMatchBase = true
                                     var baseSearchFrom = 0
                                     let bnLen = len - bnOff
-                                    for token in tokens {
-                                        token.withUnsafeBufferPointer { tBuf in
-                                            guard allTokensMatchBase, baseSearchFrom < bnLen else {
-                                                allTokensMatchBase = false; return
-                                            }
-                                            let slice = UnsafeBufferPointer(start: allBase + off + bnOff + baseSearchFrom, count: bnLen - baseSearchFrom)
-                                            if let r = fuzzyScoreBytes(tBuf, slice, boundaries: bnBounds, boundariesOffset: baseSearchFrom) {
-                                                tokenBaseScore &+= r.score
-                                                tokenBaseStart = min(tokenBaseStart, baseSearchFrom + r.start)
-                                                tokenBaseEnd = max(tokenBaseEnd, baseSearchFrom + r.end)
-                                                baseSearchFrom = baseSearchFrom + r.end
-                                            } else { allTokensMatchBase = false }
+                                    for (ti, token) in tokens.enumerated() {
+                                        guard allTokensMatchBase, baseSearchFrom < bnLen else {
+                                            allTokensMatchBase = false; break
                                         }
+                                        let slice = UnsafeBufferPointer(start: allBase + off + bnOff + baseSearchFrom, count: bnLen - baseSearchFrom)
+                                        var r = token.withUnsafeBufferPointer {
+                                            fuzzyScoreBytes($0, slice, boundaries: bnBounds, boundariesOffset: baseSearchFrom)
+                                        }
+                                        if r == nil, let alt = tokenAltBytes[ti] {
+                                            r = alt.withUnsafeBufferPointer {
+                                                fuzzyScoreBytes($0, slice, boundaries: bnBounds, boundariesOffset: baseSearchFrom)
+                                            }
+                                        }
+                                        if let r {
+                                            tokenBaseScore &+= r.score
+                                            tokenBaseStart = min(tokenBaseStart, baseSearchFrom + r.start)
+                                            tokenBaseEnd = max(tokenBaseEnd, baseSearchFrom + r.end)
+                                            baseSearchFrom = baseSearchFrom + r.end
+                                        } else { allTokensMatchBase = false; break }
                                     }
                                     if allTokensMatchBase, tokenBaseScore > baseScore {
                                         baseScore = tokenBaseScore; baseWindow = tokenBaseEnd - tokenBaseStart

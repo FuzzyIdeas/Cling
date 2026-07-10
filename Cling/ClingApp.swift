@@ -429,6 +429,10 @@ class AppDelegate: LowtechProAppDelegate {
             if !settingsWindowConfigured {
                 settingsWindowConfigured = true
                 window.toolbar?.showsBaselineSeparator = false
+                // The window keeps a "Settings" title (set via navigationTitle) so it reads
+                // correctly in the Window menu / Mission Control, but we don't want the text
+                // drawn in the titlebar.
+                window.titleVisibility = .hidden
             }
         }
 

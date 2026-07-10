@@ -127,7 +127,10 @@ struct SettingsView: View {
             .toolbar(removing: .sidebarToggle)
         } detail: {
             detailView
-                .navigationTitle(nav.selection.title)
+                // Keep the window title as "Settings" (for the Window menu, Mission Control and
+                // accessibility) rather than tracking the pane; the title text is hidden in the
+                // titlebar via titleVisibility = .hidden in the AppDelegate.
+                .navigationTitle("Settings")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationSplitViewStyle(.balanced)
