@@ -1414,6 +1414,14 @@ class FuzzyClient {
                         // Add to recents engine (never blocks main thread)
                         recentsEngine.addPath(pathStr, isDir: isDir)
                         mainActor {
+                            // A recreate (atomic save via temp+rename, cloud sync, editor
+                            // delete-then-write) fires a remove event before this create.
+                            // removedFiles is only cleared wholesale at watcher startup, so
+                            // without this the reborn path stays hidden from the UI (which
+                            // filters results by removedFiles) even though it's back on disk
+                            // and in the index — the CLI, which applies no such filter, still
+                            // shows it. Un-remove it so the UI and index agree again.
+                            self.removedFiles.remove(pathStr)
                             let isNew = !self.seenPaths.contains(pathStr)
                             self.seenPaths.insert(pathStr)
                             if isNew { self.indexedCount &+= 1 }
