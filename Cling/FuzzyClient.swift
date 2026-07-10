@@ -1318,7 +1318,9 @@ class FuzzyClient {
             await MainActor.run {
                 self.scopeIndexTask = nil
                 self.scopesIndexing.removeAll()
-                self.cleanRecentsEngine()
+            }
+            await self.cleanRecentsEngine()
+            await MainActor.run {
                 self.excludedPaths.removeAll()
                 onFinish?()
                 self.indexing = false
@@ -1332,11 +1334,19 @@ class FuzzyClient {
         }
     }
 
-    func cleanRecentsEngine() {
-        let entries = recentsEngine.entries
+    /// `.exists`/`isIgnored`/`isPathBlocked` all stat() the filesystem, so every check runs OFF the
+    /// main actor: with many recents entries, or a slow/unresponsive volume holding an `.fsignore`,
+    /// it was hanging the UI for 30s (App Hang: CLING-7, CLING-1A). Only the snapshot of main-actor
+    /// state and the final mutations touch the main actor.
+    nonisolated func cleanRecentsEngine() async {
         let homePrefix = HOME.string + "/"
-        let ignoreFile: String? = fsignore.exists ? fsignoreString : nil
-        let volumeFsignores: [(prefix: String, fsignore: String)] = enabledVolumes.compactMap { volume in
+        // Snapshot main-actor state; the filesystem checks below all run off the main actor.
+        let (entries, fsignoreFile, fsignoreStr, volumes, liveChanges) = await MainActor.run {
+            (recentsEngine.entries, fsignore, fsignoreString, enabledVolumes, liveIndexChanges.map(\.path))
+        }
+
+        let ignoreFile: String? = fsignoreFile.exists ? fsignoreStr : nil
+        let volumeFsignores: [(prefix: String, fsignore: String)] = volumes.compactMap { volume -> (prefix: String, fsignore: String)? in
             let vfsignore = volume / ".fsignore"
             guard vfsignore.exists else { return nil }
             return (volume.string + "/", vfsignore.string)
@@ -1344,33 +1354,27 @@ class FuzzyClient {
 
         log.debug("cleanRecentsEngine: \(entries.count) entries, ignoreFile=\(ignoreFile ?? "nil")")
 
-        var toRemove: [String] = []
-        var i = 0
-        while i < entries.count {
-            let entry = entries[i]
-            let path = entry.path
-            if !path.isEmpty {
-                if isPathBlocked(path) {
-                    toRemove.append(path)
-                } else if let ignoreFile, path.hasPrefix(homePrefix), path.isIgnored(in: ignoreFile) {
-                    toRemove.append(path)
-                } else if volumeFsignores.contains(where: { path.hasPrefix($0.prefix) && path.isIgnored(in: $0.fsignore) }) {
-                    toRemove.append(path)
-                }
+        /// Filesystem-touching predicate; evaluated off the main actor.
+        func shouldRemove(_ path: String) -> Bool {
+            if path.isEmpty { return false }
+            if isPathBlocked(path) { return true }
+            if let ignoreFile, path.hasPrefix(homePrefix), path.isIgnored(in: ignoreFile) { return true }
+            return volumeFsignores.contains { path.hasPrefix($0.prefix) && path.isIgnored(in: $0.fsignore) }
+        }
+
+        let toRemove = entries.map(\.path).filter(shouldRemove)
+        let liveToRemove = Set(liveChanges.filter(shouldRemove))
+
+        await MainActor.run {
+            for path in toRemove {
+                recentsEngine.removePath(path)
             }
-            i += 1
-        }
-        for path in toRemove {
-            recentsEngine.removePath(path)
-        }
-        liveIndexChanges.removeAll { change in
-            isPathBlocked(change.path) || (ignoreFile != nil && change.path.hasPrefix(homePrefix) && change.path.isIgnored(in: ignoreFile!)) ||
-                volumeFsignores.contains(where: { change.path.hasPrefix($0.prefix) && change.path.isIgnored(in: $0.fsignore) })
-        }
-        if !toRemove.isEmpty {
-            logActivity("Cleaned \(toRemove.count) ignored path\(toRemove.count == 1 ? "" : "s") from recents")
-            updateIndexedCount()
-            if noQuery { updateDefaultResults(debounce: true) }
+            self.liveIndexChanges.removeAll { liveToRemove.contains($0.path) }
+            if !toRemove.isEmpty {
+                self.logActivity("Cleaned \(toRemove.count) ignored path\(toRemove.count == 1 ? "" : "s") from recents")
+                self.updateIndexedCount()
+                if self.noQuery { self.updateDefaultResults(debounce: true) }
+            }
         }
         log.debug("cleanRecentsEngine: removed \(toRemove.count) paths")
     }
@@ -1587,15 +1591,12 @@ class FuzzyClient {
 
                 guard !cancelFlag else { return }
 
-                // Show first engine results immediately
+                // Show first engine results immediately. The stale-path filter stat()s each result,
+                // so it runs off the main actor (see existingResultPaths) to avoid hanging the UI.
                 let interim = Self.mergeResults(firstResults, maxResults: maxResults)
+                let interimPaths = await self.existingResultPaths(from: interim)
                 await MainActor.run {
-                    self.scoredResults = interim.compactMap { r in
-                        guard let fp = r.path.filePath else { return nil }
-                        fp.cache(r.isDir, forKey: \.isDir)
-                        fp.cache(r.sourceLabel, forKey: \.sourceIndex)
-                        return fp
-                    }.filter { $0.memoz.isOnExternalVolume ? true : $0.exists }
+                    self.scoredResults = interimPaths
                     self.results = self.sortedResults()
                 }
 
@@ -1639,16 +1640,10 @@ class FuzzyClient {
             }
 
             let searchResults = Self.mergeResults(accumulated, maxResults: maxResults)
+            let finalPaths = await self.existingResultPaths(from: searchResults)
 
             await MainActor.run {
-                self.scoredResults = searchResults.compactMap { result in
-                    guard let fp = result.path.filePath else { return nil }
-                    fp.cache(result.isDir, forKey: \.isDir)
-                    fp.cache(result.sourceLabel, forKey: \.sourceIndex)
-                    return fp
-                }.filter {
-                    $0.memoz.isOnExternalVolume ? true : $0.exists
-                }
+                self.scoredResults = finalPaths
                 self.results = self.sortedResults()
                 self.searching = false
                 if !self.emptyQuery || wantVolumeFilter {
@@ -1656,6 +1651,24 @@ class FuzzyClient {
                 }
             }
         }
+    }
+
+    /// Build the display `FilePath`s for a batch of results and drop stale (deleted) local paths.
+    /// `exists` calls `fileExists` (a blocking `stat()`), so the check runs OFF the main actor: a
+    /// single unresponsive volume was freezing the UI for 30s (App Hang: CLING-13/-14/-10/-1A).
+    /// Paths on external volumes are kept without stat'ing, and that classification needs main-actor
+    /// state (`FUZZY.externalVolumes`), so only it runs on the main actor. memoz/cache are
+    /// NSCache-backed and thread-safe, so building the paths across the hop is safe.
+    nonisolated func existingResultPaths(from results: [SearchResult]) async -> [FilePath] {
+        let built: [(fp: FilePath, checkExists: Bool)] = await MainActor.run {
+            results.compactMap { r -> (fp: FilePath, checkExists: Bool)? in
+                guard let fp = r.path.filePath else { return nil }
+                fp.cache(r.isDir, forKey: \.isDir)
+                fp.cache(r.sourceLabel, forKey: \.sourceIndex)
+                return (fp, !fp.memoz.isOnExternalVolume)
+            }
+        }
+        return built.compactMap { $0.checkExists ? ($0.fp.exists ? $0.fp : nil) : $0.fp }
     }
 
     func reloadResults() {
