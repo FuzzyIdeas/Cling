@@ -1,3 +1,12 @@
+# 2.6.5
+
+**[Download Cling 2.6.5 →](https://files.lowtechguys.com/releases/Cling-2.6.5.dmg)**
+## Fixes
+
+- Multi-word searches for files with Korean, Japanese, or accented names now find the file even when extra text sits between your search terms
+- A slow or unresponsive drive no longer freezes the app while showing search results or tidying up after indexing
+- Loading the list of installed apps (used for the Open With menu) no longer risks a brief freeze
+
 # 2.6.4
 
 **[Download Cling 2.6.4 →](https://files.lowtechguys.com/releases/Cling-2.6.4.dmg)**
