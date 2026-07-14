@@ -1,3 +1,32 @@
+# 2.6.6
+
+**[Download Cling 2.6.6 →](https://files.lowtechguys.com/releases/Cling-2.6.6.dmg)**
+## Features
+
+- **Stash**: press `⌘S` to pin the selected files to a stash that stays above the results while you keep searching
+    > Fully editable: `⌘S` again unstashes, right-click adds or removes files, and the *Clear* button (or `⌘⇧S`) empties it. The stash survives restarts.
+    >
+    > Stashed rows keep every file action: open, Quick Look, copy, send, drag out, trash
+    >
+    > Files can auto-clear after a chosen time, set in *Settings -> Open with*
+
+- **Sort shortcuts** reorder results from the keyboard, rebindable in Settings, under Shortcuts
+    > `⌃N` Name · `⌃P` Path · `⌃S` Size · `⌃D` Date · `⌃0` Relevance
+    >
+    > Press the same key again to flip between ascending and descending
+    >
+    > Hold `⌘` to see each column's sort shortcut in its header
+    >
+    > Clicking the Size or Date Modified column header now sorts largest and newest first; Name and Path still start ascending
+
+- **Add files to an active room**: select more files and press *Add to this room* in the *Transfers* panel to put them into a *Send Securely* link you already shared
+
+## Fixes
+
+- Files saved again by an editor or re-synced by a cloud service (Dropbox, iCloud) no longer disappear from search until the next restart; they reappear the moment they're written back to disk
+- `⌘⌫` moves the selected files to the trash again, and the shortcut hints shown while holding `⌘` no longer disappear for good after trying to trash
+- Files with Korean or accented names no longer go missing from multi-word searches or rank below less relevant results
+
 # 2.6.5
 
 **[Download Cling 2.6.5 →](https://files.lowtechguys.com/releases/Cling-2.6.5.dmg)**
