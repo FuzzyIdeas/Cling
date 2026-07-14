@@ -4,7 +4,7 @@
 ## Features
 
 - **Stash**: press `⌘S` to pin the selected files to a stash that stays above the results while you keep searching
-    > Fully editable: `⌘S` again unstashes, right-click adds or removes files, and the *Clear* button (or `⌘⇧S`) empties it. The stash survives restarts.
+    > Fully editable: `⌘S` again unstashes, right-click adds or removes files, and the red trash button in its header (or `⌘⇧S`) empties it. The stash survives restarts.
     >
     > Stashed rows keep every file action: open, Quick Look, copy, send, drag out, trash
     >
@@ -21,11 +21,21 @@
 
 - **Add files to an active room**: select more files and press *Add to this room* in the *Transfers* panel to put them into a *Send Securely* link you already shared
 
+- **Hide toolbar rows**: right-click the action, *Open with*, or script row for a quick hide option
+    > Double-tap a modifier key of your choice (set in *Settings > Style > Rows*) to hide or show all three rows at once
+    >
+    > With every row hidden, the results table takes over the freed space
+
 ## Fixes
 
+- No more freezes of 30+ seconds at launch when Spotlight is slow to return the recent files (on busy or slow disks)
 - Files saved again by an editor or re-synced by a cloud service (Dropbox, iCloud) no longer disappear from search until the next restart; they reappear the moment they're written back to disk
 - `⌘⌫` moves the selected files to the trash again, and the shortcut hints shown while holding `⌘` no longer disappear for good after trying to trash
 - Files with Korean or accented names no longer go missing from multi-word searches or rank below less relevant results
+
+## Improvements
+
+- Script shortcut hints use a warm amber in dark mode instead of the hard-to-read dark red
 
 # 2.6.5
 
