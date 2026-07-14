@@ -96,6 +96,18 @@ enum ShortcutTint {
     static let action = Color.blue
     static let alternate = Color.orange
     static let apps = Color.red
-    /// A darker, less saturated red so it stays distinct from Apps and legible on light backgrounds.
-    static let scripts = Color(red: 0.62, green: 0.26, blue: 0.26)
+    /// Distinct from Apps' red: dark brick on light backgrounds, and a muted honey amber
+    /// (skin-tone warm, clearly duller than the orange alternates) in dark mode, where the
+    /// brick variant was barely readable.
+    static let scripts = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(red: 0.85, green: 0.67, blue: 0.48, alpha: 1)
+            : NSColor(red: 0.62, green: 0.26, blue: 0.26, alpha: 1)
+    })
+
+    /// Glyph color for text drawn ON the scripts tint: the dark-mode amber is light, so it
+    /// needs black text; the light-mode brick stays fine with white.
+    static let onScripts = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .black : .white
+    })
 }

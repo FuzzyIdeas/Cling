@@ -58,6 +58,8 @@ struct ModifierComboHint: View {
     let secondaryHeld: Bool
     /// Row tint, matching that row's shortcut hint color.
     var tint: Color = ShortcutTint.action
+    /// Glyph color on a pressed (tint-filled) keycap; light tints need black text.
+    var pressedText: Color = .white
 
     var body: some View {
         HStack(spacing: 2) {
@@ -81,7 +83,7 @@ struct ModifierComboHint: View {
     private func keycap(_ glyph: String, pressed: Bool) -> some View {
         Text(glyph)
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(pressed ? .white : .secondary)
+            .foregroundStyle(pressed ? pressedText : .secondary)
             .frame(minWidth: 13)
             .padding(.horizontal, 3).padding(.vertical, 1.5)
             .background {

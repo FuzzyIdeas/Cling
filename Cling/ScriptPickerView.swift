@@ -156,7 +156,7 @@ struct ScriptActionButtons: View {
                 Spacer()
             } else {
                 if comboHintVisible {
-                    ModifierComboHint(secondary: "⌃", secondaryHeld: ctrlHeld, tint: ShortcutTint.scripts)
+                    ModifierComboHint(secondary: "⌃", secondaryHeld: ctrlHeld, tint: ShortcutTint.scripts, pressedText: ShortcutTint.onScripts)
                         .transition(.opacity)
                 }
                 ScrollView(.horizontal, showsIndicators: false) {
