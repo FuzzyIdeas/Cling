@@ -385,90 +385,43 @@ extension View {
     }
 }
 
-// MARK: - TableScrollSync
+// MARK: - TableRegistry
 
-/// Mirrors horizontal scrolling between the pinned stash table and the results table so their
-/// columns stay visually aligned, and configures the stash table's scrollers and exact height.
+/// Weak handles to the results and stash tables' scroll views, so the header-hosted buttons
+/// (score sort, stash clear) and the ⌘ sort hints can find their tables.
 @MainActor
-final class TableScrollSync {
-    static let shared = TableScrollSync()
+final class TableRegistry {
+    static let shared = TableRegistry()
 
-    /// While the whole stash fits (no internal scrolling), keep it pinned to the top so trackpad
-    /// pans can't wiggle the rows into the document's bottom padding.
-    var stashVerticalLock = false
-
-    /// The table document's bottom padding below the last row. Only measurable while the document
-    /// view is NOT stretched to fill the clip (otherwise the stretch leaks into the value), so it
-    /// gets cached from the first unstretched layout pass.
-    var stashBottomPad: CGFloat?
-
-    /// The table currently showing column headers: the stash table while it's on screen
-    /// (it carries the headers then), otherwise the results table.
+    /// The results table, which carries the primary column headers (the stash panel has its own
+    /// header, but the ⌘ sort hints and the score button live on the results header).
     var headerTableView: NSTableView? {
-        let scrollView = stashScrollView?.window != nil ? stashScrollView : resultsScrollView
-        return scrollView?.documentView as? NSTableView
+        resultsScrollView?.documentView as? NSTableView
+    }
+
+    /// The stash table, while its panel is on screen (its icon column header hosts the clear button).
+    var stashTableView: NSTableView? {
+        guard let scrollView = stashScrollView, scrollView.window != nil else { return nil }
+        return scrollView.documentView as? NSTableView
     }
 
     func register(_ scrollView: NSScrollView, isStash: Bool) {
         if isStash { stashScrollView = scrollView } else { resultsScrollView = scrollView }
-        // Keyed by the clip view, not the scroll view: the stash swaps its clip view for the
-        // locking subclass, and the observer must follow to the new object.
-        let id = ObjectIdentifier(scrollView.contentView)
-        guard !observed.contains(id) else { return }
-        observed.insert(id)
-        scrollView.contentView.postsBoundsChangedNotifications = true
-        NotificationCenter.default.addObserver(
-            forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main
-        ) { [weak scrollView] _ in
-            guard let scrollView else { return }
-            MainActor.assumeIsolated { TableScrollSync.shared.boundsChanged(in: scrollView) }
-        }
     }
 
     private weak var stashScrollView: NSScrollView?
     private weak var resultsScrollView: NSScrollView?
-    private var observed = Set<ObjectIdentifier>()
-    private var syncing = false
-
-    private func boundsChanged(in source: NSScrollView) {
-        guard !syncing else { return }
-        syncing = true
-        defer { syncing = false }
-
-        // Pin the locked stash to its top edge (origin sits at -inset when scrolled to top).
-        if source === stashScrollView, stashVerticalLock {
-            let top = -source.contentView.contentInsets.top
-            if abs(source.contentView.bounds.origin.y - top) > 0.5 {
-                source.contentView.bounds.origin.y = top
-                source.reflectScrolledClipView(source.contentView)
-            }
-        }
-
-        // Mirror horizontal scrolling to the other table.
-        let target = source === stashScrollView ? resultsScrollView : stashScrollView
-        guard let target, target !== source else { return }
-        let x = source.contentView.bounds.origin.x
-        guard abs(target.contentView.bounds.origin.x - x) > 0.5 else { return }
-        target.contentView.bounds.origin.x = x
-        target.reflectScrolledClipView(target.contentView)
-    }
 }
 
 extension View {
-    /// Registers the table for mirrored horizontal scrolling. With `isStash: true` it also hides
-    /// the horizontal scrollbar, disables vertical scrolling while every row fits (`lockVertical`)
-    /// and reports into `fittingHeight` the exact height showing `visibleRows` rows + header,
-    /// derived from the live layout so intercell spacing and header height are always right.
-    func syncedTableScroll(
+    /// Registers the table with `TableRegistry` (for the header-hosted buttons). With
+    /// `isStash: true` it also hides the scrollbars and blocks user scrolling entirely
+    /// while every row fits (`lockVertical`).
+    func tableRegistration(
         isStash: Bool,
-        lockVertical: Bool = false,
-        visibleRows: Int = 0,
-        fittingHeight: Binding<CGFloat>? = nil
+        lockVertical: Bool = false
     ) -> some View {
-        background(TableScrollConfigurator(
-            isStash: isStash, lockVertical: lockVertical,
-            visibleRows: visibleRows, fittingHeight: fittingHeight
-        ))
+        background(TableScrollConfigurator(isStash: isStash, lockVertical: lockVertical))
     }
 }
 
@@ -477,8 +430,6 @@ extension View {
 private struct TableScrollConfigurator: NSViewRepresentable {
     let isStash: Bool
     let lockVertical: Bool
-    let visibleRows: Int
-    let fittingHeight: Binding<CGFloat>?
 
     func makeNSView(context _: Context) -> NSView {
         let view = NSView(frame: .zero)
@@ -505,9 +456,9 @@ private struct TableScrollConfigurator: NSViewRepresentable {
                 .compactMap(\.enclosingScrollView)
                 .first { $0.convert($0.bounds, to: nil).contains(center) }
             guard let scrollView else { return }
-            // Hard-block vertical scrolling while everything fits: swap in a clip view whose
-            // constrainBoundsRect clamps the vertical origin, so pans, momentum and bounces can't
-            // move the rows at all (the reactive pin below only snaps back after the fact).
+            // Hard-block scrolling while everything fits: swap in a clip view whose
+            // constrainBoundsRect clamps the origin, so pans, momentum and bounces can't
+            // move the rows at all.
             // Only when the table uses a plain NSClipView; never discard a custom subclass.
             if isStash, type(of: scrollView.contentView) == NSClipView.self, let doc = scrollView.documentView {
                 let old = scrollView.contentView
@@ -519,37 +470,18 @@ private struct TableScrollConfigurator: NSViewRepresentable {
                 scrollView.contentView = clip
                 scrollView.documentView = doc
             }
-            TableScrollSync.shared.register(scrollView, isStash: isStash)
-            // Both tables call this on every update so the score button follows the headers
-            // when they move between the stash and results tables.
+            TableRegistry.shared.register(scrollView, isStash: isStash)
+            // Both tables call these on every update so the header buttons install as soon as
+            // their table exists and get cleaned up when it goes away.
             SortHintBadges.shared.syncScoreButton()
+            SortHintBadges.shared.syncStashClearButton()
             guard isStash else { return }
 
             (scrollView.contentView as? LockableClipView)?.lockScrolling = lockVertical
-            TableScrollSync.shared.stashVerticalLock = lockVertical
             scrollView.hasHorizontalScroller = false
             scrollView.horizontalScrollElasticity = .none
             scrollView.hasVerticalScroller = !lockVertical
             scrollView.verticalScrollElasticity = lockVertical ? .none : .automatic
-
-            if let fittingHeight, let table = scrollView.documentView as? NSTableView, table.numberOfRows > 0 {
-                // Exact fit = the floating header's inset on the clip view + the bottom edge of
-                // the last visible row + the document's own bottom padding. Row rects are immune
-                // to the document-view stretching that made frame-based math either overshoot
-                // (never shrink) or undershoot (clip rows).
-                let insetTop = scrollView.contentView.contentInsets.top
-                let clipDocArea = scrollView.contentView.bounds.height - insetTop
-                let lastRowBottom = table.rect(ofRow: table.numberOfRows - 1).maxY
-                if table.frame.height > clipDocArea + 0.5 {
-                    TableScrollSync.shared.stashBottomPad = max(0, table.frame.height - lastRowBottom)
-                }
-                let pad = TableScrollSync.shared.stashBottomPad ?? max(0, table.rect(ofRow: 0).minY) * 2
-                let rows = min(max(visibleRows, 1), table.numberOfRows)
-                let height = insetTop + table.rect(ofRow: rows - 1).maxY + pad
-                if height > 0, abs(fittingHeight.wrappedValue - height) > 0.5 {
-                    fittingHeight.wrappedValue = height
-                }
-            }
         }
     }
 }
@@ -567,7 +499,8 @@ final class SortHintBadges {
         hintsVisible = visible
         hide()
         syncScoreButton()
-        guard visible, let table = TableScrollSync.shared.headerTableView,
+        syncStashClearButton()
+        guard visible, let table = TableRegistry.shared.headerTableView,
               let header = table.headerView else { return }
         for (index, column) in table.tableColumns.enumerated() {
             guard let name = Self.shortcutByColumnTitle[column.title],
@@ -590,7 +523,7 @@ final class SortHintBadges {
     /// Idempotent; the table configurators call it on every update so the button follows the
     /// headers when they move between the stash and results tables.
     func syncScoreButton() {
-        guard let table = TableScrollSync.shared.headerTableView, let header = table.headerView,
+        guard let table = TableRegistry.shared.headerTableView, let header = table.headerView,
               !table.tableColumns.isEmpty
         else {
             scoreHost?.removeFromSuperview()
@@ -615,6 +548,33 @@ final class SortHintBadges {
         )
     }
 
+    /// Same idea as `syncScoreButton`, for the stash table: a red trash button in its icon
+    /// column's header that clears the stash, swapped for the clear-shortcut badge while ⌘ is held.
+    func syncStashClearButton() {
+        guard let table = TableRegistry.shared.stashTableView, let header = table.headerView,
+              !table.tableColumns.isEmpty
+        else {
+            stashClearHost?.removeFromSuperview()
+            stashClearHost = nil
+            return
+        }
+        let host = stashClearHost ?? NSHostingView(rootView: StashClearHeaderCell(hintText: nil))
+        stashClearHost = host
+        host.rootView = StashClearHeaderCell(
+            hintText: hintsVisible ? KeyboardShortcuts.getShortcut(for: .clStashClear)?.description : nil
+        )
+        if host.superview !== header {
+            host.removeFromSuperview()
+            header.addSubview(host)
+        }
+        host.frame.size = host.fittingSize
+        let colRect = table.rect(ofColumn: 0)
+        host.frame.origin = NSPoint(
+            x: colRect.minX + max(2, (colRect.width - host.frame.width) / 2),
+            y: (header.frame.height - host.frame.height) / 2
+        )
+    }
+
     private static let shortcutByColumnTitle: [String: KeyboardShortcuts.Name] = [
         "Name": .clSortByName,
         "Path": .clSortByPath,
@@ -625,6 +585,7 @@ final class SortHintBadges {
     private var badges: [NSView] = []
     private var hintsVisible = false
     private var scoreHost: NSHostingView<ScoreHeaderCell>?
+    private var stashClearHost: NSHostingView<StashClearHeaderCell>?
 
     private func hide() {
         badges.forEach { $0.removeFromSuperview() }
@@ -662,13 +623,39 @@ private struct ScoreHeaderCell: View {
 
 private struct SortHintBadge: View {
     let text: String
+    var color: Color = ShortcutTint.action
 
     var body: some View {
         Text(text)
             .font(.caption.weight(.semibold))
-            .foregroundStyle(ShortcutTint.action)
+            .foregroundStyle(color)
             .padding(.horizontal, 4).padding(.vertical, 1)
             .background(.background.opacity(0.85), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+    }
+}
+
+// MARK: - StashClearHeaderCell
+
+/// The stash table's icon column header content: a red trash button that clears the stash,
+/// or (while ⌘ is held) the clear shortcut's hint badge.
+private struct StashClearHeaderCell: View {
+    let hintText: String?
+
+    var body: some View {
+        if let hintText, !hintText.isEmpty {
+            SortHintBadge(text: hintText, color: .red)
+        } else {
+            Button {
+                STASH.clear()
+            } label: {
+                Image(systemName: "trash.circle.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.red.opacity(0.8))
+                    .opacity(0.75)
+            }
+            .buttonStyle(.borderless)
+            .help("Remove all files from the stash (\(KeyboardShortcuts.getShortcut(for: .clStashClear)?.description ?? "⇧⌘S"))")
+        }
     }
 }
 
