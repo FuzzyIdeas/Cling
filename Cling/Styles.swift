@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import KeyboardShortcuts
 import Lowtech
 import SwiftUI
 
@@ -401,6 +402,13 @@ final class TableScrollSync {
     /// gets cached from the first unstretched layout pass.
     var stashBottomPad: CGFloat?
 
+    /// The table currently showing column headers: the stash table while it's on screen
+    /// (it carries the headers then), otherwise the results table.
+    var headerTableView: NSTableView? {
+        let scrollView = stashScrollView?.window != nil ? stashScrollView : resultsScrollView
+        return scrollView?.documentView as? NSTableView
+    }
+
     func register(_ scrollView: NSScrollView, isStash: Bool) {
         if isStash { stashScrollView = scrollView } else { resultsScrollView = scrollView }
         // Keyed by the clip view, not the scroll view: the stash swaps its clip view for the
@@ -512,6 +520,9 @@ private struct TableScrollConfigurator: NSViewRepresentable {
                 scrollView.documentView = doc
             }
             TableScrollSync.shared.register(scrollView, isStash: isStash)
+            // Both tables call this on every update so the score button follows the headers
+            // when they move between the stash and results tables.
+            SortHintBadges.shared.syncScoreButton()
             guard isStash else { return }
 
             (scrollView.contentView as? LockableClipView)?.lockScrolling = lockVertical
@@ -540,6 +551,124 @@ private struct TableScrollConfigurator: NSViewRepresentable {
                 }
             }
         }
+    }
+}
+
+// MARK: - SortHintBadges
+
+/// Shows each sort shortcut as a badge at the right edge of its column header while ⌘ is held.
+/// Badges are absolutely-positioned subviews INSIDE the table's header view, so they never change
+/// any layout, and they ride along with column resizing and horizontal scrolling for free.
+@MainActor
+final class SortHintBadges {
+    static let shared = SortHintBadges()
+
+    func setVisible(_ visible: Bool) {
+        hintsVisible = visible
+        hide()
+        syncScoreButton()
+        guard visible, let table = TableScrollSync.shared.headerTableView,
+              let header = table.headerView else { return }
+        for (index, column) in table.tableColumns.enumerated() {
+            guard let name = Self.shortcutByColumnTitle[column.title],
+                  let shortcut = KeyboardShortcuts.getShortcut(for: name) else { continue }
+            let badge = NSHostingView(rootView: SortHintBadge(text: shortcut.description))
+            badge.frame.size = badge.fittingSize
+            let colRect = table.rect(ofColumn: index)
+            let x = colRect.maxX - badge.frame.width - 6
+            // Skip badges that wouldn't fit next to the title in a narrow column.
+            guard x >= colRect.minX + 30 else { continue }
+            badge.frame.origin = NSPoint(x: x, y: (header.frame.height - badge.frame.height) / 2)
+            header.addSubview(badge)
+            badges.append(badge)
+        }
+    }
+
+    /// Keeps the score-sort button installed in the (otherwise empty) icon column's header slot
+    /// of whichever table currently shows headers. While ⌘ is held the button's spot shows the
+    /// relevance shortcut badge instead: the 20pt column only fits one element at a time.
+    /// Idempotent; the table configurators call it on every update so the button follows the
+    /// headers when they move between the stash and results tables.
+    func syncScoreButton() {
+        guard let table = TableScrollSync.shared.headerTableView, let header = table.headerView,
+              !table.tableColumns.isEmpty
+        else {
+            scoreHost?.removeFromSuperview()
+            scoreHost = nil
+            return
+        }
+        let host = scoreHost ?? NSHostingView(rootView: ScoreHeaderCell(hintText: nil))
+        scoreHost = host
+        host.rootView = ScoreHeaderCell(
+            hintText: hintsVisible ? KeyboardShortcuts.getShortcut(for: .clSortByScore)?.description : nil
+        )
+        if host.superview !== header {
+            host.removeFromSuperview()
+            header.addSubview(host)
+        }
+        host.frame.size = host.fittingSize
+        let colRect = table.rect(ofColumn: 0)
+        host.frame.origin = NSPoint(
+            // Center in the icon column; a wider hint badge left-anchors and overflows rightward.
+            x: colRect.minX + max(2, (colRect.width - host.frame.width) / 2),
+            y: (header.frame.height - host.frame.height) / 2
+        )
+    }
+
+    private static let shortcutByColumnTitle: [String: KeyboardShortcuts.Name] = [
+        "Name": .clSortByName,
+        "Path": .clSortByPath,
+        "Size": .clSortBySize,
+        "Date Modified": .clSortByDate,
+    ]
+
+    private var badges: [NSView] = []
+    private var hintsVisible = false
+    private var scoreHost: NSHostingView<ScoreHeaderCell>?
+
+    private func hide() {
+        badges.forEach { $0.removeFromSuperview() }
+        badges = []
+    }
+}
+
+// MARK: - ScoreHeaderCell
+
+/// The icon column's header content: the relevance-sort flag button, or (while ⌘ is held)
+/// the same hint badge style the other column headers use.
+private struct ScoreHeaderCell: View {
+    let hintText: String?
+
+    var body: some View {
+        if let hintText, !hintText.isEmpty {
+            SortHintBadge(text: hintText)
+        } else {
+            Button {
+                NotificationCenter.default.post(name: .clingSortByScore, object: nil)
+            } label: {
+                Image(systemName: "flag.pattern.checkered.circle" + (fuzzy.sortField == .score ? ".fill" : ""))
+                    .font(.system(size: 13))
+                    .opacity(fuzzy.sortField == .score ? 1 : 0.5)
+            }
+            .buttonStyle(.borderless)
+            .help("Sort by score (\(KeyboardShortcuts.getShortcut(for: .clSortByScore)?.description ?? "⌃0"))")
+        }
+    }
+
+    @State private var fuzzy: FuzzyClient = FUZZY
+}
+
+// MARK: - SortHintBadge
+
+private struct SortHintBadge: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(ShortcutTint.action)
+            .padding(.horizontal, 4).padding(.vertical, 1)
+            .background(.background.opacity(0.85), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
     }
 }
 

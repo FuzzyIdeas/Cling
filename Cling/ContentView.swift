@@ -254,6 +254,8 @@ struct ContentView: View {
     @State private var renamedPaths: [FilePath]? = nil
     @State private var fuzzy: FuzzyClient = FUZZY
     @State private var stash: StashManager = STASH
+    @ObservedObject private var km = KM
+    @State private var sortHintsVisible = false
     @State private var appearance = AM
     @State private var scriptManager: ScriptManager = SM
     @State private var selectedResults = Set<FilePath>()
@@ -1028,14 +1030,7 @@ struct ContentView: View {
             // Shares the results table's sortOrder binding: while the stash is visible this table
             // carries the (only) column headers, so its header clicks must drive the results
             // sorting. The stash rows themselves keep insertion order regardless.
-            ZStack(alignment: .topTrailing) {
-                stashTable
-                // The score-sort button rides along with the column headers, which live here
-                // while the stash is visible.
-                scoreSortButton
-                    .padding(.trailing, 6)
-                    .padding(.top, 5)
-            }
+            stashTable
         }
     }
 
@@ -1123,20 +1118,6 @@ struct ContentView: View {
             Spacer()
         }
         .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 2)
-    }
-
-    private var scoreSortButton: some View {
-        Button(action: {
-            fuzzy.sortField = .score
-            fuzzy.reverseSort = true
-            sortOrder = [] // drop the sort indicator from the previously clicked column
-        }) {
-            Image(systemName: "flag.pattern.checkered.circle" + (fuzzy.sortField == .score ? ".fill" : ""))
-                .font(.system(size: 14))
-                .opacity(fuzzy.sortField == .score ? 1 : 0.5)
-        }
-        .buttonStyle(BorderlessButtonStyle())
-        .help("Sort by score (Control-0)")
     }
 
     private var resultsList: some View {
@@ -1250,19 +1231,21 @@ struct ContentView: View {
                 .syncedTableScroll(isStash: false)
                 .padding(6)
 
-                // With the stash visible the score-sort button lives in the results strip instead;
-                // there's no header area here to anchor it over.
-                if stash.files.isEmpty {
-                    scoreSortButton
-                        .padding(.trailing, 6)
-                        .padding(.top, 9)
-                }
             }
             .background(.background.opacity(0.3))
 
             if !fuzzy.noQuery {
                 MissingPathResultsBar(query: fuzzy.query)
             }
+        }
+        .revealShortcutHints(held: km.lcmd || km.rcmd, visible: $sortHintsVisible)
+        .onChange(of: sortHintsVisible) { _, visible in
+            SortHintBadges.shared.setVisible(visible)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .clingSortByScore)) { _ in
+            fuzzy.sortField = .score
+            fuzzy.reverseSort = true
+            sortOrder = [] // drop the sort indicator from the previously clicked column
         }
         .onReceive(NotificationCenter.default.publisher(for: .clingRequestExcludeSheet)) { notif in
             guard let paths = notif.object as? [FilePath], !paths.isEmpty else { return }

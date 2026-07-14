@@ -11,6 +11,7 @@ extension Notification.Name {
     static let clingRequestRename = Notification.Name("cling.requestRename")
     static let clingDidCreateFiles = Notification.Name("cling.didCreateFiles")
     static let clingRequestExcludeSheet = Notification.Name("cling.requestExcludeSheet")
+    static let clingSortByScore = Notification.Name("cling.sortByScore")
 }
 
 // MARK: - RightClickMenu
