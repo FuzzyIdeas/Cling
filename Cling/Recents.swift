@@ -45,6 +45,12 @@ let sortComparator: MDQuerySortComparatorFunction = { values1, values2, context 
 /// ignore checks concurrently or assign results out of order.
 let recentsFilterQueue = DispatchQueue(label: "fyi.lowtechguys.cling.recents-filter", qos: .userInitiated)
 
+/// The MDQuery lives on this queue (`MDQuerySetDispatchQueue`), so its finish/update callbacks and
+/// every result access run here, never on the main thread. `MDItemCopyAttribute` does a synchronous
+/// metadata-server round trip per item, and iterating thousands of results on the main thread hung
+/// the app for 30s+ on slow disks or a busy Spotlight (CLING-1F).
+let mdQueryQueue = DispatchQueue(label: "fyi.lowtechguys.cling.mdquery", qos: .userInitiated)
+
 // MARK: - RecentsFilterState
 
 /// Main-actor snapshot of the state `filterRecentPaths` needs, so the filtering can run off-main.
@@ -63,9 +69,9 @@ struct RecentsFilterState {
 }
 
 extension MDQuery {
-    /// Pulls the raw result paths off the query. Touches the Spotlight query, so it stays on the
-    /// main actor; the expensive ignore filtering happens separately in `filterRecentPaths`.
-    @MainActor
+    /// Pulls the raw result paths off the query. Touches the Spotlight query, so it must run on
+    /// `mdQueryQueue` (the query's dispatch queue, where the finish/update callbacks arrive);
+    /// the expensive ignore filtering happens separately in `filterRecentPaths`.
     func extractPaths() -> [FilePath] {
         MDQueryDisableUpdates(self)
         defer { MDQueryEnableUpdates(self) }
@@ -115,8 +121,9 @@ let queryFinishCallback: CFNotificationCallback = { notificationCenter, observer
     guard let object: UnsafeRawPointer else { return }
     let query: MDQuery = unsafeBitCast(object, to: MDQuery.self)
 
+    // Delivered on mdQueryQueue: extract here, off the main thread (CLING-1F).
+    let raw = query.extractPaths()
     mainActor {
-        let raw = query.extractPaths()
         let state = RecentsFilterState.current()
         recentsFilterQueue.async {
             let mdPaths = filterRecentPaths(raw, state)
@@ -139,32 +146,35 @@ let queryUpdateCallback: CFNotificationCallback = { notificationCenter, observer
 
     let query: MDQuery = unsafeBitCast(object, to: MDQuery.self)
 
+    // Delivered on mdQueryQueue: per-item attribute reads and extraction stay off the main
+    // thread (CLING-1F).
     let removedPaths: Set<String> = Set((removed ?? []).compactMap { MDItemCopyAttribute($0, kMDItemPath) as? String })
+    let raw = query.extractPaths()
 
     mainActor {
-        let raw = query.extractPaths()
         let state = RecentsFilterState.current()
+        let previous = FUZZY.mdQueryRecents
         recentsFilterQueue.async {
-            let filtered = filterRecentPaths(raw, state)
-            mainActor {
-                var mdPaths = filtered
+            var mdPaths = filterRecentPaths(raw, state)
 
-                // During heavy Spotlight activity (e.g. volume reindexing), updates can
-                // temporarily report many removals before re-adding them. To avoid
-                // flashing an empty recents list, keep previously known paths that
-                // weren't explicitly removed and still pass filters.
-                if mdPaths.count < FUZZY.mdQueryRecents.count {
-                    let newSet = Set(mdPaths.map(\.string))
-                    for fp in FUZZY.mdQueryRecents {
-                        if !newSet.contains(fp.string), !removedPaths.contains(fp.string),
-                           !FUZZY.removedFiles.contains(fp.string),
-                           fp.exists
-                        {
-                            mdPaths.append(fp)
-                        }
+            // During heavy Spotlight activity (e.g. volume reindexing), updates can
+            // temporarily report many removals before re-adding them. To avoid
+            // flashing an empty recents list, keep previously known paths that
+            // weren't explicitly removed and still pass filters. The `exists` check
+            // stats the disk, so it runs here on the filter queue, not on main.
+            if mdPaths.count < previous.count {
+                let newSet = Set(mdPaths.map(\.string))
+                for fp in previous {
+                    if !newSet.contains(fp.string), !removedPaths.contains(fp.string),
+                       !state.removedFiles.contains(fp.string),
+                       fp.exists
+                    {
+                        mdPaths.append(fp)
                     }
                 }
+            }
 
+            mainActor {
                 FUZZY.mdQueryRecents = mdPaths
                 FUZZY.updateDefaultResults(debounce: true)
             }
@@ -298,7 +308,9 @@ func isRelevantDefaultPath(_ path: String) -> Bool {
 private let mdQueryObserver: UnsafeMutablePointer<AnyObject?> = .allocate(capacity: 1)
 
 func stopRecentsQuery(_ query: MDQuery) {
-    MDQueryStop(query)
+    // Remove the observers first so a late notification can't fire mid-teardown, then stop the
+    // query on its own queue (all query access is serialized there).
+    mdQueryQueue.async { MDQueryStop(query) }
     CFNotificationCenterRemoveObserver(
         CFNotificationCenterGetLocalCenter(),
         mdQueryObserver,
@@ -322,7 +334,7 @@ func queryRecents() -> MDQuery? {
     let queryMaxCount = max(Defaults[.maxResultsCount] * 20, 5000)
     MDQuerySetMaxCount(query, queryMaxCount)
     MDQuerySetSortComparator(query, sortComparator, nil)
-    MDQuerySetDispatchQueue(query, .main)
+    MDQuerySetDispatchQueue(query, mdQueryQueue)
     log.debug("queryRecents: created query, maxCount=\(queryMaxCount)")
 
     CFNotificationCenterAddObserver(
