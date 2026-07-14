@@ -2530,14 +2530,21 @@ final class SearchEngine: @unchecked Sendable {
                                             allTokensMatchPath = false; break
                                         }
                                         let slice = UnsafeBufferPointer(start: allBase + off + pathSearchFrom, count: len - pathSearchFrom)
-                                        let boff = max(0, bnOff - pathSearchFrom)
+                                        // May go negative once pathSearchFrom passes bnOff: bpos = i - boff
+                                        // must stay basename-relative, and fuzzyScoreBytes guards 0..<64.
+                                        let boff = bnOff - pathSearchFrom
                                         var r = token.withUnsafeBufferPointer {
                                             fuzzyScoreBytes($0, slice, boundaries: bnBounds, boundariesOffset: boff)
                                         }
-                                        // NFC fallback: the stored path may be in the other normalization form
+                                        // NFC fallback: the stored path may be in the other normalization form.
+                                        // Scale the score up to the NFD byte length so NFC-stored paths rank
+                                        // on the same scale as NFD-stored twins (NFD hangul is ~2x the bytes).
                                         if r == nil, let alt = tokenAltBytes[ti] {
                                             r = alt.withUnsafeBufferPointer {
                                                 fuzzyScoreBytes($0, slice, boundaries: bnBounds, boundariesOffset: boff)
+                                            }
+                                            if let rr = r, !alt.isEmpty {
+                                                r = (rr.score * token.count / alt.count, rr.start, rr.end)
                                             }
                                         }
                                         if let r {
@@ -2567,12 +2574,17 @@ final class SearchEngine: @unchecked Sendable {
                                             allTokensMatchBase = false; break
                                         }
                                         let slice = UnsafeBufferPointer(start: allBase + off + bnOff + baseSearchFrom, count: bnLen - baseSearchFrom)
+                                        // Slice byte i is basename byte i + baseSearchFrom, so the offset is
+                                        // negative: bpos = i - (-baseSearchFrom) = i + baseSearchFrom.
                                         var r = token.withUnsafeBufferPointer {
-                                            fuzzyScoreBytes($0, slice, boundaries: bnBounds, boundariesOffset: baseSearchFrom)
+                                            fuzzyScoreBytes($0, slice, boundaries: bnBounds, boundariesOffset: -baseSearchFrom)
                                         }
                                         if r == nil, let alt = tokenAltBytes[ti] {
                                             r = alt.withUnsafeBufferPointer {
-                                                fuzzyScoreBytes($0, slice, boundaries: bnBounds, boundariesOffset: baseSearchFrom)
+                                                fuzzyScoreBytes($0, slice, boundaries: bnBounds, boundariesOffset: -baseSearchFrom)
+                                            }
+                                            if let rr = r, !alt.isEmpty {
+                                                r = (rr.score * token.count / alt.count, rr.start, rr.end)
                                             }
                                         }
                                         if let r {
@@ -2591,11 +2603,12 @@ final class SearchEngine: @unchecked Sendable {
                                 if baseScore == Int.min, pathScore == Int.min, let altQ = qAltBytes, let altBase = baseAltBytes {
                                     altQ.withUnsafeBufferPointer { altQBuf in
                                         altBase.withUnsafeBufferPointer { altBaseBuf in
+                                            // Same NFD-scale normalization as the per-token fallback above.
                                             if let r = fuzzyScoreBytes(altBaseBuf, bnBuf, boundaries: bnBounds) {
-                                                baseScore = r.score; baseWindow = r.end - r.start
+                                                baseScore = r.score * baseBytes.count / altBase.count; baseWindow = r.end - r.start
                                             }
                                             if let r = fuzzyScoreBytes(altQBuf, pathBuf, boundaries: bnBounds, boundariesOffset: bnOff) {
-                                                pathScore = r.score; pathWindow = r.end - r.start
+                                                pathScore = r.score * qBytes.count / altQ.count; pathWindow = r.end - r.start
                                             }
                                         }
                                     }
@@ -2805,7 +2818,10 @@ final class SearchEngine: @unchecked Sendable {
         if !scored.isEmpty {
             let topQ = scored[0].quality
             let minQ = max(topQ * 4 / 10, qBytes.count * scoreMatch / 2)
-            let filtered = scored.filter { $0.quality >= minQ }
+            // Basename matches are exempt from the density floor (like FuzzyClient.mergeResults):
+            // an NFC-stored CJK basename match scores on the smaller NFC byte scale and would
+            // otherwise be dropped whenever NFD-stored path matches set a high topQ.
+            let filtered = scored.filter { $0.quality >= minQ || $0.hasBase }
             // If the strict density-based floor kills every match (typical for
             // a dense single-token query like "prvskyl" that legitimately spans
             // multiple path segments — quality = pathScore * qLen / window
