@@ -169,6 +169,15 @@ struct ActionButtons: View {
             let n = sendManager.folderCount(in: pending.files)
             Text("\(n) folder\(n == 1 ? "" : "s") will be archived into a .zip before sending.")
         }
+        .confirmationDialog(
+            "Are you sure?",
+            isPresented: $isPresentingConfirm
+        ) {
+            Button("Move to trash") {
+                moveToTrash()
+            }.keyboardShortcut(.defaultAction)
+        }
+        .dialogIcon(Image(systemName: "trash.circle.fill"))
     }
 
     @ViewBuilder var overflowButton: some View {
@@ -521,21 +530,6 @@ struct ActionButtons: View {
                 + Text(" Paste to \(appManager.lastFrontmostApp?.name ?? "frontmost app")")
         }
         .help("Paste the paths of the selected files to the frontmost app")
-    }
-
-    private static func performTrash(selection: Binding<Set<FilePath>>) {
-        var removed = Set<FilePath>()
-        for path in selection.wrappedValue {
-            log.info("Trashing \(path.shellString)")
-            do {
-                try FileManager.default.trashItem(at: path.url, resultingItemURL: nil)
-                removed.insert(path)
-            } catch {
-                log.error("Error trashing \(path.shellString): \(error.localizedDescription)")
-            }
-        }
-        selection.wrappedValue.subtract(removed)
-        FUZZY.results = FUZZY.results.filter { !removed.contains($0) && $0.exists }
     }
 
     private static func performDelete(selection: Binding<Set<FilePath>>) {
