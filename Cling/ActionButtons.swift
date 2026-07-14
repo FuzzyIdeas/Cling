@@ -21,6 +21,7 @@ struct ActionButtons: View {
     @Default(.shelfApp) var shelfApp
     @Default(.copyPathsWithTilde) var copyPathsWithTilde
     @Default(.showActionRow) var showActionRow
+    @Default(.toolbarRowsHidden) var toolbarRowsHidden
     @Default(.barActions) var barActions
     @Default(.hiddenActions) var hiddenActions
     @Default(.toolbarShowDividers) var showDividers
@@ -62,7 +63,7 @@ struct ActionButtons: View {
         let hidden = hiddenActions
 
         HStack {
-            if showActionRow {
+            if showActionRow, !toolbarRowsHidden {
                 if showingAlternates {
                     HStack(spacing: density.spacing) {
                         dropToFocusedElementButton

@@ -555,6 +555,37 @@ let KNOWN_SHELF_APPS = [
     "com.hachipoo.Dockside",
 ]
 
+// MARK: - RowToggleModifier
+
+/// Modifier key that shows/hides all toolbar rows when double-tapped.
+enum RowToggleModifier: String, CaseIterable, Codable, Defaults.Serializable {
+    case disabled
+    case command
+    case option
+    case control
+    case shift
+
+    var flag: NSEvent.ModifierFlags? {
+        switch self {
+        case .disabled: nil
+        case .command: .command
+        case .option: .option
+        case .control: .control
+        case .shift: .shift
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .disabled: "Disabled"
+        case .command: "⌘ Command"
+        case .option: "⌥ Option"
+        case .control: "⌃ Control"
+        case .shift: "⇧ Shift"
+        }
+    }
+}
+
 func detectShelfApp() -> String {
     for bundleID in KNOWN_SHELF_APPS {
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
@@ -582,6 +613,10 @@ extension Defaults.Keys {
     static let showActionRow = Key<Bool>("showActionRow", default: true)
     static let showOpenWithRow = Key<Bool>("showOpenWithRow", default: true)
     static let showScriptRow = Key<Bool>("showScriptRow", default: true)
+    /// Master switch flipped by double-tapping the configured modifier: hides all three rows at
+    /// once without touching the individual row settings above.
+    static let toolbarRowsHidden = Key<Bool>("toolbarRowsHidden", default: false)
+    static let rowsToggleModifier = Key<RowToggleModifier>("rowsToggleModifier", default: .disabled)
     static let showFilePreview = Key<Bool>("showFilePreview", default: true)
     static let hiddenActionButtons = Key<[HiddenActionButton]>("hiddenActionButtons", default: [])
     static let folderFilters = Key<[FolderFilter]>("folderFilters", default: DEFAULT_FOLDER_FILTERS)

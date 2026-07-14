@@ -62,6 +62,41 @@ enum FocusedField {
     case search, list, stash, openWith, executeScript
 }
 
+// MARK: - RowToggleTap
+
+/// Detects a double-tap of the configured modifier key (pressed alone, released, pressed alone
+/// again within the window) and flips the master toolbar-rows visibility. Any other key or
+/// modifier in between cancels the gesture, so normal shortcuts never trigger it.
+@MainActor
+enum RowToggleTap {
+    static func handle(_ event: NSEvent) {
+        guard let targetFlag = Defaults[.rowsToggleModifier].flag else { return }
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if mods == targetFlag {
+            pressedAlone = true
+        } else if mods.isEmpty {
+            guard pressedAlone else { return }
+            pressedAlone = false
+            if event.timestamp - lastTapAt < 0.35 {
+                lastTapAt = 0
+                Defaults[.toolbarRowsHidden].toggle()
+            } else {
+                lastTapAt = event.timestamp
+            }
+        } else {
+            cancel()
+        }
+    }
+
+    static func cancel() {
+        pressedAlone = false
+        lastTapAt = 0
+    }
+
+    private static var lastTapAt: TimeInterval = 0
+    private static var pressedAlone = false
+}
+
 // MARK: - ContentView
 
 struct ContentView: View {
@@ -322,6 +357,7 @@ struct ContentView: View {
 
     @Default(.showOpenWithRow) private var showOpenWithRow
     @Default(.showScriptRow) private var showScriptRow
+    @Default(.toolbarRowsHidden) private var toolbarRowsHidden
     @Default(.toolbarRowBackground) private var toolbarRowBackground
     @Default(.showActionRow) private var showActionRow
     @Default(.shortcutsCoachmarkShown) private var coachmarkShown
@@ -503,7 +539,7 @@ struct ContentView: View {
     /// Whether any of the three toolbar rows is actually on screen. When none is, the rows
     /// area collapses to zero height and the results table takes the space.
     private var anyToolbarRowVisible: Bool {
-        showActionRow || showOpenWithRow || (proactive && showScriptRow)
+        !toolbarRowsHidden && (showActionRow || showOpenWithRow || (proactive && showScriptRow))
     }
 
     /// The results/index table next to the optional file preview panel. The
@@ -714,13 +750,13 @@ struct ContentView: View {
         let rows = VStack(spacing: -3) {
             ActionButtons(selectedResults: $selectedResults, selectedResultIDs: $selectedResultIDs, focused: $focused)
                 .hfill(.leading)
-                .padding(.vertical, showActionRow ? ActionRowLayout.badgeClearance : 0)
+                .padding(.vertical, showActionRow && !toolbarRowsHidden ? ActionRowLayout.badgeClearance : 0)
                 .contentShape(Rectangle())
                 .contextMenu {
                     Button("Hide action buttons row") { showActionRow = false }
                 }
 
-            if showOpenWithRow {
+            if showOpenWithRow, !toolbarRowsHidden {
                 OpenWithActionButtons(selectedResults: selectedResults)
                     .hfill(.leading)
                     .contentShape(Rectangle())
@@ -728,7 +764,7 @@ struct ContentView: View {
                         Button("Hide \"Open with\" row") { showOpenWithRow = false }
                     }
             }
-            if proactive, showScriptRow {
+            if proactive, showScriptRow, !toolbarRowsHidden {
                 ScriptActionButtons(selectedResults: selectedResults, focused: $focused)
                     .hfill(.leading)
                     .contentShape(Rectangle())
@@ -1472,7 +1508,13 @@ struct ContentView: View {
 
     private func installContentShortcutMonitor() {
         guard contentShortcutMonitor == nil else { return }
-        contentShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        contentShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+            if event.type == .flagsChanged {
+                RowToggleTap.handle(event)
+                return event
+            }
+            // Any real keystroke means the modifier wasn't a lone tap (e.g. ⌘C mid-gesture).
+            RowToggleTap.cancel()
             // Sample IME marked-text state AFTER the field editor handles this
             // keystroke, so the search placeholder hides during composition.
             // Only matters while the query is empty (otherwise the placeholder

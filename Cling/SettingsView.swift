@@ -268,6 +268,22 @@ private struct InterfaceSettingsPane: View {
                     detail: "Run scripts on the selected files.",
                     isOn: $showScriptRow
                 )
+                SettingRow(
+                    title: "Toggle all rows by double-tapping",
+                    detail: anyRowEnabled
+                        ? "Double-tap this modifier key to instantly hide or show all three rows at once."
+                        : "Enable at least one row above to use the double-tap toggle."
+                ) {
+                    Picker("", selection: $rowsToggleModifier) {
+                        ForEach(RowToggleModifier.allCases, id: \.self) { modifier in
+                            Text(modifier.label).tag(modifier)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                .disabled(!anyRowEnabled)
+                .opacity(anyRowEnabled ? 1 : 0.5)
             }
 
             // MARK: Part A — toolbar knobs
@@ -377,8 +393,9 @@ private struct InterfaceSettingsPane: View {
 
     @Default(.showActionRow) private var showActionRow
     @Default(.showOpenWithRow) private var showOpenWithRow
-    @Default(.showScriptRow) private var showScriptRow
+    @Default(.rowsToggleModifier) private var rowsToggleModifier
 
+    @Default(.showScriptRow) private var showScriptRow
     @Default(.windowAppearance) private var windowAppearance
     @Default(.toolbarLabelStyle) private var toolbarLabelStyle
     @Default(.toolbarDensity) private var toolbarDensity
@@ -391,6 +408,10 @@ private struct InterfaceSettingsPane: View {
 
     @Default(.barActions) private var barActions
     @Default(.hiddenActions) private var hiddenActions
+
+    private var anyRowEnabled: Bool {
+        showActionRow || showOpenWithRow || showScriptRow
+    }
 
     // MARK: Helpers
 
