@@ -251,7 +251,7 @@ struct ActionButtons: View {
             }
         }
         .popover(isPresented: isSend ? $sendManager.showingTransfers : .constant(false), arrowEdge: .bottom) {
-            if isSend { TransfersPanel() }
+            if isSend { TransfersPanel(selection: selectedResults.map(\.url)) }
         }
     }
 

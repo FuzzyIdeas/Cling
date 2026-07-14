@@ -52,14 +52,17 @@ func expirationCountdownLabel(_ seconds: TimeInterval) -> String {
 // MARK: - SendSession
 
 @MainActor final class SendSession: ObservableObject, Identifiable {
-    init(id: String, files: [URL], task: Task<String, Error>, expiresAt: Date?, tempArchives: [URL] = []) {
-        self.id = id; self.files = files; self.task = task; self.expiresAt = expiresAt; self.tempArchives = tempArchives
+    init(id: String, files: [URL], task: Task<String, Error>, expiresAt: Date?, tempArchives: [URL] = [], fileList: SendFileList? = nil) {
+        self.id = id; self.files = files; self.task = task; self.expiresAt = expiresAt; self.tempArchives = tempArchives; self.fileList = fileList
     }
 
     let id: String
-    let files: [URL]
     let task: Task<String, Error>
+    /// Live handle into the serving task's file list; appending here makes new receivers get the files.
+    let fileList: SendFileList?
     var tempArchives: [URL]
+    @Published private(set) var files: [URL]
+    @Published var addingFiles = false
     @Published var downloadCount = 0
     @Published var expiresAt: Date?
     @Published var stopped = false
@@ -86,6 +89,12 @@ func expirationCountdownLabel(_ seconds: TimeInterval) -> String {
         case 2, 3: return names.joined(separator: ", ")
         default: return "\(names[0]) + \(names.count - 1) more files"
         }
+    }
+
+    /// Called after `fileList.add` succeeded, to mirror the served list into the UI-facing state.
+    func appendFiles(_ new: [URL], temps: [URL]) {
+        files.append(contentsOf: new)
+        tempArchives.append(contentsOf: temps)
     }
 
     /// Live "Expires in …" label relative to `now`, so the Transfers panel can tick it down.
@@ -118,7 +127,12 @@ final class Box<T>: @unchecked Sendable {
 
 // MARK: - PendingSend
 
-struct PendingSend: Equatable { let files: [URL]; let expiration: TimeInterval }
+struct PendingSend: Equatable {
+    let files: [URL]
+    let expiration: TimeInterval
+    /// When set, the confirmed files are added to this existing room instead of opening a new one.
+    var targetSessionID: String?
+}
 
 // MARK: - SendManager
 
@@ -158,16 +172,39 @@ extension SendManager {
     func requestSend(files: [URL], expiration: TimeInterval) {
         guard !files.isEmpty else { return }
         if folderCount(in: files) > 0 {
+            // The confirmation dialog attaches at the window level; close the transfers
+            // popover first so the two presentations don't fight.
+            showingTransfers = false
             pendingFolderConfirm = PendingSend(files: files, expiration: expiration)
         } else {
             send(files: files, expiration: expiration)
         }
     }
 
+    /// Entry point used by the UI to add files to an existing room. Files already in the room
+    /// are skipped; folders go through the same archive confirmation as a new send.
+    func requestAdd(files: [URL], to session: SendSession) {
+        guard !session.stopped else { return }
+        let existing = Set(session.files.map(\.path))
+        let newFiles = files.filter { !existing.contains($0.path) }
+        guard !newFiles.isEmpty else { return }
+        if folderCount(in: newFiles) > 0 {
+            showingTransfers = false
+            pendingFolderConfirm = PendingSend(files: newFiles, expiration: 0, targetSessionID: session.id)
+        } else {
+            addFiles(newFiles, to: session)
+        }
+    }
+
     func confirmPendingSend() {
         guard let p = pendingFolderConfirm else { return }
         pendingFolderConfirm = nil
-        send(files: p.files, expiration: p.expiration)
+        if let id = p.targetSessionID {
+            guard let session = sessions.first(where: { $0.id == id }) else { return }
+            addFiles(p.files, to: session)
+        } else {
+            send(files: p.files, expiration: p.expiration)
+        }
     }
 
     func cancelPendingSend() {
@@ -219,6 +256,7 @@ extension SendManager {
         NotificationManager.shared.requestAuthorizationIfNeeded()
 
         let roomIDRef = Box<String?>(nil)
+        let fileList = SendFileList()
         let task = Task.detached {
             // Replace any directories with .zip archives
             var prepared: [URL] = []
@@ -250,10 +288,11 @@ extension SendManager {
                     files: prepared,
                     multi: true, // serve every receiver at once instead of one-at-a-time
                     maxReceivers: 20, // 0 = server default (256); old backends ignore multi and fall back to sequential
+                    fileList: fileList, // live handle so files can be added to the room later
                     onRoomCreated: { roomID in
                         roomIDRef.value = roomID
                         Task { @MainActor in
-                            SendManager.shared.roomCreated(roomID: roomID, files: prepared, tempArchives: temps, expiration: expiration, key: key)
+                            SendManager.shared.roomCreated(roomID: roomID, files: prepared, tempArchives: temps, expiration: expiration, key: key, fileList: fileList)
                         }
                     },
                     onDownloadCompleted: { count in
@@ -275,17 +314,57 @@ extension SendManager {
         pendingTasks[key] = task
     }
 
-    func roomCreated(roomID: String, files: [URL], tempArchives: [URL] = [], expiration: TimeInterval, key: String) {
+    func roomCreated(roomID: String, files: [URL], tempArchives: [URL] = [], expiration: TimeInterval, key: String, fileList: SendFileList? = nil) {
         connectingPaths.remove(key)
         guard let task = pendingTasks.removeValue(forKey: key) else { return }
         let expiresAt = expiration > 0 ? Date().addingTimeInterval(expiration) : nil
-        let session = SendSession(id: roomID, files: files, task: task, expiresAt: expiresAt, tempArchives: tempArchives)
+        let session = SendSession(id: roomID, files: files, task: task, expiresAt: expiresAt, tempArchives: tempArchives, fileList: fileList)
         sessions.append(session)
         recentSessions.insert(session, at: 0)
         trimRecentSessions()
         session.copyLink()
         linkCopiedTick += 1
         scheduleExpiry(session)
+    }
+
+    /// Add files to an existing room. Folders are archived off-main like in `send`; the live
+    /// `SendFileList` is appended so receivers joining afterwards get the new files too.
+    func addFiles(_ files: [URL], to session: SendSession) {
+        guard !files.isEmpty, !session.stopped, !session.addingFiles, let fileList = session.fileList else { return }
+        session.addingFiles = true
+        let wasSingleFile = session.files.count == 1
+        Task.detached {
+            var prepared: [URL] = []
+            var temps: [URL] = []
+            do {
+                for url in files {
+                    var isDir: ObjCBool = false
+                    let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+                    if exists, isDir.boolValue {
+                        let zip = try SendManager.archive(folder: url)
+                        prepared.append(zip)
+                        temps.append(zip)
+                    } else {
+                        prepared.append(url)
+                    }
+                }
+                try fileList.add(files: prepared)
+            } catch {
+                temps.forEach { try? FileManager.default.removeItem(at: $0.deletingLastPathComponent()) }
+                await MainActor.run { session.addingFiles = false }
+                return
+            }
+            await MainActor.run {
+                session.appendFiles(prepared, temps: temps)
+                session.addingFiles = false
+                // A single-file room was shared via its direct /d/ link, which only covers the
+                // first file. Now that it's a multi-file room, put the room link on the clipboard.
+                if wasSingleFile {
+                    session.copyLink()
+                    SendManager.shared.linkCopiedTick += 1
+                }
+            }
+        }
     }
 
     /// Keep the recent-transfers history short. Retains the newest `limit`, but never drops a

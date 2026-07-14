@@ -3,6 +3,9 @@ import SwiftUI
 // MARK: - TransfersPanel
 
 struct TransfersPanel: View {
+    /// Files currently selected in the results list, offered for "add to room" / "new room".
+    var selection: [URL] = []
+
     @ObservedObject var manager = SendManager.shared
 
     var body: some View {
@@ -35,11 +38,30 @@ struct TransfersPanel: View {
             } else {
                 Divider()
                 ForEach(manager.recentSessions) { session in
-                    TransferRow(session: session, now: now)
+                    TransferRow(session: session, now: now, selection: selection)
                     if session.id != manager.recentSessions.last?.id {
                         Divider().padding(.leading, 12)
                     }
                 }
+            }
+
+            if !selection.isEmpty {
+                Divider()
+                Button {
+                    // Reuse the normal send flow (expiration picker included) for a fresh room.
+                    manager.showingTransfers = false
+                    manager.showingSendPopover = true
+                } label: {
+                    Label(
+                        "New room for \(selection.count) selected file\(selection.count == 1 ? "" : "s")",
+                        systemImage: "plus.circle"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .padding(12)
+                .help("Share the current selection as a new room with its own link")
             }
         }
         .frame(width: 340)
@@ -84,6 +106,7 @@ private struct TransferRow: View {
     @ObservedObject var manager = SendManager.shared
 
     let now: Date
+    var selection: [URL] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -137,10 +160,40 @@ private struct TransferRow: View {
                     .tint(.red)
                 }
                 .controlSize(.small)
+
+                // The add action gets its own full-width row: the button bar above is already
+                // at capacity in the 340pt popover, and a wide target reads better anyway.
+                if !addableFiles.isEmpty {
+                    Button { manager.requestAdd(files: addableFiles, to: session) } label: {
+                        Group {
+                            if session.addingFiles {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Label(
+                                    "Add \(addableFiles.count) selected file\(addableFiles.count == 1 ? "" : "s") to this room",
+                                    systemImage: "plus"
+                                )
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(session.addingFiles)
+                    .help(
+                        "Add: " + addableFiles.map(\.lastPathComponent).joined(separator: ", ")
+                    )
+                }
             }
         }
         .padding(12)
         .opacity(session.stopped ? 0.65 : 1)
+    }
+
+    /// Selected files not already in this room (adding the same file twice is a no-op).
+    private var addableFiles: [URL] {
+        let existing = Set(session.files.map(\.path))
+        return selection.filter { !existing.contains($0.path) }
     }
 
     private var accent: Color {
