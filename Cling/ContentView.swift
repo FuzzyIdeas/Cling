@@ -194,8 +194,11 @@ struct ContentView: View {
                 middleRow
 
                 if showingResults {
+                    // No top padding when every row is hidden: ActionButtons stays mounted
+                    // (it hosts the shortcut monitor and sheets) but occupies zero height,
+                    // so the table gets the space.
                     actionButtonRows
-                        .padding(.top, 6)
+                        .padding(.top, anyToolbarRowVisible ? 6 : 0)
                 }
                 StatusBarView().hfill(.leading).padding(.top, 10)
             }
@@ -497,6 +500,12 @@ struct ContentView: View {
         }.width(min: 100, ideal: 160)
     }
 
+    /// Whether any of the three toolbar rows is actually on screen. When none is, the rows
+    /// area collapses to zero height and the results table takes the space.
+    private var anyToolbarRowVisible: Bool {
+        showActionRow || showOpenWithRow || (proactive && showScriptRow)
+    }
+
     /// The results/index table next to the optional file preview panel. The
     /// preview steals width from the table instead of growing the window.
     private var middleRow: some View {
@@ -705,20 +714,32 @@ struct ContentView: View {
         let rows = VStack(spacing: -3) {
             ActionButtons(selectedResults: $selectedResults, selectedResultIDs: $selectedResultIDs, focused: $focused)
                 .hfill(.leading)
-                .padding(.vertical, ActionRowLayout.badgeClearance)
+                .padding(.vertical, showActionRow ? ActionRowLayout.badgeClearance : 0)
+                .contentShape(Rectangle())
+                .contextMenu {
+                    Button("Hide action buttons row") { showActionRow = false }
+                }
 
             if showOpenWithRow {
                 OpenWithActionButtons(selectedResults: selectedResults)
                     .hfill(.leading)
+                    .contentShape(Rectangle())
+                    .contextMenu {
+                        Button("Hide \"Open with\" row") { showOpenWithRow = false }
+                    }
             }
             if proactive, showScriptRow {
                 ScriptActionButtons(selectedResults: selectedResults, focused: $focused)
                     .hfill(.leading)
+                    .contentShape(Rectangle())
+                    .contextMenu {
+                        Button("Hide script row") { showScriptRow = false }
+                    }
             }
         }
 
         return Group {
-            if toolbarRowBackground {
+            if toolbarRowBackground, anyToolbarRowVisible {
                 rows
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
