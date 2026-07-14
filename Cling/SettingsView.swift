@@ -589,13 +589,38 @@ private struct AppsSettingsPane: View {
                 )
 
                 SettingRow(
-                    title: "Shelf app",
-                    detail: "Used for shelving files with ⌘F (e.g. Yoink, Dropover)."
+                    title: "Stash / shelf app",
+                    detail: "The Stash action (⌘S) pins files to a Stash section above the results, or hands them to a shelf app like Yoink or Dropover."
                 ) {
-                    Button(shelfApp.filePath?.stem ?? "None") {
-                        selectApp(type: "Shelf") { shelfApp = $0.path }
+                    Menu(shelfApp == CLING_STASH_APP ? "Cling Stash" : (shelfApp.filePath?.stem ?? "None")) {
+                        Button("Cling Stash (built-in)") { shelfApp = CLING_STASH_APP }
+                        if let detected = detectShelfApp().existingFilePath {
+                            Button(detected.stem ?? detected.name.string) { shelfApp = detected.string }
+                        }
+                        Button("Choose app…") {
+                            selectApp(type: "Shelf") { shelfApp = $0.path }
+                        }
                     }
                     .truncationMode(.middle)
+                    .fixedSize()
+                }
+
+                if shelfApp == CLING_STASH_APP {
+                    SettingRow(
+                        title: "Auto-clear stash",
+                        detail: "Remove files from the stash after they've been stashed for this long."
+                    ) {
+                        HStack(spacing: 8) {
+                            Slider(value: stashAutoClearIndex, in: 0 ... Double(STASH_AUTO_CLEAR_PRESETS.count - 1), step: 1)
+                                .frame(width: 160)
+                            Text(stashAutoClearLabel(stashAutoClearAfter))
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(stashAutoClearAfter > 0 ? Color.accentColor : Color.secondary)
+                                .frame(width: 60, alignment: .trailing)
+                                .contentTransition(.numericText())
+                        }
+                        .animation(.snappy(duration: 0.2), value: stashAutoClearAfter)
+                    }
                 }
             }
 
@@ -614,8 +639,19 @@ private struct AppsSettingsPane: View {
     @Default(.editorApp) private var editorApp
     @Default(.terminalApp) private var terminalApp
     @Default(.shelfApp) private var shelfApp
+    @Default(.stashAutoClearAfter) private var stashAutoClearAfter
+
     @Default(.copyPathsWithTilde) private var copyPathsWithTilde
     @Default(.enterPastesToFrontmostTerminal) private var enterPastesToFrontmostTerminal
+
+    /// Maps the auto-clear period to its snap-point index so the slider steps are uniform
+    /// while the underlying values are not (hourly, then daily, then weekly).
+    private var stashAutoClearIndex: Binding<Double> {
+        Binding(
+            get: { Double(nearestStashAutoClearPresetIndex(stashAutoClearAfter)) },
+            set: { stashAutoClearAfter = STASH_AUTO_CLEAR_PRESETS[max(0, min(STASH_AUTO_CLEAR_PRESETS.count - 1, Int($0.rounded())))] }
+        )
+    }
 
     private func selectApp(type: String, onCompletion: @escaping (URL) -> Void) {
         let panel = NSOpenPanel()

@@ -97,6 +97,18 @@ struct RightClickMenu: View {
         Divider()
 
         Button {
+            STASH.toggle(orderedSelection)
+        } label: {
+            Label(
+                allSelectedStashed ? "Remove from Stash" : "Add to Stash",
+                systemImage: allSelectedStashed ? "tray.and.arrow.up" : "tray.and.arrow.down"
+            )
+        }
+        .disabled(orderedSelection.isEmpty)
+
+        Divider()
+
+        Button {
             SendManager.shared.requestSend(files: orderedSelection.map(\.url), expiration: Defaults[.defaultLinkExpiration])
         } label: {
             Label("Send securely", systemImage: "paperplane")
@@ -149,6 +161,10 @@ struct RightClickMenu: View {
     /// Selected results in the same order they appear in the UI
     private var orderedSelection: [FilePath] {
         orderedResults.filter { selectedResults.contains($0) }
+    }
+
+    private var allSelectedStashed: Bool {
+        !orderedSelection.isEmpty && orderedSelection.allSatisfy { STASH.contains($0) }
     }
 
     private func isConfiguredHelperApp(_ url: URL) -> Bool {
@@ -334,6 +350,7 @@ struct RightClickMenu: View {
             }
         }
         selectedResults.subtract(removed)
+        STASH.remove(removed)
         FUZZY.results = FUZZY.results.filter { !removed.contains($0) && $0.exists }
     }
 

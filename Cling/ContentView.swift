@@ -59,7 +59,7 @@ let dateFormat = Date.FormatStyle
 // MARK: - FocusedField
 
 enum FocusedField {
-    case search, list, openWith, executeScript
+    case search, list, stash, openWith, executeScript
 }
 
 // MARK: - ContentView
@@ -253,6 +253,7 @@ struct ContentView: View {
     @State private var appManager = APP_MANAGER
     @State private var renamedPaths: [FilePath]? = nil
     @State private var fuzzy: FuzzyClient = FUZZY
+    @State private var stash: StashManager = STASH
     @State private var appearance = AM
     @State private var scriptManager: ScriptManager = SM
     @State private var selectedResults = Set<FilePath>()
@@ -287,6 +288,8 @@ struct ContentView: View {
     @State private var placeholderIndex = 0
     @State private var windowManager = WM
     @State private var sortOrder = [KeyPathComparator(\FilePath.string)]
+    /// Measured by the stash table's scroll configurator: header + visible rows, no overflow.
+    @State private var stashTableHeight: CGFloat = 58
 
     @State private var excludeRequest: ExcludeSheetRequest?
 
@@ -393,6 +396,26 @@ struct ContentView: View {
         (fuzzy.noQuery && fuzzy.volumeFilter == nil)
             ? (fuzzy.sortField == .score ? fuzzy.recents : fuzzy.sortedRecents)
             : fuzzy.results
+    }
+
+    /// Results shown in the main table: stashed files live in the pinned stash table above,
+    /// so they're deduplicated out of the scrolling list.
+    private var visibleResults: [FilePath] {
+        stash.files.isEmpty ? results : results.filter { !stash.contains($0) }
+    }
+
+    /// Everything on screen in display order: pinned stash rows first, then the results.
+    private var displayedResults: [FilePath] {
+        stash.files.isEmpty ? results : stash.files + visibleResults
+    }
+
+    /// Which table the keyboard should land in when leaving the search field: follow the
+    /// current selection into the stash if that's where it lives.
+    private var tableFocusTarget: FocusedField {
+        guard !stash.files.isEmpty, let id = selectedResultIDs.first,
+              stash.files.contains(where: { $0.string == id })
+        else { return .list }
+        return .stash
     }
 
     private var sortedLiveChanges: [FuzzyClient.IndexChange] {
@@ -622,13 +645,13 @@ struct ContentView: View {
                 return .handled
             }
             .onKeyPress(.space) {
-                guard focused == .list else {
+                guard focused == .list || focused == .stash else {
                     return .ignored
                 }
                 if !fuzzy.query.isEmpty { SearchHistory.shared.commit(fuzzy.query) }
                 QLP.present(
-                    urls: selectedResults.count > 1 ? selectedResults.map(\.url) : results.map(\.url),
-                    selectedItemIndex: selectedResults.count == 1 ? (results.firstIndex(of: selectedResults.first!) ?? 0) : 0
+                    urls: selectedResults.count > 1 ? selectedResults.map(\.url) : displayedResults.map(\.url),
+                    selectedItemIndex: selectedResults.count == 1 ? (displayedResults.firstIndex(of: selectedResults.first!) ?? 0) : 0
                 )
                 return .handled
             }
@@ -645,8 +668,8 @@ struct ContentView: View {
             .contextMenu(forSelectionType: String.self) { ids in
                 RightClickMenu(
                     selectedResults: $selectedResults,
-                    orderedResults: results,
-                    contextPaths: results.filter { ids.contains($0.string) }
+                    orderedResults: displayedResults,
+                    contextPaths: displayedResults.filter { ids.contains($0.string) }
                 )
                 .onAppear {
                     if !ids.isEmpty, !ids.isSubset(of: selectedResultIDs) {
@@ -909,7 +932,8 @@ struct ContentView: View {
                     showSuggestionsList: $showSuggestionsList,
                     suggestionIndex: $suggestionIndex,
                     inlineSuggestion: inlineSuggestion,
-                    historySuggestions: historySuggestions
+                    historySuggestions: historySuggestions,
+                    tableFocusTarget: tableFocusTarget
                 ))
         }
         .animation(.easeInOut(duration: 0.45), value: placeholderHint)
@@ -979,8 +1003,148 @@ struct ContentView: View {
 
     }
 
+    /// The stash, pinned above the results table so it stays visible while the results scroll.
+    /// A separate table (same columns, same selection binding, same context menu) is the only way
+    /// to keep rows permanently on screen: NSTableView can float group-row headers, not rows.
+    private var stashSection: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Label("Stash", systemImage: "tray.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text("\(stash.files.count)")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Color.primary.opacity(0.08), in: Capsule())
+                Spacer()
+                Button("Clear") { STASH.clear() }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .help("Remove all files from the stash (\(KeyboardShortcuts.getShortcut(for: .clStashClear)?.description ?? "⇧⌘S"))")
+            }
+            .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 2)
+
+            // Shares the results table's sortOrder binding: while the stash is visible this table
+            // carries the (only) column headers, so its header clicks must drive the results
+            // sorting. The stash rows themselves keep insertion order regardless.
+            ZStack(alignment: .topTrailing) {
+                stashTable
+                // The score-sort button rides along with the column headers, which live here
+                // while the stash is visible.
+                scoreSortButton
+                    .padding(.trailing, 6)
+                    .padding(.top, 5)
+            }
+        }
+    }
+
+    private var stashTable: some View {
+        Table(of: FilePath.self, selection: $selectedResultIDs, sortOrder: $sortOrder) {
+            iconColumn
+            nameColumn
+            pathColumn
+            sizeColumn
+            dateColumn
+        } rows: {
+            ForEach(stash.files, id: \.string) { path in
+                TableRow(path)
+                    .draggable(path.url)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .alternatingRowBackgrounds(.disabled)
+        .fixedTableRowHeight(24)
+        .onKeyPress(.downArrow) {
+            // Walk off the end of the stash into the results table.
+            guard focused == .stash, let last = stash.files.last,
+                  selectedResultIDs == [last.string], let first = visibleResults.first
+            else { return .ignored }
+            selectedResultIDs = [first.string]
+            focused = .list
+            return .handled
+        }
+        .onKeyPress(.upArrow) {
+            // Walk off the top of the stash back into the search field.
+            guard focused == .stash, let first = stash.files.first,
+                  selectedResultIDs == [first.string]
+            else { return .ignored }
+            focused = .search
+            return .handled
+        }
+        .onKeyPress(.tab) {
+            // Continue into the results below (Tab there wraps back to the search field).
+            guard focused == .stash else { return .ignored }
+            if tableFocusTarget == .stash, let first = visibleResults.first {
+                selectedResultIDs = [first.string]
+            }
+            focused = .list
+            return .handled
+        }
+        .focused($focused, equals: .stash)
+        .contextMenu(forSelectionType: String.self) { ids in
+            RightClickMenu(
+                selectedResults: $selectedResults,
+                orderedResults: displayedResults,
+                contextPaths: displayedResults.filter { ids.contains($0.string) }
+            )
+            .onAppear {
+                if !ids.isEmpty, !ids.isSubset(of: selectedResultIDs) {
+                    selectedResultIDs = ids
+                }
+            }
+        }
+        .transparentTableBackground()
+        .syncedTableScroll(
+            isStash: true,
+            lockVertical: stash.files.count <= 6,
+            visibleRows: min(stash.files.count, 6),
+            fittingHeight: $stashTableHeight
+        )
+        .frame(height: stashTableHeight)
+        .padding(.horizontal, 6)
+    }
+
+    /// Icon + title strip above the results table while the stash is visible, mirroring the
+    /// stash strip (the results table hides its column headers then, so this labels the section).
+    private var resultsSectionStrip: some View {
+        HStack(spacing: 6) {
+            Label(
+                fuzzy.noQuery && fuzzy.volumeFilter == nil ? "Recents" : "Results",
+                systemImage: fuzzy.noQuery && fuzzy.volumeFilter == nil ? "clock" : "magnifyingglass"
+            )
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            Text("\(visibleResults.count)")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background(Color.primary.opacity(0.08), in: Capsule())
+            Spacer()
+        }
+        .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 2)
+    }
+
+    private var scoreSortButton: some View {
+        Button(action: {
+            fuzzy.sortField = .score
+            fuzzy.reverseSort = true
+            sortOrder = [] // drop the sort indicator from the previously clicked column
+        }) {
+            Image(systemName: "flag.pattern.checkered.circle" + (fuzzy.sortField == .score ? ".fill" : ""))
+                .font(.system(size: 14))
+                .opacity(fuzzy.sortField == .score ? 1 : 0.5)
+        }
+        .buttonStyle(BorderlessButtonStyle())
+        .help("Sort by score (Control-0)")
+    }
+
     private var resultsList: some View {
         VStack(spacing: 0) {
+            if !stash.files.isEmpty {
+                stashSection
+                resultsSectionStrip
+            }
             ZStack(alignment: .topTrailing) {
                 Table(of: FilePath.self, selection: $selectedResultIDs, sortOrder: $sortOrder) {
                     iconColumn
@@ -989,13 +1153,17 @@ struct ContentView: View {
                     sizeColumn
                     dateColumn
                 } rows: {
-                    ForEach(results, id: \.string) { path in
+                    ForEach(visibleResults, id: \.string) { path in
                         TableRow(path)
                             .draggable(path.url)
                     }
                 }
                 .scrollContentBackground(.hidden)
                 .alternatingRowBackgrounds(.disabled)
+                // While the stash is visible, the column headers live on the stash table above
+                // (same sortOrder binding), so hide this table's headers to avoid a header row
+                // sandwiched between the two sections.
+                .tableColumnHeaders(stash.files.isEmpty ? .visible : .hidden)
                 // Fixed row height keeps NSTableView from measuring every inserted row
                 // (which would force synchronous per-row stat/icon fetches on a bulk
                 // result update and freeze the app — CLING-B). Rows are uniform single
@@ -1024,7 +1192,7 @@ struct ContentView: View {
                     }
                 }
                 .onChange(of: selectedResultIDs) {
-                    selectedResults = Set(results.filter { selectedResultIDs.contains($0.string) })
+                    selectedResults = Set((stash.files + results).filter { selectedResultIDs.contains($0.string) })
                     fuzzy.computeOpenWithApps(for: selectedResults.map(\.url))
                     // Commit to history only on user-initiated selection (not auto-select from query change)
                     if focused == .list, !selectedResults.isEmpty, !fuzzy.query.isEmpty {
@@ -1044,6 +1212,15 @@ struct ContentView: View {
                 }
                 .onKeyPress(.tab) {
                     focused = .search
+                    return .handled
+                }
+                .onKeyPress(.upArrow) {
+                    // Walk off the top of the results into the pinned stash table.
+                    guard focused == .list, let first = visibleResults.first, let last = stash.files.last,
+                          selectedResultIDs == [first.string]
+                    else { return .ignored }
+                    selectedResultIDs = [last.string]
+                    focused = .stash
                     return .handled
                 }
                 .onKeyPress(.rightArrow) {
@@ -1070,20 +1247,16 @@ struct ContentView: View {
                 }
                 .focused($focused, equals: .list)
                 .transparentTableBackground()
+                .syncedTableScroll(isStash: false)
                 .padding(6)
 
-                Button(action: {
-                    fuzzy.sortField = .score
-                    fuzzy.reverseSort = true
-                }) {
-                    Image(systemName: "flag.pattern.checkered.circle" + (fuzzy.sortField == .score ? ".fill" : ""))
-                        .font(.system(size: 14))
-                        .opacity(fuzzy.sortField == .score ? 1 : 0.5)
+                // With the stash visible the score-sort button lives in the results strip instead;
+                // there's no header area here to anchor it over.
+                if stash.files.isEmpty {
+                    scoreSortButton
+                        .padding(.trailing, 6)
+                        .padding(.top, 9)
                 }
-                .buttonStyle(BorderlessButtonStyle())
-                .help("Sort by score (Control-0)")
-                .padding(.trailing, 12)
-                .padding(.top, 9)
             }
             .background(.background.opacity(0.3))
 
@@ -1372,6 +1545,17 @@ struct ContentView: View {
                 Defaults[.showFilePreview].toggle()
                 return nil
             }
+            // Clear the whole stash (default ⌘⇧S, rebindable). Dispatched here rather than the
+            // ActionButtons monitor so it works with no selection and from the search field.
+            if let pressed = KeyboardShortcuts.Shortcut(event: event),
+               pressed == KeyboardShortcuts.getShortcut(for: .clStashClear)
+            {
+                if !STASH.files.isEmpty {
+                    STASH.clear()
+                    return nil
+                }
+                return event
+            }
             // ⌘S → save current query as Quick Filter (when applicable)
             if mods == .command, chars == "s",
                !fuzzy.query.isEmpty, showingResults, proactive
@@ -1538,7 +1722,10 @@ struct ContentView: View {
         case .path: sortOrder = [KeyPathComparator(\FilePath.dir.string, order: order)]
         case .size: sortOrder = [KeyPathComparator(\FilePath.memoz.size, order: order)]
         case .date: sortOrder = [KeyPathComparator(\FilePath.memoz.date, order: order)]
-        case .score, .kind: break
+        // Relevance isn't a table column: clear the sort order so the previously clicked
+        // column header drops its sort indicator.
+        case .score: sortOrder = []
+        case .kind: break
         }
     }
 
@@ -1582,7 +1769,7 @@ struct ContentView: View {
     }
 
     private func preserveSelectionAcrossResultsUpdate() {
-        let resultIDs = Set(results.map(\.string))
+        let resultIDs = Set((stash.files + results).map(\.string))
         let stillValid = selectedResultIDs.intersection(resultIDs)
         if stillValid.isEmpty {
             selectFirstResult()
@@ -1824,6 +2011,8 @@ struct SearchBarKeyHandlers: ViewModifier {
 
     var inlineSuggestion: String?
     var historySuggestions: [String]
+    /// Where ↓ lands when leaving the search field: the stash table when the selection lives there.
+    var tableFocusTarget: FocusedField = .list
 
     func body(content: Content) -> some View {
         content
@@ -1872,7 +2061,7 @@ struct SearchBarKeyHandlers: ViewModifier {
                     showSuggestionsList = false
                     suggestionIndex = -1
                 }
-                focused.wrappedValue = .list
+                focused.wrappedValue = tableFocusTarget
                 return .handled
             }
             .onKeyPress(.rightArrow) {

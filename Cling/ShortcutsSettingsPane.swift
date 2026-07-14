@@ -33,6 +33,17 @@ struct ShortcutsSettingsPane: View {
                     }
                 }
             }
+            Section("Stash") {
+                ForEach(ClingShortcuts.utilityShortcuts) { utility in
+                    LabeledContent {
+                        ShortcutRecorder(name: utility.name) { _ in
+                            validate(name: utility.name, title: utility.title)
+                        }
+                    } label: {
+                        Label(utility.title, systemImage: utility.systemImage)
+                    }
+                }
+            }
             if let conflict {
                 Section {
                     Text(conflict).foregroundStyle(.red).font(.callout)

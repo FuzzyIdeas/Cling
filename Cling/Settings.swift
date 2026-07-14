@@ -472,7 +472,7 @@ enum HiddenActionButton: String, CaseIterable, Defaults.Serializable {
         case .pasteToFrontmost: "Paste to frontmost app (⌘⇧⏎)"
         case .openInTerminal: "Open in Terminal (⌘T)"
         case .openInEditor: "Open in Editor (⌘E)"
-        case .shelve: "Shelve (⌘S)"
+        case .shelve: "Stash / Shelve (⌘S)"
         case .moveTo: "Move to… (⌘M)"
         case .copy: "Copy (⌘C)"
         case .copyPaths: "Copy paths (⌘⇧C)"
@@ -569,7 +569,7 @@ extension Defaults.Keys {
     static let enterPastesToFrontmostTerminal = Key<Bool>("enterPastesToFrontmostTerminal", default: true)
     static let editorApp = Key<String>("editorApp", default: "/System/Applications/TextEdit.app")
     static let terminalApp = Key<String>("terminalApp", default: "/System/Applications/Utilities/Terminal.app")
-    static let shelfApp = Key<String>("shelfApp", default: detectShelfApp())
+    static let shelfApp = Key<String>("shelfApp", default: CLING_STASH_APP)
     static let showWindowAtLaunch = Key<Bool>("showWindowAtLaunch", default: true)
     static let showDockIcon = Key<Bool>("showDockIcon", default: false)
     static let keepWindowOpenWhenDefocused = Key<Bool>("keepWindowOpenWhenDefocused", default: false)

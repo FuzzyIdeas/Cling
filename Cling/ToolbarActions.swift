@@ -21,6 +21,15 @@ enum ActionSegment: String, Codable, Defaults.Serializable, CaseIterable {
 // MARK: - ToolbarAction
 
 struct ToolbarAction: Identifiable {
+    init(id: ActionID, segment: ActionSegment, title: String, systemImage: String, isDestructive: Bool, defaultVisible: Bool) {
+        self.id = id
+        self.segment = segment
+        staticTitle = title
+        self.systemImage = systemImage
+        self.isDestructive = isDestructive
+        self.defaultVisible = defaultVisible
+    }
+
     /// Registry: the single source of truth for every action's metadata.
     static let all: [ToolbarAction] = [
         .init(id: .open, segment: .open, title: "Open", systemImage: "arrow.up.forward.app", isDestructive: false, defaultVisible: true),
@@ -58,11 +67,16 @@ struct ToolbarAction: Identifiable {
 
     let id: ActionID
     let segment: ActionSegment
-    let title: String
     let systemImage: String
     let isDestructive: Bool
     let defaultVisible: Bool
 
+    /// The shelve action is labeled by its target: Cling's built-in stash (the default) or a shelf app.
+    var title: String {
+        id == .shelve && Defaults[.shelfApp] == CLING_STASH_APP ? "Stash" : staticTitle
+    }
+
+    private let staticTitle: String
 }
 
 extension ActionSegment {

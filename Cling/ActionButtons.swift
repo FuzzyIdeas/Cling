@@ -70,13 +70,13 @@ struct ActionButtons: View {
                         openWithFrontmostAppButton
                         Spacer()
                         if !hidden.contains(.copy) {
-                            copyFilesButton.disabled(focused.wrappedValue != .list)
+                            copyFilesButton.disabled(focused.wrappedValue != .list && focused.wrappedValue != .stash)
                         }
                         if !hidden.contains(.copyPaths) {
                             copyPathsButton
                         }
                         if !hidden.contains(.trash) {
-                            trashButton.disabled(focused.wrappedValue != .list)
+                            trashButton.disabled(focused.wrappedValue != .list && focused.wrappedValue != .stash)
                         }
                     }
                     .font(.system(size: density.fontSize))
@@ -326,6 +326,7 @@ struct ActionButtons: View {
     @State private var appManager: AppManager = APP_MANAGER
     @State private var fuzzy: FuzzyClient = FUZZY
     @State private var scriptManager: ScriptManager = SM
+    @State private var stash: StashManager = STASH
     @ObservedObject private var sendManager = SendManager.shared
     @State private var badgesVisible = false
     @State private var badgeRevealTask: Task<Void, Never>?
@@ -351,10 +352,14 @@ struct ActionButtons: View {
 
     @Default(.sendSecurelyIntroShown) private var sendSecurelyIntroShown
 
+    /// Mirrors the table's display order: stash section first, then query results (deduplicated),
+    /// so index-based flows like Quick Look line up with what's on screen.
     private var results: [FilePath] {
-        (fuzzy.noQuery && fuzzy.volumeFilter == nil)
+        let base = (fuzzy.noQuery && fuzzy.volumeFilter == nil)
             ? (fuzzy.sortField == .score ? fuzzy.recents : fuzzy.sortedRecents)
             : fuzzy.results
+        guard !stash.files.isEmpty else { return base }
+        return stash.files + base.filter { !stash.contains($0) }
     }
 
     private var isAnySheetOpen: Bool {
@@ -544,6 +549,7 @@ struct ActionButtons: View {
             }
         }
         selection.wrappedValue.subtract(removed)
+        STASH.remove(removed)
         FUZZY.results = FUZZY.results.filter { !removed.contains($0) && $0.exists }
     }
 
@@ -646,7 +652,8 @@ struct ActionButtons: View {
                     // A configured shortcut fires regardless of where (or whether) its button shows
                     // in the toolbar; hiding Open With from the menu must not also kill ⌘O.
                     for action in ToolbarAction.rebindable {
-                        if action.id == .copy || action.id == .trash, focusBinding.wrappedValue != .list { continue }
+                        if action.id == .copy || action.id == .trash,
+                           focusBinding.wrappedValue != .list, focusBinding.wrappedValue != .stash { continue }
                         // togglePreview must work with no selection too, so it's dispatched by
                         // ContentView's monitor (which has no selection guard); skip it here to
                         // avoid toggling twice.
@@ -662,7 +669,7 @@ struct ActionButtons: View {
             }
 
             // ⌘⌥C Copy to... (non-rebindable ⌥ variant; ⌘C is handled above by the registry)
-            if chars == "c", mods == [.command, .option], focus == .list {
+            if chars == "c", mods == [.command, .option], focus == .list || focus == .stash {
                 copyToB.wrappedValue = true
                 return nil
             }
@@ -682,7 +689,7 @@ struct ActionButtons: View {
                 return nil
             }
             // ⌘⌥⌫ Permanent delete (non-rebindable ⌥ variant; ⌘⌫ trash is handled above by the registry)
-            if isDelete, focus == .list, mods == [.command, .option],
+            if isDelete, focus == .list || focus == .stash, mods == [.command, .option],
                !sel.contains(where: \.isOnReadOnlyVolume)
             {
                 Self.performDelete(selection: selB)
@@ -724,6 +731,7 @@ struct ActionButtons: View {
         }
 
         selectedResults.subtract(removed)
+        STASH.remove(removed)
         fuzzy.results = fuzzy.results.filter { !removed.contains($0) && $0.exists }
     }
 
@@ -743,7 +751,7 @@ struct ActionButtons: View {
         switch id {
         case .openInTerminal: terminalApp.existingFilePath != nil
         case .openInEditor: editorApp.existingFilePath != nil
-        case .shelve: shelfApp.existingFilePath != nil
+        case .shelve: shelfApp == CLING_STASH_APP || shelfApp.existingFilePath != nil
         default: true
         }
     }
@@ -780,6 +788,11 @@ struct ActionButtons: View {
     }
 
     private func shelve() {
+        if shelfApp == CLING_STASH_APP {
+            // Built-in stash: toggle the selection in and out, in display order.
+            STASH.toggle(results.filter { selectedResults.contains($0) })
+            return
+        }
         guard let shelf = shelfApp.existingFilePath?.url else { return }
         RH.trackRun(selectedResults)
         let config = NSWorkspace.OpenConfiguration()
@@ -885,6 +898,7 @@ struct ActionButtons: View {
         }
 
         selectedResults.subtract(removed)
+        STASH.remove(removed)
         fuzzy.results = fuzzy.results.filter { !removed.contains($0) && $0.exists }
     }
 
