@@ -1,3 +1,11 @@
+# 2.6.7
+
+**[Download Cling 2.6.7 →](https://files.lowtechguys.com/releases/Cling-2.6.7.dmg)**
+## Fixes
+
+- No more crash at launch when a slow external disk is connected (camera SD cards, USB drives), caused by a volume check that could time out and abort the app
+- No more freeze at launch when a connected drive is slow to respond, caused by a mounted-volume check running on the main thread
+
 # 2.6.6
 
 **[Download Cling 2.6.6 →](https://files.lowtechguys.com/releases/Cling-2.6.6.dmg)**

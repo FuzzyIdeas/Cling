@@ -111,9 +111,12 @@ private func indexVolumeEngine(
 }
 
 extension FuzzyClient {
-    var staleExternalVolumes: [FilePath] {
-        enabledVolumes.filter { volume in
-            guard volume.exists else { return false }
+    /// Staleness checks for volumes the caller has already confirmed mounted.
+    /// `volume.exists` is deliberately not consulted here: stat on a stalled or
+    /// mid-unmount volume can block for tens of seconds, so callers stat off-main
+    /// first (CLING-14).
+    func staleExternalVolumes(amongMounted volumes: [FilePath]) -> [FilePath] {
+        volumes.filter { volume in
             let index = volumeIndexFile(volume)
             let cpFile = index.url.deletingPathExtension().appendingPathExtension("checkpoint")
             if FileManager.default.fileExists(atPath: cpFile.path) { return true } // interrupted indexing
@@ -156,6 +159,16 @@ extension FuzzyClient {
         if FileManager.default.fileExists(atPath: (volume / "Backups.backupdb").string) {
             return true
         }
+        // Only APFS volumes can carry a volume role, and `diskutil info` on a cold
+        // external disk can block for many seconds (7s+ on camera SD cards), so ask
+        // the mount table for the filesystem type and skip the probe for
+        // exFAT/NTFS/SMB/... volumes entirely.
+        var fs = statfs()
+        guard statfs(volume.string, &fs) == 0 else { return false }
+        let fsType = withUnsafeBytes(of: &fs.f_fstypename) { raw in
+            String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
+        }
+        guard fsType == "apfs" else { return false }
         // APFS Time Machine: check for Backup volume role
         if let output = shell("/usr/sbin/diskutil", args: ["info", volume.string], timeout: 3).o {
             for line in output.components(separatedBy: "\n") where line.contains("APFS Volume Role:") {
@@ -169,9 +182,19 @@ extension FuzzyClient {
 
     func indexStaleExternalVolumes() {
         guard Defaults[.onboardingCompleted] else { return }
-        let volumes = staleExternalVolumes
-        guard !volumes.isEmpty else { return }
-        indexVolumes(volumes)
+        let candidates = enabledVolumes
+        asyncNow {
+            // `exists` on a stalled or mid-unmount volume can block the caller for
+            // tens of seconds. This runs off `externalVolumes.didSet` on the main
+            // thread, so probe mounts off-main and hop back to check staleness and
+            // start indexing (CLING-14).
+            let mounted = candidates.filter(\.exists)
+            mainActor {
+                let stale = self.staleExternalVolumes(amongMounted: mounted)
+                guard !stale.isEmpty else { return }
+                self.indexVolumes(stale)
+            }
+        }
     }
 
     func getExternalIndexes() -> [FilePath] {
