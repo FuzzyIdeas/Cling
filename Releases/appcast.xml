@@ -3,6 +3,18 @@
     <channel>
         <title>Cling</title>
         <item>
+            <title>2.6.8b1</title>
+            <pubDate>Sat, 18 Jul 2026 11:51:40 +0300</pubDate>
+            <link>https://lowtechguys.com/cling</link>
+            <sparkle:fullReleaseNotesLink>https://files.lowtechguys.com/cling/changelog.html</sparkle:fullReleaseNotesLink>
+            <sparkle:channel>beta</sparkle:channel>
+            <sparkle:version>2.6.8b1</sparkle:version>
+            <sparkle:shortVersionString>2.6.8b1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.6.8b1.html</sparkle:releaseNotesLink>
+            <enclosure url="https://files.lowtechguys.com/releases/Cling-2.6.8b1.dmg" length="30171982" type="application/octet-stream" sparkle:edSignature="vsG9/U33CP44x2GhTJ+AY0xlB/p/Nwmc+qKpEug1u3GAH9LgqcSAVC8I05ZHlHfbko7ngN+ruklWgzyzVP4sDw=="/>
+        </item>
+        <item>
             <title>2.6.7</title>
             <pubDate>Fri, 17 Jul 2026 21:37:31 +0300</pubDate>
             <link>https://lowtechguys.com/cling</link>
