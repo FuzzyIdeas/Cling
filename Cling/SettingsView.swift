@@ -94,6 +94,50 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     @Published var selection: SettingsCategory = .general
 }
 
+// MARK: - PreventSidebarCollapse
+
+/// `navigationSplitViewColumnWidth(min:)` only limits live resizing: dragging past
+/// the minimum still snaps the sidebar closed, and without a sidebar toggle there is
+/// no way to bring it back. SwiftUI has no API for this, so forbid collapsing on the
+/// underlying `NSSplitViewController` and expand a sidebar that is already collapsed
+/// (e.g. persisted from a previous session). Lives on the detail column: a collapsed
+/// sidebar's view is out of the hierarchy, so a sidebar-attached helper would never run.
+private struct PreventSidebarCollapse: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        DisablingView()
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class DisablingView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil else { return }
+            DispatchQueue.main.async { [weak self] in self?.disableSidebarCollapse() }
+        }
+
+        override func layout() {
+            super.layout()
+            disableSidebarCollapse()
+        }
+
+        private func disableSidebarCollapse() {
+            var view = superview
+            while let v = view, !(v is NSSplitView) {
+                view = v.superview
+            }
+            guard let splitView = view as? NSSplitView,
+                  let controller = splitView.delegate as? NSSplitViewController else { return }
+            for item in controller.splitViewItems {
+                item.canCollapse = false
+                if item.isCollapsed {
+                    item.isCollapsed = false
+                }
+            }
+        }
+    }
+
+}
+
 // MARK: - SettingsView
 
 struct SettingsView: View {
@@ -132,6 +176,7 @@ struct SettingsView: View {
                 // titlebar via titleVisibility = .hidden in the AppDelegate.
                 .navigationTitle("Settings")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(PreventSidebarCollapse())
         }
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 820, maxWidth: .infinity, minHeight: 640, maxHeight: .infinity)
