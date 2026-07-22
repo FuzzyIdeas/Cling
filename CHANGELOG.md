@@ -11,7 +11,7 @@
 ## Improvements
 
 - If the app ever quits unexpectedly, it now restarts itself and saves a crash report each time, so the cause can be tracked down
-- Refreshed settings sidebar icons with a calmer, earthier color palette
+- Restyled settings sidebar
 
 # 2.6.7
 
