@@ -1,3 +1,18 @@
+# 2.6.8
+
+**[Download Cling 2.6.8 →](https://files.lowtechguys.com/releases/Cling-2.6.8.dmg)**
+## Fixes
+
+- A slow filesystem-event startup step no longer risks freezing the app a few minutes after launch
+- No more freeze when a selected file sits on a slow or disconnected drive, caused by the script action bar checking each file's type on the main thread
+- No more freeze during the periodic background reindex, caused by a cache refresh that could stall behind the running scan
+- Settings sidebar no longer collapses out of view with no way to reopen it
+
+## Improvements
+
+- If the app ever quits unexpectedly, it now restarts itself and saves a crash report each time, so the cause can be tracked down
+- Refreshed settings sidebar icons with a calmer, earthier color palette
+
 # 2.6.7
 
 **[Download Cling 2.6.7 →](https://files.lowtechguys.com/releases/Cling-2.6.7.dmg)**
