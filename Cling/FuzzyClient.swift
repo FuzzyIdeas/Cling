@@ -1244,12 +1244,16 @@ class FuzzyClient {
         }
 
         scopesIndexing.formUnion(scopes)
-        bust_gitignore_cache()
         let ignoreChecker: String? = fsignore.exists ? fsignoreString : nil
         let volumePaths = Set(enabledVolumes.map(\.string))
 
         scopeIndexTask?.cancel()
         scopeIndexTask = Task.detached(priority: .userInitiated) {
+            // Invalidate the gitignore cache off-main: it takes a lock the in-flight
+            // background walk may still hold, so calling it on the main thread (the hourly
+            // index-checker Repeater fires there) could freeze the app for the walk's
+            // duration (CLING-32). Runs before the group so the walk re-reads fresh.
+            bust_gitignore_cache()
             await withTaskGroup(of: (SearchScope, SearchEngine).self) { group in
                 for scope in scopes {
                     let dirs = await self.walkDirs(for: scope)

@@ -15,10 +15,8 @@ struct ScriptPickerView: View {
 
     @Environment(\.dismiss) var dismiss
 
-    @ViewBuilder
     var scriptList: some View {
-        let paths = fileURLs.compactMap(\.filePath)
-        ForEach(scriptManager.scriptURLs.sorted(by: \.lastPathComponent).filter { scriptManager.isEligible($0, forPaths: paths) }, id: \.path) { script in
+        ForEach(eligibleScripts, id: \.path) { script in
             scriptButton(script)
         }.focusable(false)
     }
@@ -50,6 +48,8 @@ struct ScriptPickerView: View {
             .padding(.top)
         }
         .padding()
+        .onAppear { refreshEligibleScripts() }
+        .onChange(of: scriptManager.scriptURLs) { refreshEligibleScripts() }
         .sheet(isPresented: $isShowingAddScript, onDismiss: createNewScript) {
             AddScriptView(name: $scriptName, selectedRunner: $selectedRunner)
         }
@@ -108,6 +108,18 @@ struct ScriptPickerView: View {
         }
     }
 
+    /// `isEligible` calls `.isDir`, a synchronous stat that blocks on a stalled or
+    /// removable mount. Resolve it off-main instead of inside the ForEach filter (CLING-2A).
+    func refreshEligibleScripts() {
+        let paths = fileURLs.compactMap(\.filePath)
+        let scripts = scriptManager.scriptURLs.sorted(by: \.lastPathComponent)
+        let manager = scriptManager
+        asyncNow {
+            let eligible = scripts.filter { manager.isEligible($0, forPaths: paths) }
+            mainActor { eligibleScripts = eligible }
+        }
+    }
+
     func createNewScript() {
         guard !scriptName.isEmpty else { return }
         let ext = selectedRunner?.fileExtension ?? "sh"
@@ -131,6 +143,7 @@ struct ScriptPickerView: View {
     @State private var scriptName = ""
     @State private var selectedRunner: ScriptRunner? = .zsh
     @State private var scriptManager = SM
+    @State private var eligibleScripts: [URL] = []
     @State private var confirmScript: URL? = nil
     @State private var deleteScript: URL? = nil
 
@@ -176,14 +189,8 @@ struct ScriptActionButtons: View {
         .lineLimit(1)
         .revealShortcutHints(held: cmdHeld, visible: $comboHintVisible)
         .revealShortcutHints(held: cmdCtrlHeld, visible: $pillHintsVisible, instant: comboHintVisible)
-        .onAppear {
-            let extensions = selectedResults.compactMap(\.extension).uniqued
-            commonScripts = scriptManager.commonScripts(for: extensions).sorted(by: \.lastPathComponent)
-        }
-        .onChange(of: selectedResults) {
-            let extensions = selectedResults.compactMap(\.extension).uniqued
-            commonScripts = scriptManager.commonScripts(for: extensions).sorted(by: \.lastPathComponent)
-        }
+        .onAppear { refreshScripts() }
+        .onChange(of: selectedResults) { refreshScripts() }
         .alert(
             "Run \(confirmScript?.lastPathComponent.ns.deletingPathExtension ?? "script")?",
             isPresented: Binding(get: { confirmScript != nil }, set: { if !$0 { confirmScript = nil } })
@@ -203,7 +210,7 @@ struct ScriptActionButtons: View {
     }
 
     var scriptList: some View {
-        ForEach(commonScripts.filter { scriptManager.isEligible($0, forPaths: selectedResults.arr) }, id: \.path) { script in
+        ForEach(eligibleScripts, id: \.path) { script in
             if let key = scriptManager.scriptShortcuts[script] {
                 scriptButton(script, key: key)
             }
@@ -261,7 +268,33 @@ struct ScriptActionButtons: View {
         }.frame(width: 800, height: 500, alignment: .topLeading)
     }
 
+    /// Recomputes the common scripts and their eligibility for the current selection.
+    /// `isEligible` calls `.isDir`, a synchronous stat that blocks on a stalled or
+    /// removable mount. This used to run inside the `scriptList` ForEach filter, so it
+    /// re-stat'd every selected file on each re-render and could freeze the app (CLING-2A).
+    /// The stat now happens off-main, once per selection change.
+    func refreshScripts() {
+        let selection = selectedResults
+        let extensions = selection.compactMap(\.extension).uniqued
+        let scripts = scriptManager.commonScripts(for: extensions).sorted(by: \.lastPathComponent)
+        commonScripts = scripts
+
+        scriptsGeneration &+= 1
+        let generation = scriptsGeneration
+        let paths = selection.arr
+        let manager = scriptManager
+        asyncNow {
+            let eligible = scripts.filter { manager.isEligible($0, forPaths: paths) }
+            mainActor {
+                guard scriptsGeneration == generation else { return }
+                eligibleScripts = eligible
+            }
+        }
+    }
+
     @State private var commonScripts: [URL] = []
+    @State private var eligibleScripts: [URL] = []
+    @State private var scriptsGeneration = 0
 
     @State private var showOutput = false
     @State private var confirmScript: URL? = nil
