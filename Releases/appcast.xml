@@ -3,6 +3,18 @@
     <channel>
         <title>Cling</title>
         <item>
+            <title>2.6.9b1</title>
+            <pubDate>Sun, 26 Jul 2026 11:50:39 +0300</pubDate>
+            <link>https://lowtechguys.com/cling</link>
+            <sparkle:fullReleaseNotesLink>https://files.lowtechguys.com/cling/changelog.html</sparkle:fullReleaseNotesLink>
+            <sparkle:channel>beta</sparkle:channel>
+            <sparkle:version>2.6.9b1</sparkle:version>
+            <sparkle:shortVersionString>2.6.9b1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.6.9b1.html</sparkle:releaseNotesLink>
+            <enclosure url="https://files.lowtechguys.com/releases/Cling-2.6.9b1.dmg" length="30183702" type="application/octet-stream" sparkle:edSignature="nByon4OssUnCcuYL4GbHGmoNeXQ+k5nRuSSlIhUKTwO1SQsNmj+V78qD+SHB3nBEebTycLLfihbRKzxS3FHNBQ=="/>
+        </item>
+        <item>
             <title>2.6.8</title>
             <pubDate>Wed, 22 Jul 2026 16:35:53 +0300</pubDate>
             <link>https://lowtechguys.com/cling</link>
@@ -10,7 +22,6 @@
             <sparkle:version>2.6.8</sparkle:version>
             <sparkle:shortVersionString>2.6.8</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.6.8.html</sparkle:releaseNotesLink>
             <enclosure url="https://files.lowtechguys.com/releases/Cling-2.6.8.dmg" length="30165233" type="application/octet-stream" sparkle:edSignature="EwLBI6u5jWXTJFHxoeTfUp17SEroMvA+qbjHc0wnCQ2TyuDDKNLrON881pA6DrdLHCnc9tme1YIB1yL5WC4hBQ=="/>
             <sparkle:deltas>
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.8-2.6.7.delta" sparkle:deltaFrom="2.6.7" length="1322474" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="zkc5kdJv8r71GmJPdehfJSKOqqMnG69UM+/Vw1aIP1VAeTQVuXj1UgFKokU9kWe4sxrzTlaOh70ivYgWBcWZCQ=="/>
@@ -28,7 +39,6 @@
             <sparkle:version>2.6.7</sparkle:version>
             <sparkle:shortVersionString>2.6.7</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.6.7.html</sparkle:releaseNotesLink>
             <enclosure url="https://files.lowtechguys.com/releases/Cling-2.6.7.dmg" length="30171516" type="application/octet-stream" sparkle:edSignature="xso1NgstgSI1JwX/947omu5byfxn3uFdyxv52DG56XDnCHTD+VXq9Gko8dZm7r8gISp+4jfe+f2H4N43Zt3JBg=="/>
             <sparkle:deltas>
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.7-2.6.6.delta" sparkle:deltaFrom="2.6.6" length="1268010" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="jX8GFxFh476sJp4ZuQ3WO16Fyx4nzi+DOr+//sDtUPmzd2974nnxWmn/WeULQGhA6GUw5dGI8wvZKpBrqzfJCQ=="/>
@@ -46,7 +56,6 @@
             <sparkle:version>2.6.6</sparkle:version>
             <sparkle:shortVersionString>2.6.6</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.6.6.html</sparkle:releaseNotesLink>
             <enclosure url="https://files.lowtechguys.com/releases/Cling-2.6.6.dmg" length="30142597" type="application/octet-stream" sparkle:edSignature="QTWKFCkEbF9aP5LdoesSOoekm9PQjLjGr3Por/w+xlxLyogaUR69tlIGxDkuBTVH1wmGUjalX4fh3iZbqggpAg=="/>
             <sparkle:deltas>
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.6-2.6.5.delta" sparkle:deltaFrom="2.6.5" length="1837038" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="WT3wlURB92nJkwzD+Ii3f9ZmVFJhq/jsfEZDpZft9F7x0Kna+1nBVsq20LdDAWbo4uBWH4XP8FpvwFF/jujdDg=="/>
@@ -64,7 +73,6 @@
             <sparkle:version>2.6.5</sparkle:version>
             <sparkle:shortVersionString>2.6.5</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.6.5.html</sparkle:releaseNotesLink>
             <enclosure url="https://files.lowtechguys.com/releases/Cling-2.6.5.dmg" length="29963070" type="application/octet-stream" sparkle:edSignature="W3pcukEVo1AjGkzGFmozTU8thQ9VyJkdM2TAfZ3f1cioQCWyK+H+JlMSPplKUbh0WtwmQUH0oJvNwSk9tmzQAg=="/>
             <sparkle:deltas>
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.5-2.6.4.delta" sparkle:deltaFrom="2.6.4" length="2290134" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="nKE9MyJgUeq71VuuXb/5IfHbOzP69d3eNt1Db56CX5vACazNs8r7F0Grl42OMVAh2q8GL4+47ceymkur80jIAQ=="/>
@@ -82,7 +90,6 @@
             <sparkle:version>2.6.4</sparkle:version>
             <sparkle:shortVersionString>2.6.4</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.6.4.html</sparkle:releaseNotesLink>
             <enclosure url="https://files.lowtechguys.com/releases/Cling-2.6.4.dmg" length="29989613" type="application/octet-stream" sparkle:edSignature="gHo/1vYwKV0BXf4+OHNXLtbp5EhQzuUK7k5pEo7LdkbBh7QL+2T/+2OF3a4P2VLToRV/Sb26+kFxOl9k2qJ2BQ=="/>
             <sparkle:deltas>
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.4-2.6.3.delta" sparkle:deltaFrom="2.6.3" length="1637706" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="OsHERh3n3uGgExuF6+/n+D6EHkB+2tNOCX1FcAVfTpju6mkFhFm94mYcPlTYbOhnGIMK1L+GOXIdoEXVdc3uAg=="/>
