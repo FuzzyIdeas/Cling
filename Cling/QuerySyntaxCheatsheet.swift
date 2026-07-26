@@ -1,3 +1,4 @@
+import Defaults
 import SwiftUI
 
 /// Reference card for the search query language, shown in a popover from the search bar.
@@ -18,12 +19,22 @@ struct QuerySyntaxCheatsheet: View {
         let items: [Item]
     }
 
-    static let groups: [Group] = [
-        Group(title: "Match", icon: "magnifyingglass", tint: .blue, items: [
-            Item(syntax: "text", desc: "Fuzzy match: the letters in order, anywhere in the path", example: "rprt finds report.pdf"),
-            Item(syntax: "a b", desc: "Every word must appear", example: "vacation photos"),
-            Item(syntax: "'text", desc: "Exact text, not fuzzy", example: "'cat finds vacation, not contact"),
-        ]),
+    /// The quote operator flips whichever mode is not the default, so the Match group swaps with
+    /// the `literalSearch` setting. Both stay `static let` so the `Group`/`Item` UUIDs survive
+    /// re-renders and `ForEach` keeps its identity.
+    static let fuzzyMatchGroup = Group(title: "Match", icon: "magnifyingglass", tint: .blue, items: [
+        Item(syntax: "text", desc: "Fuzzy match: the letters in order, anywhere in the path", example: "rprt finds report.pdf"),
+        Item(syntax: "a b", desc: "Every word must appear", example: "vacation photos"),
+        Item(syntax: "'text", desc: "Exact text, not fuzzy", example: "'cat finds vacation, not contact"),
+    ])
+
+    static let literalMatchGroup = Group(title: "Match", icon: "magnifyingglass", tint: .blue, items: [
+        Item(syntax: "text", desc: "Exact text, as typed", example: "cat finds vacation, not contact"),
+        Item(syntax: "a b", desc: "Every word must appear", example: "vacation photos"),
+        Item(syntax: "'text", desc: "Fuzzy match: the letters in order, anywhere in the path", example: "'rprt finds report.pdf"),
+    ])
+
+    static let otherGroups: [Group] = [
         Group(title: "Type & place", icon: "folder", tint: .orange, items: [
             Item(syntax: ".ext", desc: "Filter by file type (or *.ext)", example: ".pdf"),
             Item(syntax: ".a .b", desc: "Several file types at once", example: ".jpg .png"),
@@ -61,7 +72,7 @@ struct QuerySyntaxCheatsheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    ForEach(Self.groups) { group in
+                    ForEach(Self.groups(literal: literalSearch)) { group in
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(spacing: 5) {
                                 Image(systemName: group.icon)
@@ -98,6 +109,12 @@ struct QuerySyntaxCheatsheet: View {
         }
         .frame(width: 380)
     }
+
+    static func groups(literal: Bool) -> [Group] {
+        [literal ? literalMatchGroup : fuzzyMatchGroup] + otherGroups
+    }
+
+    @Default(.literalSearch) private var literalSearch
 
     private func row(_ item: Item) -> some View {
         HStack(alignment: .top, spacing: 10) {

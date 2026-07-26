@@ -99,12 +99,14 @@ final class SearchCoordinator: @unchecked Sendable {
         resultStore.initialize(repeating: [], count: n)
         defer { resultStore.deinitialize(count: n); resultStore.deallocate() }
 
+        let literalDefault = Defaults[.literalSearch]
         DispatchQueue.concurrentPerform(iterations: n) { idx in
             resultStore[idx] = engines[idx].engine.search(
                 query: effectiveQuery,
                 maxResults: maxResults,
                 folderPrefixes: folderPrefixes,
                 dirsOnly: dirsOnly,
+                literalDefault: literalDefault,
                 cancelled: cancelled
             )
         }

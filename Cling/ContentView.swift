@@ -262,7 +262,7 @@ struct ContentView: View {
         }
     }
 
-    private static let placeholderExamples = [
+    private static let placeholderExamplesBase = [
         "Search",
         "Example: **`invoice .pdf`** *(finds PDF invoices)*",
         "Example: **`.png .jpg`** *(filters common image formats)*",
@@ -276,7 +276,6 @@ struct ContentView: View {
         "Example: **`report !draft`** *(reports, skipping drafts)*",
         "Example: **`.png !screenshot`** *(PNGs that aren't screenshots)*",
         "Example: **`notes$`** *(names ending in notes)*",
-        "Example: **`'cat`** *(exact text: finds Cats or vacation, not contact)*",
         "Example: **`brew python`** *(shows installed Python versions)*",
     ]
 
@@ -1041,8 +1040,9 @@ struct ContentView: View {
                 return
             }
             while !Task.isCancelled, shouldCyclePlaceholder {
-                placeholderHint = ContentView.placeholderExamples[placeholderIndex]
-                placeholderIndex = (placeholderIndex + 1) % ContentView.placeholderExamples.count
+                let examples = ContentView.placeholderExamples(literal: Defaults[.literalSearch])
+                placeholderHint = examples[placeholderIndex % examples.count]
+                placeholderIndex = (placeholderIndex + 1) % examples.count
                 try? await Task.sleep(nanoseconds: 3_500_000_000)
             }
         }
@@ -1408,6 +1408,16 @@ struct ContentView: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(paths.compactMap { $0.lastComponent?.string }.joined(separator: "\n"), forType: .string)
         }
+    }
+
+    /// The quote operator means the opposite of whatever matching mode is the default, so its
+    /// example follows the `literalSearch` setting.
+    private static func placeholderExamples(literal: Bool) -> [String] {
+        placeholderExamplesBase + [
+            literal
+                ? "Example: **`'rprt`** *(fuzzy text: finds report.pdf)*"
+                : "Example: **`'cat`** *(exact text: finds Cats or vacation, not contact)*",
+        ]
     }
 
     private func handleFilterKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {

@@ -898,6 +898,12 @@ class FuzzyClient {
             .sink { [self] _ in
                 performSearch()
             }.store(in: &observers)
+        pub(.literalSearch)
+            .sink { [self] _ in
+                // The query string is unchanged, so performSearch would skip the re-run.
+                invalidateSearch()
+                performSearch()
+            }.store(in: &observers)
 
         pub(.disabledVolumes)
             .debounce(for: 2.0, scheduler: RunLoop.main)
@@ -1571,6 +1577,7 @@ class FuzzyClient {
             engines = activeEngines
         }
         let pools = quickFilterPools
+        let literalDefault = Defaults[.literalSearch]
 
         searching = true
         searchTask = Task.detached(priority: .userInitiated) {
@@ -1594,7 +1601,8 @@ class FuzzyClient {
                     query: query, maxResults: maxResults, folderPrefixes: allPrefixes,
                     excludedPaths: removedPaths.isEmpty ? nil : removedPaths,
                     maxDepth: activeMaxDepth,
-                    candidatePool: firstPool, cancelled: { cancelFlag }
+                    candidatePool: firstPool, literalDefault: literalDefault,
+                    cancelled: { cancelFlag }
                 )
                 for i in firstResults.indices {
                     firstResults[i].sourceLabel = firstEng.label
@@ -1627,7 +1635,8 @@ class FuzzyClient {
                                     query: query, maxResults: maxResults, folderPrefixes: allPrefixes,
                                     excludedPaths: removedPaths.isEmpty ? nil : removedPaths,
                                     maxDepth: activeMaxDepth,
-                                    candidatePool: pool, cancelled: { cancelFlag }
+                                    candidatePool: pool, literalDefault: literalDefault,
+                                    cancelled: { cancelFlag }
                                 )
                                 for i in results.indices {
                                     results[i].sourceLabel = eng.label
@@ -2182,6 +2191,7 @@ class FuzzyClient {
     func matchCount(query: String, dirsOnly: Bool, folders: [FilePath], maxDepth: Int?, cap: Int = 5000) async -> Int {
         let engines = activeEngines
         let prefixes = folders.isEmpty ? nil : folders.map(\.string)
+        let literalDefault = Defaults[.literalSearch]
         return await Task.detached(priority: .utility) {
             var total = 0
             for (eng, _, _) in engines {
@@ -2190,7 +2200,8 @@ class FuzzyClient {
                     maxResults: max(0, cap - total),
                     folderPrefixes: prefixes,
                     dirsOnly: dirsOnly,
-                    maxDepth: maxDepth
+                    maxDepth: maxDepth,
+                    literalDefault: literalDefault
                 ).count
                 if total >= cap { break }
             }

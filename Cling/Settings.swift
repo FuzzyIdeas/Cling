@@ -609,6 +609,9 @@ extension Defaults.Keys {
     static let showSearchHints = Key<Bool>("showSearchHints", default: true)
     static let searchHintsManuallyEnabled = Key<Bool>("searchHintsManuallyEnabled", default: false)
     static let searchHintsFirstShownAt = Key<TimeInterval>("searchHintsFirstShownAt", default: 0)
+    /// When on, a plain word must appear as contiguous text instead of as a fuzzy subsequence, and
+    /// the `'` operator inverts to mean "match this one fuzzily" (same as fzf's `--exact`).
+    static let literalSearch = Key<Bool>("literalSearch", default: false)
 
     static let showActionRow = Key<Bool>("showActionRow", default: true)
     static let showOpenWithRow = Key<Bool>("showOpenWithRow", default: true)

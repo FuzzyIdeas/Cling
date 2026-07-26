@@ -827,6 +827,14 @@ private struct SearchSettingsPane: View {
                 proScopeRow(.root, label: "Root", detail: "`/usr`, `/bin`, `/sbin`, `/opt`, `/etc`, `/Library`, `/var`, `/private`")
             }
 
+            Section("Matching") {
+                DescriptiveToggle(
+                    title: "Literal search",
+                    detail: "Words match as typed, not fuzzily. Prefix a word with ' to fuzzy match it.",
+                    isOn: $literalSearch
+                )
+            }
+
             Section("Results") {
                 SettingRow(
                     title: "Max results",
@@ -941,6 +949,7 @@ private struct SearchSettingsPane: View {
     @Default(.searchScopes) private var searchScopes
     @Default(.showSearchHints) private var showSearchHints
     @Default(.searchHintsManuallyEnabled) private var searchHintsManuallyEnabled
+    @Default(.literalSearch) private var literalSearch
 
     private func scopeRow(_ scope: SearchScope, label: String, detail: LocalizedStringKey) -> some View {
         HStack(alignment: .firstTextBaseline) {

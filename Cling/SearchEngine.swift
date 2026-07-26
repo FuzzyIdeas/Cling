@@ -1587,6 +1587,7 @@ final class SearchEngine: @unchecked Sendable {
         dirsOnly: Bool = false,
         maxDepth: Int? = nil,
         candidatePool: [Int]? = nil,
+        literalDefault: Bool = false,
         cancelled: (() -> Bool)? = nil
     ) -> [SearchResult] {
         let t0 = CFAbsoluteTimeGetCurrent()
@@ -1676,13 +1677,13 @@ final class SearchEngine: @unchecked Sendable {
                 continue
             }
 
-            // Anchor sigils: trailing '$' (end), leading '^'/single-segment '/' (start), leading '\'' (literal).
+            // Anchor sigils: trailing '$' (end), leading '^'/single-segment '/' (start), leading '\'' (quote).
             var anchorEnd = false
             if t.hasSuffix("$"), t.count > 1 { anchorEnd = true; t = String(t.dropLast()) }
             var anchorStart = false
-            var literal = false
+            var quoted = false
             if t.hasPrefix("'"), t.count > 1 {
-                literal = true; t = String(t.dropFirst())
+                quoted = true; t = String(t.dropFirst())
             } else if t.hasPrefix("^"), t.count > 1 {
                 anchorStart = true; t = String(t.dropFirst())
             } else if t.hasPrefix("/") {
@@ -1711,24 +1712,34 @@ final class SearchEngine: @unchecked Sendable {
             }
 
             // Extension / dir-segment classifiers are skipped for a quoted body so the quote
-            // operator always forces literal-substring matching (e.g. "'.tar", "'photos/").
-            if !literal, body.hasPrefix("."), body.count > 1 {
+            // operator always treats it as plain text (e.g. "'.tar", "'photos/").
+            if !quoted, body.hasPrefix("."), body.count > 1 {
                 if negate { negExtStrings.append(body) } else { extStrings.append(body) }
                 continue
             }
-            if !literal, body.hasPrefix("*."), body.count > 2 {
+            if !quoted, body.hasPrefix("*."), body.count > 2 {
                 let ext = "." + body.dropFirst(2)
                 if negate { negExtStrings.append(ext) } else { extStrings.append(ext) }
                 continue
             }
-            if !literal, body.hasSuffix("/"), body.count > 1 {
+            if !quoted, body.hasSuffix("/"), body.count > 1 {
                 if negate { negSubstrings.append(opNeedle(body)) } else { dirSegStrings.append(body) }
                 continue
             }
-            // Plain word: fuzzy when a positive bareword, literal substring when quoted or negated.
+            // Plain word: fuzzy by default, literal substring when quoted or negated. The quote
+            // flips whichever mode is NOT the default, so under literalDefault a bareword is the
+            // literal one and 'foo is the fuzzy escape hatch (like fzf's --exact).
             if negate { negSubstrings.append(opNeedle(body)) }
-            else if literal { litSubstrings.append(opNeedle(body)) }
-            else { fuzzyTokens.append(body) }
+            else if literalDefault != quoted {
+                litSubstrings.append(opNeedle(body))
+                // A bareword under literalDefault also feeds the fuzzy scorer: the substring gate
+                // above decides WHICH paths match, the score only ranks them. Without it a literal
+                // query loses every ranking signal (basename hit, prefix, tightness) and falls back
+                // to path importance alone. Contiguous text always matches as a subsequence, so
+                // this never widens the result set. Explicit 'foo keeps its pure-gate semantics
+                // (order-independent across several quoted words) untouched.
+                if literalDefault { fuzzyTokens.append(body) }
+            } else { fuzzyTokens.append(body) }
         }
 
         let extTokenBytes: [[UInt8]] = extStrings.map { Array($0.utf8) }
