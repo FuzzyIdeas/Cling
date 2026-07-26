@@ -2401,29 +2401,82 @@ final class SearchEngine: @unchecked Sendable {
         }
         let filterMs = (CFAbsoluteTimeGetCurrent() - t1) * 1000
         if cands.count > 200_000 {
-            // O(n) partial selection by path length using counting sort
+            // A candidate whose BASENAME carries every query letter is where exact, prefix and
+            // basename matches come from, so it is exempt from the length cull. Without the
+            // exemption a perfect hit is dropped for being deep: ".../idlelib/searchengine.py"
+            // (123 bytes) for query "searchengine" sits far past the ~77 byte cutoff a 1.5M entry
+            // scope produces, while weak subsequence matches survive purely by having shorter
+            // paths. Needs a real fuzzy body, since baseMask == 0 (extension-only query) would
+            // exempt every candidate and defeat the cap.
+            //
+            // The counting sort and the exempt tally share one pass: each candidate costs a random
+            // read of byteLengths/bnMasks, so walking the list twice to count them separately
+            // doubled the cost of a broad query.
             let maxPathLen = 4096
-            let lenCounts = UnsafeMutablePointer<Int>.allocate(capacity: maxPathLen)
-            lenCounts.initialize(repeating: 0, count: maxPathLen)
+            let lenCounts = UnsafeMutablePointer<Int>.allocate(capacity: maxPathLen * 2)
+            lenCounts.initialize(repeating: 0, count: maxPathLen * 2)
+            let exemptLenCounts = lenCounts + maxPathLen
+            let splitExempt = baseMask != 0
+            var exemptCount = 0
             var ci = 0
             while ci < cands.count {
-                lenCounts[min(byteLengths[cands[ci]], maxPathLen - 1)] &+= 1; ci &+= 1
+                let id = cands[ci]
+                let l = min(byteLengths[id], maxPathLen - 1)
+                if splitExempt, bnMasks[id] & baseMask == baseMask {
+                    exemptCount &+= 1; exemptLenCounts[l] &+= 1
+                } else {
+                    lenCounts[l] &+= 1
+                }
+                ci &+= 1
             }
+            // A one or two character query matches nearly every basename. If the exempt set alone
+            // blows the budget, fold it back in and length-cull everything as before.
+            let exemptActive = exemptCount > 0 && exemptCount < 200_000
+            if !exemptActive, exemptCount > 0 {
+                var mi = 0
+                while mi < maxPathLen {
+                    lenCounts[mi] &+= exemptLenCounts[mi]; mi &+= 1
+                }
+                exemptCount = 0
+            }
+            // Exempt entries are long by construction (that is why the cull was dropping them) and
+            // scoring cost scales with path length, so an unbounded exemption makes a common-letter
+            // query like "readme" (116k exempt) roughly twice as slow. Cap it: the shortest
+            // exemptCap of them are kept, which covers the handful of deep exact matches a specific
+            // query produces while bounding the extra work a vague one can buy.
+            let exemptCap = 50000
+            var exemptCutoff = maxPathLen - 1
+            if exemptActive, exemptCount > exemptCap {
+                var ecumul = 0
+                var eli = 0
+                while eli < maxPathLen {
+                    ecumul &+= exemptLenCounts[eli]
+                    if ecumul >= exemptCap { exemptCutoff = eli; break }
+                    eli &+= 1
+                }
+                exemptCount = ecumul
+            }
+            let budget = 200_000 - exemptCount
+
             var cumul = 0, cutoff = maxPathLen - 1
             var li = 0
             while li < maxPathLen {
                 cumul &+= lenCounts[li]
-                if cumul >= 200_000 { cutoff = li; break }
+                if cumul >= budget { cutoff = li; break }
                 li &+= 1
             }
             lenCounts.deallocate()
-            // Keep ALL entries at or below cutoff length (don't bias by entry order)
+            // Keep ALL entries at or below cutoff length (don't bias by entry order), plus every
+            // exempt entry regardless of how long its path is.
             var filtered = [Int]()
-            filtered.reserveCapacity(cumul)
+            filtered.reserveCapacity(cumul + exemptCount)
             ci = 0
             while ci < cands.count {
-                if byteLengths[cands[ci]] <= cutoff {
-                    filtered.append(cands[ci])
+                let id = cands[ci]
+                if byteLengths[id] <= cutoff
+                    || (exemptActive && byteLengths[id] <= exemptCutoff && bnMasks[id] & baseMask == baseMask)
+                {
+                    filtered.append(id)
                 }
                 ci &+= 1
             }
