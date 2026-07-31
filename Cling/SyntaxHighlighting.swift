@@ -8,7 +8,10 @@
 
 import AppKit
 import Highlighter
+import OSLog
 import SwiftUI
+
+private let log = Logger(subsystem: clingSubsystem, category: "SyntaxHighlighting")
 
 // MARK: - SyntaxHighlighter
 
@@ -17,6 +20,10 @@ import SwiftUI
 final class SyntaxHighlighter {
     private init() {
         queue.async { [self] in
+            guard Self.resourceBundleExists else {
+                log.error("Highlighter resource bundle missing, falling back to plain text")
+                return
+            }
             let hl = Highlighter()
             hl?.setTheme("horizon-dark")
             if let bg = hl?.theme.themeBackgroundColour {
@@ -114,6 +121,16 @@ final class SyntaxHighlighter {
             }
             DispatchQueue.main.async { completion(attributed) }
         }
+    }
+
+    /// `Highlighter.init` reaches for `Bundle.module`, and SPM's generated accessor calls `fatalError`
+    /// when the resource bundle is missing rather than returning nil, so the app dies where it should
+    /// have degraded. Crash reports show app copies that really are missing it (a half-applied update,
+    /// an app cleaner stripping "unused" resources), so look before touching the accessor.
+    private static var resourceBundleExists: Bool {
+        [Bundle.main.resourceURL, Bundle.main.bundleURL]
+            .compactMap { $0?.appendingPathComponent("Highlighter_Highlighter.bundle").path }
+            .contains { FileManager.default.fileExists(atPath: $0) }
     }
 
     private let queue = DispatchQueue(label: "com.lowtechguys.Cling.highlighter", qos: .userInitiated)

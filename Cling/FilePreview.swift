@@ -106,13 +106,16 @@ extension URL {
 /// Decides whether a file the system didn't type as text is actually readable
 /// text, so `public.data` files (extensionless configs like Caddyfile, logs,
 /// source without a known extension) can take the inset code preview instead of
-/// QuickLook. Results are cached by path+mtime since `PreviewKind` is recomputed
-/// on every panel re-render.
+/// QuickLook. Results are cached by path since `PreviewKind` is recomputed on
+/// every panel re-render.
 enum TextSniffer {
     @MainActor
     static func isProbablyText(_ url: URL) -> Bool {
-        let mtime = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let key = "\(url.path)|\(mtime)"
+        // Keyed by path alone. The old path+mtime key had to stat the file to build the key, so every
+        // re-render of the preview panel paid a synchronous filesystem hit even on a cache hit, and on a
+        // stalled network mount that stat is what hung the main thread. Whether a path holds text rather
+        // than binary is stable in practice, so trading mtime precision for zero I/O on a hit is worth it.
+        let key = url.path
         if let cached = cache[key] { return cached }
 
         let result = sniff(url)

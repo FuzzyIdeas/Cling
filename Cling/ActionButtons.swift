@@ -7,6 +7,50 @@ import System
 
 private let log = Logger(subsystem: clingSubsystem, category: "ActionButtons")
 
+// MARK: - HelperApp
+
+/// Cached existence of the configured helper apps (terminal, editor, shelf).
+///
+/// `String.existingFilePath` is a `stat`, and the toolbar re-derives both its visible and its overflow
+/// action list on every body render, so each render stat'd all three. When one of them sits on a sleeping
+/// external or a stalled network mount that blocks the main thread long enough to register as a hang.
+/// The paths change only when the user edits the setting or moves the app, so answer from cache and
+/// refresh off-main on both of those events.
+enum HelperApp {
+    static func isInstalled(_ path: String) -> Bool {
+        guard !path.isEmpty else { return false }
+        lock.lock()
+        let cached = cache[path]
+        lock.unlock()
+        if let cached { return cached }
+
+        // Cold cache. Answer truthfully rather than guessing: a wrong "yes" leaves a button that
+        // silently does nothing on click, a wrong "no" hides a working one. This is the one stat we
+        // can't skip, and it happens once per path per launch.
+        let exists = path.existingFilePath != nil
+        store(path, exists)
+        return exists
+    }
+
+    /// Re-checks the given paths off the main thread.
+    static func refresh(_ paths: [String]) {
+        asyncNow {
+            for path in paths where !path.isEmpty {
+                store(path, path.existingFilePath != nil)
+            }
+        }
+    }
+
+    private static let lock = NSLock()
+    private static var cache: [String: Bool] = [:]
+
+    private static func store(_ path: String, _ exists: Bool) {
+        lock.lock()
+        cache[path] = exists
+        lock.unlock()
+    }
+}
+
 // MARK: - ActionButtons
 
 struct ActionButtons: View {
@@ -302,8 +346,8 @@ struct ActionButtons: View {
     /// buttons must stay enabled regardless of which field is focused.
     func isAvailable(_ id: ActionID) -> Bool {
         switch id {
-        case .openInTerminal: terminalApp.existingFilePath != nil
-        case .openInEditor: editorApp.existingFilePath != nil
+        case .openInTerminal: HelperApp.isInstalled(terminalApp)
+        case .openInEditor: HelperApp.isInstalled(editorApp)
         case .copy: !selectedResults.isEmpty
         case .trash: !selectedResults.isEmpty && !selectedResults.contains(where: \.isOnReadOnlyVolume)
         case .openWith: !selectedResults.isEmpty && !fuzzy.openWithAppShortcuts.isEmpty
@@ -378,7 +422,7 @@ struct ActionButtons: View {
 
     @ViewBuilder
     private var openInTerminalButton: some View {
-        if terminalApp.existingFilePath != nil {
+        if HelperApp.isInstalled(terminalApp) {
             Button("⌘T Open in \(terminalApp.filePath?.stem ?? "Terminal")") {
                 openInTerminal()
             }
@@ -387,7 +431,7 @@ struct ActionButtons: View {
     }
     @ViewBuilder
     private var openInEditorButton: some View {
-        if editorApp.existingFilePath != nil {
+        if HelperApp.isInstalled(editorApp) {
             Button("⌘E Edit") {
                 openInEditor()
             }
@@ -396,7 +440,7 @@ struct ActionButtons: View {
     }
     @ViewBuilder
     private var shelveButton: some View {
-        if shelfApp.existingFilePath != nil {
+        if HelperApp.isInstalled(shelfApp) {
             Button("⌘S Shelve in \(shelfApp.filePath?.stem ?? "shelf app")") {
                 shelve()
             }
@@ -750,9 +794,9 @@ struct ActionButtons: View {
     /// Selection-dependent actions (copy, trash) return true here so they remain visible but disabled.
     private func isConfigured(_ id: ActionID) -> Bool {
         switch id {
-        case .openInTerminal: terminalApp.existingFilePath != nil
-        case .openInEditor: editorApp.existingFilePath != nil
-        case .shelve: shelfApp == CLING_STASH_APP || shelfApp.existingFilePath != nil
+        case .openInTerminal: HelperApp.isInstalled(terminalApp)
+        case .openInEditor: HelperApp.isInstalled(editorApp)
+        case .shelve: shelfApp == CLING_STASH_APP || HelperApp.isInstalled(shelfApp)
         default: true
         }
     }

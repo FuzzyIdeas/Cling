@@ -905,6 +905,16 @@ class FuzzyClient {
                 performSearch()
             }.store(in: &observers)
 
+        // The toolbar reads these from HelperApp's cache, so re-check whenever the user points one
+        // at a different app.
+        for helperApp in [
+            Defaults.publisher(.terminalApp).map(\.newValue).eraseToAnyPublisher(),
+            Defaults.publisher(.editorApp).map(\.newValue).eraseToAnyPublisher(),
+            Defaults.publisher(.shelfApp).map(\.newValue).eraseToAnyPublisher(),
+        ] {
+            helperApp.sink { HelperApp.refresh([$0]) }.store(in: &observers)
+        }
+
         pub(.disabledVolumes)
             .debounce(for: 2.0, scheduler: RunLoop.main)
             .sink { [self] volumes in
@@ -2126,8 +2136,21 @@ class FuzzyClient {
             // Keep open-with app hotkeys from stealing letters already bound to
             // ⌘⌥ actions (see ActionButtons), e.g. ⌘⌥C for Copy to...
             openWithAppShortcuts = computeShortcuts(for: commonOpenWithApps, reserved: reservedOptionCommandLetters)
-            for app in commonOpenWithApps where appIconCache[app.path] == nil {
-                appIconCache[app.path] = appIconThumbnail(forFile: app.path)
+
+            // Rendering an icon thumbnail reads the app bundle, so doing it here hung the main thread the
+            // same way it did in discoverInstalledApps (CLING-5). Build the missing ones off-main.
+            let missing = commonOpenWithApps.map(\.path).filter { appIconCache[$0] == nil }
+            guard !missing.isEmpty else { return }
+            asyncNow {
+                var icons: [String: NSImage] = [:]
+                for path in missing {
+                    icons[path] = appIconThumbnail(forFile: path)
+                }
+                mainActor {
+                    for (path, icon) in icons {
+                        FUZZY.appIconCache[path] = icon
+                    }
+                }
             }
         }
     }
@@ -2151,6 +2174,10 @@ class FuzzyClient {
                 mainActor {
                     FUZZY.appIconCache = icons
                     FUZZY.installedApps = urls
+                    // An app was installed or removed, so the memoised Open With lists and the cached
+                    // helper-app existence can both be stale.
+                    invalidateCommonApplicationsCache()
+                    HelperApp.refresh([Defaults[.terminalApp], Defaults[.editorApp], Defaults[.shelfApp]])
                 }
             }
         }
@@ -2402,7 +2429,32 @@ func computeShortcuts(for urls: [URL], reserved: Set<Character> = []) -> [URL: C
 
 import Defaults
 
+/// `OpenWithMenuView` calls this straight from its `body`, so it ran on every re-render: a LaunchServices
+/// query per file plus a `Bundle(url:)` (an Info.plist read) per candidate app, all on the main thread.
+/// The answer only moves when the user installs or removes an app, so memoise it per file set.
+private let openWithCacheLock = NSLock()
+private var openWithCache: [String: [URL]] = [:]
+private var openWithCacheOrder: [String] = []
+
+/// Drops the memoised Open With lists. Called when the installed-app set changes.
+func invalidateCommonApplicationsCache() {
+    openWithCacheLock.lock()
+    openWithCache.removeAll()
+    openWithCacheOrder.removeAll()
+    openWithCacheLock.unlock()
+}
+
 func commonApplications(for urls: [URL]) -> [URL] {
+    // The configured terminal and editor are filtered out of the result, so they belong in the key.
+    let key = (urls.map(\.path).sorted() + [Defaults[.terminalApp], Defaults[.editorApp]])
+        .joined(separator: "\u{0}")
+    openWithCacheLock.lock()
+    if let cached = openWithCache[key] {
+        openWithCacheLock.unlock()
+        return cached
+    }
+    openWithCacheLock.unlock()
+
     let appSets = urls.map { Set(NSWorkspace.shared.urlsForApplications(toOpen: $0)) }
     guard let first = appSets.first else { return [] }
     var commonApps = appSets.dropFirst().reduce(first) { $0.intersection($1) }
@@ -2411,7 +2463,14 @@ func commonApplications(for urls: [URL]) -> [URL] {
     }
     commonApps = commonApps.filter { $0.lastPathComponent != "Google Chrome for Testing.app" }
     let commonAppsDict: [String: [URL]] = commonApps.group(by: \.bundleIdentifier)
-    return commonAppsDict.values.compactMap { $0.min(by: \.path.count) }
+    let result = commonAppsDict.values.compactMap { $0.min(by: \.path.count) }
+
+    openWithCacheLock.lock()
+    openWithCache[key] = result
+    openWithCacheOrder.append(key)
+    if openWithCacheOrder.count > 64 { openWithCache.removeValue(forKey: openWithCacheOrder.removeFirst()) }
+    openWithCacheLock.unlock()
+    return result
 }
 
 @MainActor let FUZZY = FuzzyClient()
