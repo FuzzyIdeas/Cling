@@ -1865,9 +1865,102 @@ class FilePathBackgroundTasks {
         DispatchQueue.global(qos: .background).async(execute: fetcher)
     }
 
+    /// The real icon once it has arrived, a type-derived stand-in until then. This dictionary is the
+    /// authority rather than the memo: the memo is NSCache-backed, so relying on it would let an
+    /// eviction send the getter back through `fetchIcon`, refresh, re-render, and round again.
+    func icon(for path: FilePath) -> NSImage {
+        if let real = iconCache[path] { return real }
+        fetchIcon(of: path)
+        return typeIcon(for: path)
+    }
+
+    /// Fetches the real icon off the main thread and overwrites the memoized stand-in with it.
+    /// Also records whether the path is a directory, which `typeIcon` needs and which would
+    /// otherwise cost a `stat` on the main thread.
+    func fetchIcon(of path: FilePath) {
+        guard iconCache[path] == nil, iconFetchers[path] == nil else { return }
+
+        let fetcher = DispatchWorkItem {
+            let icon = NSWorkspace.shared.icon(forFile: path.string)
+            var isDirectory = ObjCBool(false)
+            let exists = FileManager.default.fileExists(atPath: path.string, isDirectory: &isDirectory)
+
+            mainActor {
+                self.iconFetchers[path] = nil
+                // A path that vanished keeps its stand-in, stored so it stops being re-fetched.
+                guard exists else {
+                    self.storeIcon(self.typeIcon(for: path), for: path)
+                    return
+                }
+                self.knownDirs[path] = isDirectory.boolValue
+                self.storeIcon(icon, for: path)
+                path.cache(icon, forKey: \FilePath.icon)
+                self.scheduleIconRefresh()
+            }
+        }
+        iconFetchers[path] = fetcher
+        DispatchQueue.global(qos: .userInitiated).async(execute: fetcher)
+    }
+
+    /// Drops a path's icon so the next render fetches it again. Used when a file is renamed or replaced.
+    func invalidateIcon(of path: FilePath) {
+        iconCache.removeValue(forKey: path)
+        knownDirs.removeValue(forKey: path)
+        iconFetchers[path]?.cancel()
+        iconFetchers[path] = nil
+    }
+
+    /// The file's icon by type alone, with no disk access: `UTType(filenameExtension:)` is a lookup in
+    /// the type database and `icon(for:)` draws that type, so neither one reaches the file. Cached per
+    /// extension because a result list is mostly a handful of repeated types.
+    func typeIcon(for path: FilePath) -> NSImage {
+        if isKnownDir(path) { return Self.folderIcon }
+
+        let ext = path.url.pathExtension.lowercased()
+        guard !ext.isEmpty else { return Self.genericIcon }
+        if let cached = typeIcons[ext] { return cached }
+
+        let icon = UTType(filenameExtension: ext).map { NSWorkspace.shared.icon(for: $0) } ?? Self.genericIcon
+        typeIcons[ext] = icon
+        return icon
+    }
+
+    /// Records the directory flag the search index already carries, so a row never has to `stat` to
+    /// decide between a folder icon and a file icon.
+    func noteIsDir(_ isDir: Bool, for path: FilePath) {
+        knownDirs[path] = isDir
+    }
+
+    private static let folderIcon = NSWorkspace.shared.icon(for: .folder)
+    private static let genericIcon = NSWorkspace.shared.icon(for: .data)
+
     private var attrFetchers: [FilePath: DispatchWorkItem] = [:]
     private var attrCache: [FilePath: [FileAttributeKey: Any]] = [:]
+    private var iconFetchers: [FilePath: DispatchWorkItem] = [:]
+    private var iconCache: [FilePath: NSImage] = [:]
+    private var iconOrder: [FilePath] = []
+    private var typeIcons: [String: NSImage] = [:]
+    private var knownDirs: [FilePath: Bool] = [:]
+    private var iconRefreshTask: DispatchWorkItem?
 
+    private func isKnownDir(_ path: FilePath) -> Bool {
+        knownDirs[path] ?? false
+    }
+
+    /// Bounded so a long session of scrolling can't accumulate every icon it has ever drawn.
+    private func storeIcon(_ icon: NSImage, for path: FilePath) {
+        if iconCache.updateValue(icon, forKey: path) == nil {
+            iconOrder.append(path)
+            if iconOrder.count > 2000 { iconCache.removeValue(forKey: iconOrder.removeFirst()) }
+        }
+    }
+
+    /// Icons land one at a time, and refreshing per icon would rebuild the table once per row, so let
+    /// a burst settle into a single refresh.
+    private func scheduleIconRefresh() {
+        iconRefreshTask?.cancel()
+        iconRefreshTask = mainAsyncAfter(ms: 50) { FUZZY.reloadResults() }
+    }
 }
 
 @MainActor
@@ -1919,18 +2012,13 @@ extension FilePath {
         }
         return (fileSize() ?? 0).humanSize
     }
+    /// Read through `memoz` while SwiftUI builds a row, so this must never touch the disk.
+    /// `NSWorkspace.icon(forFile:)` reads the file (and a bundle's Info.plist and .icns), and the
+    /// `isDir` check it used to make is a `stat`, so a path on a stalled mount froze the window
+    /// (CLING-12, CLING-3F, CLING-35). Answer from the file's type alone and let the background
+    /// fetch overwrite this memo with the real icon, the same way `fetchAttributes` already does.
     var icon: NSImage {
-        if memoz.isOnExternalVolume {
-            if memoz.isDir {
-                return NSWorkspace.shared.icon(for: .folder)
-            }
-            let ext = url.pathExtension
-            if !ext.isEmpty, let utType = UTType(filenameExtension: ext) {
-                return NSWorkspace.shared.icon(for: utType)
-            }
-            return NSWorkspace.shared.icon(for: .plainText)
-        }
-        return NSWorkspace.shared.icon(forFile: string)
+        FilePathBackgroundTasks.shared.icon(for: self)
     }
     var sourceIndex: String {
         ""

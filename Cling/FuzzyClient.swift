@@ -1714,6 +1714,8 @@ class FuzzyClient {
                 guard let fp = r.path.filePath else { return nil }
                 fp.cache(r.isDir, forKey: \.isDir)
                 fp.cache(r.sourceLabel, forKey: \.sourceIndex)
+                // The index already knows this, so the row's icon never has to stat for it.
+                FilePathBackgroundTasks.shared.noteIsDir(r.isDir, for: fp)
                 return (fp, !fp.memoz.isOnExternalVolume)
             }
         }
@@ -1732,6 +1734,10 @@ class FuzzyClient {
         logActivity("Renamed \(renamed.count) file\(renamed.count == 1 ? "" : "s")")
         for (oldPath, newPath) in renamed {
             let isDir = newPath.isDir
+            // The extension may have changed, so the old path's cached icon no longer describes it.
+            FilePathBackgroundTasks.shared.invalidateIcon(of: oldPath)
+            FilePathBackgroundTasks.shared.invalidateIcon(of: newPath)
+            FilePathBackgroundTasks.shared.noteIsDir(isDir, for: newPath)
             for eng in scopeEngines.values {
                 if eng.removePath(oldPath.string) {
                     eng.addPath(newPath.string, isDir: isDir)
