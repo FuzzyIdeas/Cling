@@ -1086,6 +1086,10 @@ class FuzzyClient {
             let priorityScopes: [SearchScope] = [.home, .applications, .library]
             let remainingScopes: [SearchScope] = SearchScope.allCases.filter { !priorityScopes.contains($0) }
 
+            // A file the loader rejects is truncated or corrupt, so it will never load. Delete it and
+            // re-walk that scope, otherwise the scope stays silently empty until the next staleness check.
+            nonisolated(unsafe) var corruptScopes: [SearchScope] = []
+
             // Phase 1: Load priority scopes, make searchable immediately
             for scope in priorityScopes {
                 let file = scopeIndexFile(scope)
@@ -1102,6 +1106,10 @@ class FuzzyClient {
                         self.updateIndexedCount()
                         self.logActivity("Loaded \(scope.label): \(eng.count.formatted()) entries", operationKey: opKey)
                     }
+                } else {
+                    log.error("Discarding unreadable index for \(scope.label), rebuilding it")
+                    try? FileManager.default.removeItem(at: file.url)
+                    corruptScopes.append(scope)
                 }
             }
 
@@ -1121,6 +1129,10 @@ class FuzzyClient {
                         self.updateIndexedCount()
                         self.logActivity("Loaded \(scope.label): \(eng.count.formatted()) entries", operationKey: opKey)
                     }
+                } else {
+                    log.error("Discarding unreadable index for \(scope.label), rebuilding it")
+                    try? FileManager.default.removeItem(at: file.url)
+                    corruptScopes.append(scope)
                 }
             }
 
@@ -1201,6 +1213,9 @@ class FuzzyClient {
                     self.setOperation("")
                 }
                 onComplete?()
+                if !corruptScopes.isEmpty {
+                    self.indexFiles(pauseSearch: false, scopes: corruptScopes)
+                }
             }
         }
     }
@@ -1306,11 +1321,14 @@ class FuzzyClient {
                     let added = scopeEngine.count
                     log.debug("Indexed \(scope.label): \(added) entries -> \(file.string)")
 
+                    // Reloading from the file we just wrote drops the walk's scratch memory, but if that
+                    // file is unreadable keep the engine we already have in hand rather than installing
+                    // an empty one and showing the scope as having no files.
                     let reloadedEngine = SearchEngine()
-                    _ = reloadedEngine.loadBinaryIndex(from: file.url)
+                    let engineToStore = reloadedEngine.loadBinaryIndex(from: file.url) ? reloadedEngine : scopeEngine
 
                     await MainActor.run {
-                        self.scopeEngines[scope] = reloadedEngine
+                        self.scopeEngines[scope] = engineToStore
                         self.scopesIndexing.remove(scope)
                         self.updateIndexedCount()
                         self.logActivity("Indexed \(scope.label): \(added.formatted()) files (\(self.indexedCount.formatted()) total)", operationKey: "scope:\(scope.rawValue)")

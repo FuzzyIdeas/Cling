@@ -688,8 +688,14 @@ final class SearchEngine: @unchecked Sendable {
                 return
             }
 
-            let n = Int(ptr.load(fromByteOffset: 8, as: UInt64.self))
-            let allBytesCount = Int(ptr.load(fromByteOffset: 16, as: UInt64.self))
+            let rawN = ptr.load(fromByteOffset: 8, as: UInt64.self)
+            let rawAllBytes = ptr.load(fromByteOffset: 16, as: UInt64.self)
+            guard let (n, allBytesCount) = Self.binaryHeaderBounds(
+                rawN: rawN, rawAllBytes: rawAllBytes, totalLen: totalLen
+            ) else {
+                slog.error("loadBinaryIndex: truncated index, n=\(rawN) allBytes=\(rawAllBytes) file=\(totalLen)B")
+                return
+            }
 
             lock.lock()
             let headerSize = 24
@@ -721,10 +727,20 @@ final class SearchEngine: @unchecked Sendable {
 
             // byteLengths from UInt16
             byteLengths = [Int](repeating: 0, count: n)
+            var slicesValid = true
             i = 0
             while i < n {
-                byteLengths[i] = Int(ptr.load(fromByteOffset: offset + i * 2, as: UInt16.self))
+                let l = Int(ptr.load(fromByteOffset: offset + i * 2, as: UInt16.self))
+                byteLengths[i] = l
+                // extID and the scorer read allBytes[off ..< off + len] raw, so a corrupt pair walks
+                // off the end of the buffer. Checked here because both values are already in hand.
+                if byteOffsets[i] &+ l > allBytesCount { slicesValid = false; break }
                 i &+= 1
+            }
+            guard slicesValid else {
+                lock.unlock()
+                slog.error("loadBinaryIndex: entry byte range outside allBytes, \(url.path)")
+                return
             }
             offset += n * 2
 
@@ -768,17 +784,26 @@ final class SearchEngine: @unchecked Sendable {
             entries = [Entry](repeating: Entry(path: "", isDir: false, bnStart: 0, segCount: 0, pathLen: 0), count: n)
             i = 0
             let strBase = (ptr + offset).assumingMemoryBound(to: UInt8.self)
+            let strEnd = totalLen - offset // the string region runs to the end of the file
             var strOff = 0
+            var stringsValid = true
             while i < n {
-                // Find null terminator
+                // Find null terminator, bounded by the region: a truncated tail would otherwise run
+                // this scan off the end of the mapping.
                 var sLen = 0
-                while strBase[strOff + sLen] != 0 {
+                while strOff + sLen < strEnd, strBase[strOff + sLen] != 0 {
                     sLen &+= 1
                 }
+                guard strOff + sLen < strEnd else { stringsValid = false; break }
                 let path = String(decoding: UnsafeBufferPointer(start: strBase + strOff, count: sLen), as: UTF8.self)
                 entries[i] = Entry(path: path, isDir: isDirs[i], bnStart: bnStarts[i], segCount: segCounts[i], pathLen: byteLengths[i])
                 strOff += sLen + 1
                 i &+= 1
+            }
+            guard stringsValid else {
+                lock.unlock()
+                slog.error("loadBinaryIndex: path strings truncated at entry \(i)/\(n), \(url.path)")
+                return
             }
 
             computeExtIDs()
@@ -810,8 +835,14 @@ final class SearchEngine: @unchecked Sendable {
             let magic = ptr.load(fromByteOffset: 0, as: UInt64.self)
             guard magic == Self.binaryMagic else { return }
 
-            let n = Int(ptr.load(fromByteOffset: 8, as: UInt64.self))
-            let allBytesCount = Int(ptr.load(fromByteOffset: 16, as: UInt64.self))
+            let rawN = ptr.load(fromByteOffset: 8, as: UInt64.self)
+            let rawAllBytes = ptr.load(fromByteOffset: 16, as: UInt64.self)
+            guard let (n, allBytesCount) = Self.binaryHeaderBounds(
+                rawN: rawN, rawAllBytes: rawAllBytes, totalLen: totalLen
+            ) else {
+                slog.error("appendBinaryIndex: truncated index, n=\(rawN) allBytes=\(rawAllBytes) file=\(totalLen)B")
+                return
+            }
 
             let headerSize = 24
             var offset = headerSize
@@ -837,10 +868,18 @@ final class SearchEngine: @unchecked Sendable {
             offset += n * 4
 
             var newByteLengths = [Int](repeating: 0, count: n)
+            var slicesValid = true
             i = 0
             while i < n {
-                newByteLengths[i] = Int(ptr.load(fromByteOffset: offset + i * 2, as: UInt16.self))
+                let l = Int(ptr.load(fromByteOffset: offset + i * 2, as: UInt16.self))
+                newByteLengths[i] = l
+                // Same unchecked slice into allBytes as loadBinaryIndex; see binaryHeaderBounds.
+                if newByteOffsets[i] &+ l > allBytesCount { slicesValid = false; break }
                 i &+= 1
+            }
+            guard slicesValid else {
+                slog.error("appendBinaryIndex: entry byte range outside allBytes, \(url.path)")
+                return
             }
             offset += n * 2
 
@@ -874,17 +913,24 @@ final class SearchEngine: @unchecked Sendable {
 
             var newEntries = [Entry](repeating: Entry(path: "", isDir: false, bnStart: 0, segCount: 0, pathLen: 0), count: n)
             let strBase = (ptr + offset).assumingMemoryBound(to: UInt8.self)
+            let strEnd = totalLen - offset
             var strOff = 0
+            var stringsValid = true
             i = 0
             while i < n {
                 var sLen = 0
-                while strBase[strOff + sLen] != 0 {
+                while strOff + sLen < strEnd, strBase[strOff + sLen] != 0 {
                     sLen &+= 1
                 }
+                guard strOff + sLen < strEnd else { stringsValid = false; break }
                 let path = String(decoding: UnsafeBufferPointer(start: strBase + strOff, count: sLen), as: UTF8.self)
                 newEntries[i] = Entry(path: path, isDir: isDirs[i], bnStart: bnStarts[i], segCount: segCounts[i], pathLen: newByteLengths[i])
                 strOff += sLen + 1
                 i &+= 1
+            }
+            guard stringsValid else {
+                slog.error("appendBinaryIndex: path strings truncated at entry \(i)/\(n), \(url.path)")
+                return
             }
 
             // Append under lock, shifting byteOffsets by current allBytes size
@@ -2954,6 +3000,10 @@ final class SearchEngine: @unchecked Sendable {
         var segmentMatches = 0
     }
 
+    /// Per-entry bytes in the fixed-size section: masks + bnMasks + bnBoundaries (8 each), byteOffsets (4),
+    /// byteLengths + bnStarts (2 each), segCounts + isDirs (1 each).
+    private static let binaryBytesPerEntry = 34
+
     // MARK: - Binary Persistence (fast load via mmap + memcpy)
 
     // Binary format:
@@ -3011,6 +3061,28 @@ final class SearchEngine: @unchecked Sendable {
     private var nextExtID: UInt16 {
         get { Self.globalNextExtID }
         set { Self.globalNextExtID = newValue }
+    }
+
+    /// The entry count and byte count come out of the file's own header, and every read below is an
+    /// unchecked `memcpy` or pointer walk against them. A crash or a full disk mid-write leaves a
+    /// truncated index whose header still claims the full size, so check the declared sizes fit the
+    /// file before reading a single byte of it: a bad index must lose to a re-index, not read off the
+    /// end of the map. The per-entry checks are folded into the loops that already read those values,
+    /// so this stays O(1) and index loading keeps its speed.
+    private static func binaryHeaderBounds(
+        rawN: UInt64, rawAllBytes: UInt64, totalLen: Int
+    ) -> (n: Int, allBytesCount: Int)? {
+        // Bound both counts while they are still UInt64. `Int(_: UInt64)` traps above Int.max, so
+        // converting first would crash on a garbage header before any bounds check could run. Every
+        // entry costs binaryBytesPerEntry in the fixed section plus at least a NUL terminator, and
+        // allBytes has to fit too, so the file's own size caps both.
+        guard rawN <= UInt64(totalLen / (binaryBytesPerEntry + 1)), rawAllBytes <= UInt64(totalLen) else {
+            return nil
+        }
+        let n = Int(rawN)
+        let allBytesCount = Int(rawAllBytes)
+        guard 24 + n * binaryBytesPerEntry + allBytesCount <= totalLen else { return nil }
+        return (n, allBytesCount)
     }
 
     /// Hash extension bytes into a UInt64 key (up to 8 bytes including the dot)
