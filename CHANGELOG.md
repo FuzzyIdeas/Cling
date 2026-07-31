@@ -1,3 +1,22 @@
+# 2.6.9
+
+**[Download Cling 2.6.9 →](https://files.lowtechguys.com/releases/Cling-2.6.9.dmg)**
+## Features
+
+- **Literal search** matches each word as typed, instead of finding its letters scattered across the path
+    > Turn it on under *Matching* in Settings > Search
+    >
+    > `'word` flips a single word back to fuzzy matching
+
+## Fixes
+
+- Files whose name matches what you typed no longer go missing from a big search because they sit deep in the folder tree
+- Fixed a possible crash on launch from a half-written index, it now gets thrown away and rebuilt
+- Fixed a possible crash when previewing a code file on a damaged app copy
+- Fixed a possible freeze when the terminal, editor or shelf app you configured sits on a sleeping or unreachable drive
+- Fixed a possible freeze in the Open With menu and the file preview, both were re-reading from disk on every redraw
+- Fixed a possible freeze while the results list drew its file icons, they now load in the background
+
 # 2.6.8
 
 **[Download Cling 2.6.8 →](https://files.lowtechguys.com/releases/Cling-2.6.8.dmg)**
