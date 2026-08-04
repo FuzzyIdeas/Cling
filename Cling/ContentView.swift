@@ -1811,8 +1811,9 @@ class FilePathBackgroundTasks {
         guard force || (attrCache[path] == nil && (attrFetchers[path]?.isCancelled ?? true)) else { return }
         attrFetchers[path]?.cancel()
 
-        // Check SMB metadata cache for instant size/date without network round trip
-        if let volume = path.volume,
+        // Check SMB metadata cache for instant size/date without network round trip.
+        // `knownVolume` also matches unmounted volumes, whose cache stays loaded.
+        if let volume = path.knownVolume,
            let smbCache = FUZZY.smbMetadataCaches[volume],
            let meta = smbCache.get(path.string)
         {
@@ -1965,13 +1966,22 @@ class FilePathBackgroundTasks {
 
 @MainActor
 extension FilePath {
+    /// The cache is keyed by volume, and an unmounted volume is no longer in the mounted list,
+    /// so offline paths have to look their volume up among the disconnected ones.
     private var smbMeta: SMBFileMetadata? {
-        guard let volume else { return nil }
+        guard let volume = knownVolume else { return nil }
         return FUZZY.smbMetadataCaches[volume]?.get(string)
+    }
+
+    /// Statting a path on an unmounted volume can only fail, and on a stalled network mount it
+    /// blocks. Either way the answer has to come from the index, never from the filesystem.
+    private var isOffline: Bool {
+        disconnectedVolume != nil
     }
 
     var date: Date {
         if let meta = smbMeta { return meta.modificationDate }
+        if isOffline { return Date() }
         guard !memoz.isOnExternalVolume else {
             FilePathBackgroundTasks.shared.fetchAttributes(of: self)
             return Date()
@@ -1980,6 +1990,7 @@ extension FilePath {
     }
     var formattedModificationDate: String {
         if let meta = smbMeta { return meta.modificationDate.formatted(dateFormat) }
+        if isOffline { return "—" }
         guard !memoz.isOnExternalVolume else {
             FilePathBackgroundTasks.shared.fetchAttributes(of: self)
             return "Fetching..."
@@ -1988,6 +1999,7 @@ extension FilePath {
     }
     var isoFormattedModificationDate: String {
         if let meta = smbMeta { return meta.modificationDate.iso8601String }
+        if isOffline { return "—" }
         guard !memoz.isOnExternalVolume else {
             FilePathBackgroundTasks.shared.fetchAttributes(of: self)
             return "Fetching..."
@@ -1997,6 +2009,7 @@ extension FilePath {
 
     var size: Int {
         if let meta = smbMeta { return Int(meta.size) }
+        if isOffline { return 0 }
         guard !memoz.isOnExternalVolume else {
             FilePathBackgroundTasks.shared.fetchAttributes(of: self)
             return 0
@@ -2006,6 +2019,7 @@ extension FilePath {
 
     var humanizedFileSize: String {
         if let meta = smbMeta { return Int(meta.size).humanSize }
+        if isOffline { return "—" }
         guard !memoz.isOnExternalVolume else {
             FilePathBackgroundTasks.shared.fetchAttributes(of: self)
             return "—"

@@ -1496,6 +1496,21 @@ extension FilePath: @retroactive Comparable {
             .filter { self.starts(with: $0) }
             .max(by: \.components.count)
     }
+    /// An indexed volume that is currently unmounted. Its index and SMB metadata cache stay
+    /// loaded, so results from it are still valid, they just can't be stat'ed. Not memoized:
+    /// the answer flips on every mount and unmount.
+    @MainActor
+    var disconnectedVolume: FilePath? {
+        guard string.hasPrefix("/Volumes/") else { return nil }
+        return FUZZY.disconnectedVolumes.first { self.starts(with: $0) }
+    }
+
+    /// The volume this path lives on, mounted or not.
+    @MainActor
+    var knownVolume: FilePath? {
+        memoz.volume ?? disconnectedVolume
+    }
+
     @MainActor
     var isOnExternalVolume: Bool {
         guard let volume = memoz.volume else { return false }

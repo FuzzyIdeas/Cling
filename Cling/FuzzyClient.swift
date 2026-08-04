@@ -1708,6 +1708,10 @@ class FuzzyClient {
     /// Paths on external volumes are kept without stat'ing, and that classification needs main-actor
     /// state (`FUZZY.externalVolumes`), so only it runs on the main actor. memoz/cache are
     /// NSCache-backed and thread-safe, so building the paths across the hop is safe.
+    ///
+    /// Paths on a disconnected volume are kept too: the volume's index stays loaded while it is
+    /// unmounted, and stat'ing them would fail for every single one, so searching an unplugged
+    /// drive or an off-network share returned zero results despite a full cached index.
     nonisolated func existingResultPaths(from results: [SearchResult]) async -> [FilePath] {
         let built: [(fp: FilePath, checkExists: Bool)] = await MainActor.run {
             results.compactMap { r -> (fp: FilePath, checkExists: Bool)? in
@@ -1716,7 +1720,7 @@ class FuzzyClient {
                 fp.cache(r.sourceLabel, forKey: \.sourceIndex)
                 // The index already knows this, so the row's icon never has to stat for it.
                 FilePathBackgroundTasks.shared.noteIsDir(r.isDir, for: fp)
-                return (fp, !fp.memoz.isOnExternalVolume)
+                return (fp, !fp.memoz.isOnExternalVolume && fp.disconnectedVolume == nil)
             }
         }
         return built.compactMap { $0.checkExists ? ($0.fp.exists ? $0.fp : nil) : $0.fp }
