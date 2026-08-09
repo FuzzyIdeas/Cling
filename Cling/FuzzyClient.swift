@@ -400,6 +400,7 @@ class FuzzyClient {
     @ObservationIgnored var mdQueryRecents: [FilePath] = [] // Raw MDQuery results (filtered)
     var commonOpenWithApps: [URL] = []
     var openWithAppShortcuts: [URL: Character] = [:]
+    @ObservationIgnored var openWithGeneration = 0
     /// Set when ⌘⌥<letter> (or a collapsed apps pill) matches several apps, to present the Open With
     /// picker scoped to that group for quick numbered selection.
     var openWithGroupRequest: OpenWithGroupRequest?
@@ -2142,23 +2143,37 @@ class FuzzyClient {
 
     func computeOpenWithApps(for urls: [URL]) {
         computeOpenWithTask = mainAsyncAfter(ms: 100) { [self] in
-            commonOpenWithApps = commonApplications(for: urls).sorted(by: \.lastPathComponent)
-            // Keep open-with app hotkeys from stealing letters already bound to
-            // ⌘⌥ actions (see ActionButtons), e.g. ⌘⌥C for Copy to...
-            openWithAppShortcuts = computeShortcuts(for: commonOpenWithApps, reserved: reservedOptionCommandLetters)
-
-            // Rendering an icon thumbnail reads the app bundle, so doing it here hung the main thread the
-            // same way it did in discoverInstalledApps (CLING-5). Build the missing ones off-main.
-            let missing = commonOpenWithApps.map(\.path).filter { appIconCache[$0] == nil }
-            guard !missing.isEmpty else { return }
+            // A LaunchServices query per file plus an Info.plist read per candidate app, all of it on
+            // the main thread until now, so one slow app bundle froze the window (CLING-48).
+            openWithGeneration &+= 1
+            let generation = openWithGeneration
             asyncNow {
-                var icons: [String: NSImage] = [:]
-                for path in missing {
-                    icons[path] = appIconThumbnail(forFile: path)
-                }
+                let apps = commonApplications(for: urls).sorted(by: \.lastPathComponent)
+                // Keep open-with app hotkeys from stealing letters already bound to
+                // ⌘⌥ actions (see ActionButtons), e.g. ⌘⌥C for Copy to...
+                let shortcuts = computeShortcuts(for: apps, reserved: reservedOptionCommandLetters)
+
                 mainActor {
-                    for (path, icon) in icons {
-                        FUZZY.appIconCache[path] = icon
+                    // The debounce can no longer cancel work that already left the main thread, so a
+                    // slow lookup for an old selection must not overwrite a newer one.
+                    guard generation == FUZZY.openWithGeneration else { return }
+                    FUZZY.commonOpenWithApps = apps
+                    FUZZY.openWithAppShortcuts = shortcuts
+
+                    // Rendering an icon thumbnail reads the app bundle, so doing it here hung the main thread the
+                    // same way it did in discoverInstalledApps (CLING-5). Build the missing ones off-main.
+                    let missing = apps.map(\.path).filter { FUZZY.appIconCache[$0] == nil }
+                    guard !missing.isEmpty else { return }
+                    asyncNow {
+                        var icons: [String: NSImage] = [:]
+                        for path in missing {
+                            icons[path] = appIconThumbnail(forFile: path)
+                        }
+                        mainActor {
+                            for (path, icon) in icons {
+                                FUZZY.appIconCache[path] = icon
+                            }
+                        }
                     }
                 }
             }
@@ -2378,9 +2393,18 @@ class FuzzyClient {
         }
         recents = defaults
         sortedRecents = sortedResults(results: defaults)
-        searchCoordinator.setRecents(defaults.map {
-            SearchCoordinator.RecentEntry(path: $0.string, isDir: $0.isDir)
-        })
+        // `isDir` is a stat per path and Spotlight can fire this on every recents update, so on a
+        // stalled mount the whole list froze the window (CLING-4A). Only the CLI reads these and the
+        // coordinator is thread-safe, so stat on the (serial, so still ordered) filter queue.
+        let recentPaths = defaults.map(\.string)
+        recentsFilterQueue.async { [searchCoordinator] in
+            let entries = recentPaths.map { path -> SearchCoordinator.RecentEntry in
+                var isDirectory: ObjCBool = false
+                FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+                return SearchCoordinator.RecentEntry(path: path, isDir: isDirectory.boolValue)
+            }
+            searchCoordinator.setRecents(entries)
+        }
         let mdCount = mdQueryRecents.count
         let liveCount = liveIndexChanges.count
         log.debug("updateDefaultResults: mdQuery=\(mdCount) live=\(liveCount) merged=\(defaults.count)")
@@ -2446,12 +2470,35 @@ private let openWithCacheLock = NSLock()
 private var openWithCache: [String: [URL]] = [:]
 private var openWithCacheOrder: [String] = []
 
+/// Bundle IDs keyed by app path. `Bundle(url:)` reads the app's Info.plist off disk, and a cache miss
+/// re-read one for every candidate app, which is what stalled the main thread while the Open With menu
+/// was built (CLING-48). An app's ID only moves when the app itself does, so this is dropped with the
+/// memoised lists above.
+private var bundleIDCache: [String: String?] = [:]
+
 /// Drops the memoised Open With lists. Called when the installed-app set changes.
 func invalidateCommonApplicationsCache() {
     openWithCacheLock.lock()
     openWithCache.removeAll()
     openWithCacheOrder.removeAll()
+    bundleIDCache.removeAll()
     openWithCacheLock.unlock()
+}
+
+func cachedBundleIdentifier(of url: URL) -> String? {
+    let path = url.path
+    openWithCacheLock.lock()
+    if let cached = bundleIDCache[path] {
+        openWithCacheLock.unlock()
+        return cached
+    }
+    openWithCacheLock.unlock()
+
+    let id = url.bundleIdentifier
+    openWithCacheLock.lock()
+    bundleIDCache[path] = id
+    openWithCacheLock.unlock()
+    return id
 }
 
 func commonApplications(for urls: [URL]) -> [URL] {
@@ -2472,7 +2519,11 @@ func commonApplications(for urls: [URL]) -> [URL] {
         commonApps = commonApps.filter { $0 != terminal && $0 != editor }
     }
     commonApps = commonApps.filter { $0.lastPathComponent != "Google Chrome for Testing.app" }
-    let commonAppsDict: [String: [URL]] = commonApps.group(by: \.bundleIdentifier)
+    var commonAppsDict = [String: [URL]]()
+    for app in commonApps {
+        guard let id = cachedBundleIdentifier(of: app) else { continue }
+        commonAppsDict[id, default: []].append(app)
+    }
     let result = commonAppsDict.values.compactMap { $0.min(by: \.path.count) }
 
     openWithCacheLock.lock()
