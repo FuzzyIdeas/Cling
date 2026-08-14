@@ -380,6 +380,12 @@ extension View {
     /// `NSTableView` then derives the total content height as `rowCount × rowHeight`
     /// without measuring off-screen rows, and only ever instantiates cells (and touches
     /// `memoz`) for the handful that are actually visible.
+    ///
+    /// Applying this anywhere pins every table and list in the same window, which is deliberate:
+    /// they all draw uniform single-line rows (results, stash, live index, run history, activity
+    /// log, search history), so one height is right for all of them and none has to opt in from
+    /// whichever tab happens to be on screen. Attach it per table anyway, so a table that appears
+    /// while the others are gone still configures itself.
     func fixedTableRowHeight(_ height: CGFloat) -> some View {
         background(TableRowHeightConfigurator(rowHeight: height))
     }
@@ -695,8 +701,9 @@ private struct TableRowHeightConfigurator: NSViewRepresentable {
 
     /// The table may not be in the window hierarchy yet on the first pass, so run on
     /// the next tick and re-run on every SwiftUI update (which fires when results
-    /// change, covering a table that gets rebuilt). Scoped to this view's own window
-    /// so it never touches tables in other windows (e.g. Settings).
+    /// change, covering a table that gets rebuilt). Every table in the window is fair
+    /// game (see `fixedTableRowHeight`), but only this view's own window, so it never
+    /// touches tables in other windows (e.g. Settings).
     private func apply(from view: NSView) {
         DispatchQueue.main.async {
             guard let contentView = view.window?.contentView else { return }
@@ -704,6 +711,17 @@ private struct TableRowHeightConfigurator: NSViewRepresentable {
                 guard table.usesAutomaticRowHeights || table.rowHeight != rowHeight else { continue }
                 table.usesAutomaticRowHeights = false
                 table.rowHeight = rowHeight
+
+                // Rows already on screen were laid out under automatic heights, and AppKit does not
+                // re-lay-out existing rows when the height regime changes: their cells kept the size
+                // they were measured at, which left every text cell blank while the icon, the one
+                // cell with an explicit frame, carried on drawing. An empty table (first launch)
+                // never hits this because its cells are built after the switch; a table rebuilt with
+                // rows already in it (coming back from the Live Index or Runs tab) hits it every
+                // time, so re-run row layout whenever we flip a table that already has content.
+                if table.numberOfRows > 0 {
+                    table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0 ..< table.numberOfRows))
+                }
             }
         }
     }

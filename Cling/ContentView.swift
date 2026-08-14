@@ -1232,6 +1232,7 @@ struct ContentView: View {
                     .help(row.lastRun.formatted(date: .abbreviated, time: .standard))
             }.width(min: 100, ideal: 120)
         }
+        .fixedTableRowHeight(24)
         .contextMenu(forSelectionType: String.self) { ids in
             filePathContextMenu(paths: ids.compactMap { id in sortedRunHistory.first { $0.id == id }?.path })
         } primaryAction: { ids in
@@ -1267,6 +1268,7 @@ struct ContentView: View {
                     .help(change.date.formatted(date: .abbreviated, time: .standard))
             }.width(min: 70, ideal: 80)
         }
+        .fixedTableRowHeight(24)
         .contextMenu(forSelectionType: UUID.self) { ids in
             let paths = ids.compactMap { id in sortedLiveChanges.first { $0.id == id }.map { FilePath($0.path) } }
             filePathContextMenu(paths: paths)
