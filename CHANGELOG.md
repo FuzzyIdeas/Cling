@@ -1,3 +1,11 @@
+# 2.6.10
+
+**[Download Cling 2.6.10 →](https://files.lowtechguys.com/releases/Cling-2.6.10.dmg)**
+## Fixes
+
+- Searching a disconnected drive or an off-network share returns its cached results again, instead of nothing at all
+- Results from a disconnected volume show the size and date recorded at index time, instead of a blank row
+
 # 2.6.9
 
 **[Download Cling 2.6.9 →](https://files.lowtechguys.com/releases/Cling-2.6.9.dmg)**
