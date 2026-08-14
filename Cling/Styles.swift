@@ -391,6 +391,38 @@ extension View {
     }
 }
 
+/// Escape hatch for the row-height pinning, so a user who sees blank rows can tell us whether the
+/// pinning is what causes them:
+///
+///     defaults write com.lowtechguys.Cling disableFixedTableRowHeight -bool true
+///
+/// With it set, tables keep SwiftUI's automatic row heights, i.e. how they behaved before 2.6.4.
+/// That brings back the measuring pass a huge result set triggers (CLING-B), so it is a diagnostic,
+/// not a setting, and it stays out of the Settings UI on purpose.
+@MainActor
+var fixedTableRowHeightDisabled: Bool {
+    UserDefaults.standard.bool(forKey: "disableFixedTableRowHeight")
+}
+
+/// Pins every table in the main window to `height` and makes it build its cells again.
+///
+/// Swapping the middle section (results ⇄ live index ⇄ runs ⇄ activity log) tears the old table
+/// down and builds a new one, and the new one's cells can end up laid out against the row height
+/// that was in force before `TableRowHeightConfigurator` got to it: rows came back showing their
+/// icon, the one cell with an explicit frame, and no text at all. `noteHeightOfRows` does not
+/// repair that, because it invalidates the row rects while leaving each cell's hosted content at
+/// the size it was already measured at. Reloading is what forces the cells to be rebuilt.
+@MainActor
+func relayoutMainWindowTables(rowHeight: CGFloat) {
+    guard !fixedTableRowHeightDisabled else { return }
+    guard let contentView = AppDelegate.shared?.mainWindow?.contentView else { return }
+    for table in contentView.findViews(ofType: NSTableView.self) {
+        table.usesAutomaticRowHeights = false
+        table.rowHeight = rowHeight
+        table.reloadData()
+    }
+}
+
 // MARK: - TableRegistry
 
 /// Weak handles to the results and stash tables' scroll views, so the header-hosted buttons
@@ -706,6 +738,7 @@ private struct TableRowHeightConfigurator: NSViewRepresentable {
     /// touches tables in other windows (e.g. Settings).
     private func apply(from view: NSView) {
         DispatchQueue.main.async {
+            guard !fixedTableRowHeightDisabled else { return }
             guard let contentView = view.window?.contentView else { return }
             for table in contentView.findViews(ofType: NSTableView.self) {
                 guard table.usesAutomaticRowHeights || table.rowHeight != rowHeight else { continue }

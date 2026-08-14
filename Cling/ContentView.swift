@@ -541,6 +541,15 @@ struct ContentView: View {
         !toolbarRowsHidden && (showActionRow || showOpenWithRow || (proactive && showScriptRow))
     }
 
+    /// Identifies which middle section is on screen, so a swap between them can be noticed.
+    private var visibleMiddleSection: Int {
+        if fuzzy.showLiveIndex { 1 }
+        else if fuzzy.showActivityLog { 2 }
+        else if fuzzy.showRunHistory { 3 }
+        else if showFullHistory { 4 }
+        else { 0 }
+    }
+
     /// The results/index table next to the optional file preview panel. The
     /// preview steals width from the table instead of growing the window.
     private var middleRow: some View {
@@ -556,6 +565,12 @@ struct ContentView: View {
             }
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.85), value: showFilePreview)
+        // Switching sections builds a fresh table, and its cells can come back blank (icon, no
+        // text) because they were laid out before the row height was pinned. Rebuild the cells
+        // once the swap has settled, which is the only thing that puts the text back.
+        .onChange(of: visibleMiddleSection) { _, _ in
+            mainAsyncAfter(ms: 50) { relayoutMainWindowTables(rowHeight: 24) }
+        }
     }
 
     @ViewBuilder
