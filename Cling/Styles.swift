@@ -380,46 +380,8 @@ extension View {
     /// `NSTableView` then derives the total content height as `rowCount × rowHeight`
     /// without measuring off-screen rows, and only ever instantiates cells (and touches
     /// `memoz`) for the handful that are actually visible.
-    ///
-    /// Each use pins only its own table, found a few levels up from where this modifier sits, and
-    /// keeps hold of it so the height can be re-asserted later. Every table that wants a pinned
-    /// height carries the modifier itself: results, stash, live index and run history, all of which
-    /// draw uniform single-line rows. The activity log and search history are `List`s that stay on
-    /// automatic heights, which is fine, as neither ever holds enough rows to be worth pinning.
     func fixedTableRowHeight(_ height: CGFloat) -> some View {
         background(TableRowHeightConfigurator(rowHeight: height))
-    }
-}
-
-/// Escape hatch for the row-height pinning, so a user who sees blank rows can tell us whether the
-/// pinning is what causes them:
-///
-///     defaults write com.lowtechguys.Cling disableFixedTableRowHeight -bool true
-///
-/// With it set, tables keep SwiftUI's automatic row heights, i.e. how they behaved before 2.6.4.
-/// That brings back the measuring pass a huge result set triggers (CLING-B), so it is a diagnostic,
-/// not a setting, and it stays out of the Settings UI on purpose.
-@MainActor
-var fixedTableRowHeightDisabled: Bool {
-    UserDefaults.standard.bool(forKey: "disableFixedTableRowHeight")
-}
-
-/// Pins every table in the main window to `height` and makes it build its cells again.
-///
-/// Swapping the middle section (results ⇄ live index ⇄ runs ⇄ activity log) tears the old table
-/// down and builds a new one, and the new one's cells can end up laid out against the row height
-/// that was in force before `TableRowHeightConfigurator` got to it: rows came back showing their
-/// icon, the one cell with an explicit frame, and no text at all. `noteHeightOfRows` does not
-/// repair that, because it invalidates the row rects while leaving each cell's hosted content at
-/// the size it was already measured at. Reloading is what forces the cells to be rebuilt.
-@MainActor
-func relayoutMainWindowTables(rowHeight: CGFloat) {
-    guard !fixedTableRowHeightDisabled else { return }
-    guard let contentView = AppDelegate.shared?.mainWindow?.contentView else { return }
-    for table in contentView.findViews(ofType: NSTableView.self) {
-        table.usesAutomaticRowHeights = false
-        table.rowHeight = rowHeight
-        table.reloadData()
     }
 }
 
@@ -719,100 +681,31 @@ private final class LockableClipView: NSClipView {
 // MARK: - TableRowHeightConfigurator
 
 private struct TableRowHeightConfigurator: NSViewRepresentable {
-    /// Holds onto the one table this modifier is responsible for, so the height can be re-asserted
-    /// and the table nudged back into a layout pass whenever something is likely to have dropped it.
-    final class Coordinator: NSObject {
-        deinit {
-            NotificationCenter.default.removeObserver(self)
-        }
-
-        /// The table is not in the window hierarchy yet on the first pass, so look on the next tick,
-        /// and again on every SwiftUI update (which covers a table that gets torn down and rebuilt
-        /// when the middle section swaps).
-        func setup(for view: NSView, rowHeight: CGFloat) {
-            self.rowHeight = rowHeight
-            DispatchQueue.main.async { [self] in
-                guard !fixedTableRowHeightDisabled, let table = nearestTable(to: view) else { return }
-
-                // Fractional row heights make Sequoia render cell text blurry, so keep it whole.
-                let safeHeight = ceil(rowHeight)
-                if table.usesAutomaticRowHeights || table.rowHeight != safeHeight {
-                    table.usesAutomaticRowHeights = false
-                    table.rowHeight = safeHeight
-                }
-
-                guard targetTable !== table else { return }
-                targetTable = table
-                observeWindowState(of: table)
-            }
-        }
-
-        private weak var targetTable: NSTableView?
-        private var rowHeight: CGFloat = 0
-
-        /// Walks up a few levels and back down, rather than sweeping the window: this modifier is a
-        /// `background` of its table, so the table is a sibling a short hop away. Every table that
-        /// wants a pinned height carries the modifier itself (results, stash, live index, runs), so
-        /// nothing depends on one table's configurator reaching another's.
-        private func nearestTable(to view: NSView) -> NSTableView? {
-            var current: NSView? = view
-            for _ in 0 ..< 4 {
-                current = current?.superview
-                if let container = current, let table = firstTable(in: container) { return table }
-            }
-            return nil
-        }
-
-        private func firstTable(in view: NSView) -> NSTableView? {
-            if let table = view as? NSTableView { return table }
-            for subview in view.subviews {
-                if let table = firstTable(in: subview) { return table }
-            }
-            return nil
-        }
-
-        private func observeWindowState(of table: NSTableView) {
-            NotificationCenter.default.removeObserver(self)
-            DispatchQueue.main.async { [self] in
-                guard let window = table.window else { return }
-                for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
-                    NotificationCenter.default.addObserver(
-                        self, selector: #selector(windowStateChanged), name: name, object: window
-                    )
-                }
-            }
-        }
-
-        /// Cling's window comes and goes with the hotkey, and a cell that was laid out while the
-        /// window was off screen can come back sized to nothing, which shows up as rows that keep
-        /// their icon (the one cell with an explicit frame) and lose every bit of text. Re-assert
-        /// the height and force a fresh layout pass on the way back in.
-        @objc private func windowStateChanged() {
-            guard let table = targetTable else { return }
-            if table.usesAutomaticRowHeights || table.rowHeight != ceil(rowHeight) {
-                table.usesAutomaticRowHeights = false
-                table.rowHeight = ceil(rowHeight)
-            }
-            table.needsLayout = true
-            table.setNeedsDisplay(table.visibleRect)
-        }
-
-    }
-
     let rowHeight: CGFloat
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    func makeNSView(context: Context) -> NSView {
+    func makeNSView(context _: Context) -> NSView {
         let view = NSView(frame: .zero)
-        context.coordinator.setup(for: view, rowHeight: rowHeight)
+        apply(from: view)
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.setup(for: nsView, rowHeight: rowHeight)
+    func updateNSView(_ nsView: NSView, context _: Context) {
+        apply(from: nsView)
+    }
+
+    /// The table may not be in the window hierarchy yet on the first pass, so run on
+    /// the next tick and re-run on every SwiftUI update (which fires when results
+    /// change, covering a table that gets rebuilt). Scoped to this view's own window
+    /// so it never touches tables in other windows (e.g. Settings).
+    private func apply(from view: NSView) {
+        DispatchQueue.main.async {
+            guard let contentView = view.window?.contentView else { return }
+            for table in contentView.findViews(ofType: NSTableView.self) {
+                guard table.usesAutomaticRowHeights || table.rowHeight != rowHeight else { continue }
+                table.usesAutomaticRowHeights = false
+                table.rowHeight = rowHeight
+            }
+        }
     }
 }
 
