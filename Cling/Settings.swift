@@ -605,6 +605,9 @@ extension Defaults.Keys {
     static let showDockIcon = Key<Bool>("showDockIcon", default: false)
     static let keepWindowOpenWhenDefocused = Key<Bool>("keepWindowOpenWhenDefocused", default: false)
     static let instantMode = Key<Bool>("instantMode", default: true)
+    /// Seconds away (app in the background or window hidden) after which the result selection is
+    /// considered stale and jumps back to the first row. 0 = keep the selection forever.
+    static let resetSelectionAfter = Key<TimeInterval>("resetSelectionAfter", default: 300)
     static let defaultResultsMode = Key<DefaultResultsMode>("defaultResultsMode", default: .recentFiles)
     static let showSearchHints = Key<Bool>("showSearchHints", default: true)
     static let searchHintsManuallyEnabled = Key<Bool>("searchHintsManuallyEnabled", default: false)

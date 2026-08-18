@@ -233,6 +233,7 @@ class AppDelegate: LowtechProAppDelegate {
     }
 
     override func applicationDidBecomeActive(_ notification: Notification) {
+        WM.noteActive()
         guard didBecomeActiveAtLeastOnce else {
             didBecomeActiveAtLeastOnce = true
             return
@@ -249,6 +250,7 @@ class AppDelegate: LowtechProAppDelegate {
     }
 
     override func applicationDidResignActive(_ notification: Notification) {
+        WM.noteInactive()
         let settingsVisible = settingsWindow?.isVisible ?? false
         log.debug("Resigned active: pinned=\(WM.pinned) keepOpen=\(Defaults[.keepWindowOpenWhenDefocused]) settingsVisible=\(settingsVisible)")
         // Keep the window fully visible while a sheet is attached (e.g. "Reindex excluded path"), so clicking
@@ -280,6 +282,7 @@ class AppDelegate: LowtechProAppDelegate {
     }
 
     func hideOrCloseMainWindow(_ window: NSWindow) {
+        WM.noteInactive()
         FUZZY.cancelPendingSearch()
         if Defaults[.instantMode] {
             window.animationBehavior = .none
@@ -400,6 +403,7 @@ class AppDelegate: LowtechProAppDelegate {
         guard let window = notification.object as? NSWindow else { return }
         if window.identifier?.rawValue == "main" {
             WM.mainWindowActive = false
+            WM.noteInactive()
             handBackFocusAfterMainDismiss()
         } else if window.identifier?.rawValue == "settings" {
             // Restore the user's configured policy once Settings closes.
@@ -438,6 +442,7 @@ class AppDelegate: LowtechProAppDelegate {
 
         if window.identifier?.rawValue == "main" {
             WM.mainWindowActive = true
+            WM.noteActive()
             FUZZY.refreshDefaultResultsIfNeeded()
 
             window.alphaValue = 1
@@ -531,6 +536,25 @@ class WindowManager {
 
     var mainWindowActive = false
 
+    /// Bumped when the app comes back after being away long enough for the result selection to
+    /// count as stale. Observed by ContentView, which then jumps the selection back to the top.
+    var selectionResetToken = 0
+
+    /// The app went to the background or the main window was hidden/closed.
+    func noteInactive() {
+        guard inactiveSince == nil else { return }
+        inactiveSince = .now
+    }
+
+    /// The app came back. Ask for a selection reset if we were away for longer than the setting.
+    func noteActive() {
+        guard let since = inactiveSince else { return }
+        inactiveSince = nil
+        let timeout = Defaults[.resetSelectionAfter]
+        guard timeout > 0, Date.now.timeIntervalSince(since) >= timeout else { return }
+        selectionResetToken &+= 1
+    }
+
     func open(_ window: String) {
         if window == "main", NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) != nil {
             focus()
@@ -542,6 +566,9 @@ class WindowManager {
         }
         windowToOpen = window
     }
+
+    /// When the app last went to the background or hid its window.
+    private var inactiveSince: Date?
 }
 @MainActor let WM = WindowManager()
 

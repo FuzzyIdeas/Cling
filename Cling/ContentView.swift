@@ -204,6 +204,15 @@ struct ContentView: View {
                         focused = .search
                     }
                 }
+                .onChange(of: wm.selectionResetToken) {
+                    // Back after a long time away: the row selected in the previous session is
+                    // stale, so ↓ from the search field should land on the first result again.
+                    // Clearing lastSelectionQuery also stops the next results update from
+                    // restoring the old ids.
+                    lastSelectionQuery = nil
+                    selectFirstResult()
+                    scrollResultsTableToTop()
+                }
                 .disabled(!wm.mainWindowActive)
                 .quickLookPreview(
                     Binding(get: { quickLook.selection }, set: { quickLook.selection = $0 }),

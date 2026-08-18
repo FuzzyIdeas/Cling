@@ -566,6 +566,22 @@ private enum ToolbarPlacement: String, CaseIterable {
     case bar, more, hidden
 }
 
+let SELECTION_RESET_PRESETS: [TimeInterval] = [0, 60, 300, 900, 3600]
+
+func selectionResetDetail(_ seconds: TimeInterval) -> String {
+    seconds == 0
+        ? "Keeps the same selected files until a manual selection change."
+        : "Starts with no selection when summoned after \(selectionResetLabel(seconds)) in the background."
+}
+
+func selectionResetLabel(_ seconds: TimeInterval) -> String {
+    switch seconds {
+    case 0: "Never"
+    case ..<3600: "\(Int(seconds / 60)) min"
+    default: "\(Int(seconds / 3600)) hour"
+    }
+}
+
 // MARK: - GeneralSettingsPane
 
 private struct GeneralSettingsPane: View {
@@ -621,6 +637,19 @@ private struct GeneralSettingsPane: View {
                     detail: "Hide the window instead of closing it, so the next hotkey summon is instant.",
                     isOn: $instantMode
                 )
+
+                SettingRow(
+                    title: "Reset selection after",
+                    detail: selectionResetDetail(resetSelectionAfter)
+                ) {
+                    Picker("", selection: $resetSelectionAfter) {
+                        ForEach(SELECTION_RESET_PRESETS, id: \.self) { t in
+                            Text(selectionResetLabel(t)).tag(t)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
             }
 
             Section("Global Hotkey") {
@@ -659,6 +688,7 @@ private struct GeneralSettingsPane: View {
     @Default(.showDockIcon) private var showDockIcon
     @Default(.keepWindowOpenWhenDefocused) private var keepWindowOpenWhenDefocused
     @Default(.instantMode) private var instantMode
+    @Default(.resetSelectionAfter) private var resetSelectionAfter
     @Default(.enableGlobalHotkey) private var enableGlobalHotkey
     @Default(.showAppKey) private var showAppKey
     @Default(.triggerKeys) private var triggerKeys
