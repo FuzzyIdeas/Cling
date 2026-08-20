@@ -255,9 +255,9 @@ extension FuzzyClient {
             let shouldRunCompletion = batchTracker?.finishOne() ?? false
             await MainActor.run {
                 if !wasCancelled {
-                    self.volumeEngines[volume] = reloadedEngine
+                    releaseInBackground(self.volumeEngines.updateValue(reloadedEngine, forKey: volume))
                     if let metaCache = result.metadataCache {
-                        self.smbMetadataCaches[volume] = metaCache
+                        releaseInBackground(self.smbMetadataCaches.updateValue(metaCache, forKey: volume))
                     }
                     self.updateIndexedCount()
                     self.logActivity("Indexed volume: \(volumeName) (\(result.added.formatted()) files)", operationKey: opKey)
@@ -328,7 +328,7 @@ extension FuzzyClient {
     func removeVolume(_ volume: FilePath) {
         cancelVolumeIndexing(volume: volume)
         volumeIndexTasks[volume] = nil
-        volumeEngines[volume] = nil
+        releaseInBackground(volumeEngines.removeValue(forKey: volume))
         volumesIndexing.remove(volume)
         disconnectedVolumes.remove(volume)
 

@@ -328,6 +328,19 @@ private func computeEnabledVolumes(mounted: [FilePath], disabled: [FilePath]) ->
     return mountedEnabled + disconnected
 }
 
+/// Frees a replaced index off the main thread.
+///
+/// `FuzzyClient` is `@MainActor`, so overwriting one of its engine dictionaries drops the last
+/// reference to the outgoing `SearchEngine` right there and runs its deinit on the main thread.
+/// Tearing down a multi-million entry index takes long enough to land in Sentry as a 30 second
+/// hang (CLING-59). Handing the outgoing object to a background task moves the teardown with it.
+func releaseInBackground(_ object: AnyObject?) {
+    guard let object else { return }
+    Task.detached(priority: .background) {
+        withExtendedLifetime(object) {}
+    }
+}
+
 // MARK: - FuzzyClient
 
 @Observable @MainActor
@@ -1113,7 +1126,7 @@ class FuzzyClient {
                     }
                 }) {
                     await MainActor.run {
-                        self.scopeEngines[scope] = eng
+                        releaseInBackground(self.scopeEngines.updateValue(eng, forKey: scope))
                         self.updateIndexedCount()
                         self.logActivity("Loaded \(scope.label): \(eng.count.formatted()) entries", operationKey: opKey)
                     }
@@ -1136,7 +1149,7 @@ class FuzzyClient {
                     }
                 }) {
                     await MainActor.run {
-                        self.scopeEngines[scope] = eng
+                        releaseInBackground(self.scopeEngines.updateValue(eng, forKey: scope))
                         self.updateIndexedCount()
                         self.logActivity("Loaded \(scope.label): \(eng.count.formatted()) entries", operationKey: opKey)
                     }
@@ -1194,8 +1207,10 @@ class FuzzyClient {
                         if cache.count > 0 { metaCache = cache }
                     }
                     await MainActor.run {
-                        self.volumeEngines[volume] = eng
-                        if let metaCache { self.smbMetadataCaches[volume] = metaCache }
+                        releaseInBackground(self.volumeEngines.updateValue(eng, forKey: volume))
+                        if let metaCache {
+                            releaseInBackground(self.smbMetadataCaches.updateValue(metaCache, forKey: volume))
+                        }
                         self.updateIndexedCount()
                     }
                 }
@@ -1339,7 +1354,7 @@ class FuzzyClient {
                     let engineToStore = reloadedEngine.loadBinaryIndex(from: file.url) ? reloadedEngine : scopeEngine
 
                     await MainActor.run {
-                        self.scopeEngines[scope] = engineToStore
+                        releaseInBackground(self.scopeEngines.updateValue(engineToStore, forKey: scope))
                         self.scopesIndexing.remove(scope)
                         self.updateIndexedCount()
                         self.logActivity("Indexed \(scope.label): \(added.formatted()) files (\(self.indexedCount.formatted()) total)", operationKey: "scope:\(scope.rawValue)")
