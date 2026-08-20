@@ -150,20 +150,13 @@ class AppDelegate: LowtechProAppDelegate {
         KM.specialKey = Defaults[.enableGlobalHotkey] ? Defaults[.showAppKey] : nil
         KM.specialKeyModifiers = Defaults[.triggerKeys]
         KM.onSpecialHotkey = { [self] in
-            if let mainWindow, mainWindow.isKeyWindow {
-                WM.pinned = false
-                mainWindow.resignKey()
-                mainWindow.resignMain()
-                hideOrCloseMainWindow(mainWindow)
-                handBackFocusAfterMainDismiss()
-            } else if Defaults[.instantMode], mainWindow != nil {
-                focusWindow()
-            } else {
-                WM.open("main")
-                focusWindow()
-                focus()
-            }
+            toggleMainWindow(isFront: mainWindow?.isKeyWindow ?? false)
         }
+        applyMenuBarIconSetting()
+        pub(.showMenuBarIcon)
+            .sink { [self] _ in
+                mainAsync { self.applyMenuBarIconSetting() }
+            }.store(in: &observers)
         pub(.enableGlobalHotkey)
             .sink { change in
                 KM.specialKey = change.newValue ? Defaults[.showAppKey] : nil
@@ -251,6 +244,9 @@ class AppDelegate: LowtechProAppDelegate {
 
     override func applicationDidResignActive(_ notification: Notification) {
         WM.noteInactive()
+        if WM.mainWindowActive, mainWindow?.isVisible == true {
+            mainWindowLeftFrontAt = .now
+        }
         let settingsVisible = settingsWindow?.isVisible ?? false
         log.debug("Resigned active: pinned=\(WM.pinned) keepOpen=\(Defaults[.keepWindowOpenWhenDefocused]) settingsVisible=\(settingsVisible)")
         // Keep the window fully visible while a sheet is attached (e.g. "Reindex excluded path"), so clicking
@@ -326,6 +322,66 @@ class AppDelegate: LowtechProAppDelegate {
         let id = filePaths.count == 1 ? filePaths[0].name.string : "Custom"
         FUZZY.folderFilter = FolderFilter(id: id, folders: filePaths, key: nil)
         application.reply(toOpenOrPrint: .success)
+    }
+
+    /// Summon or dismiss the search window. `isFront` decides which way the toggle goes: the
+    /// window is only hidden when the user can already see it in front, so one that is open but
+    /// behind another app comes forward first instead of disappearing.
+    func toggleMainWindow(isFront: Bool) {
+        if isFront, let mainWindow {
+            WM.pinned = false
+            mainWindow.resignKey()
+            mainWindow.resignMain()
+            hideOrCloseMainWindow(mainWindow)
+            handBackFocusAfterMainDismiss()
+        } else if Defaults[.instantMode], mainWindow != nil {
+            focusWindow()
+        } else {
+            WM.open("main")
+            focusWindow()
+            focus()
+        }
+    }
+
+    func applyMenuBarIconSetting() {
+        guard Defaults[.showMenuBarIcon] else {
+            if let menuBarItem {
+                NSStatusBar.system.removeStatusItem(menuBarItem)
+                self.menuBarItem = nil
+            }
+            return
+        }
+        guard menuBarItem == nil else { return }
+
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.image = NSImage(
+            systemSymbolName: "doc.text.magnifyingglass",
+            accessibilityDescription: "Cling"
+        )
+        item.button?.image?.isTemplate = true
+        item.button?.toolTip = "Show or hide Cling"
+        item.button?.target = self
+        item.button?.action = #selector(menuBarIconClicked)
+        menuBarItem = item
+    }
+
+    @objc func menuBarIconClicked() {
+        // Clicking a status item sends the app to the background first, and in utility mode that
+        // deactivation already hid the window by the time this runs. Without the grace window the
+        // click meant to dismiss Cling would find an empty screen and summon it straight back.
+        let leftFrontForThisClick = mainWindowLeftFrontAt
+            .map { Date.now.timeIntervalSince($0) < Self.menuBarClickGrace } ?? false
+        log.debug("Menu bar click: frontmost=\(self.mainWindowIsFrontmost) leftFront=\(leftFrontForThisClick) visible=\(self.mainWindow?.isVisible ?? false)")
+
+        guard !mainWindowIsFrontmost, !leftFrontForThisClick else {
+            mainWindowLeftFrontAt = nil
+            // Already gone if the deactivation got there first; otherwise dismiss it now.
+            if let mainWindow, mainWindow.isVisible {
+                toggleMainWindow(isFront: true)
+            }
+            return
+        }
+        toggleMainWindow(isFront: false)
     }
 
     func focusWindow() {
@@ -488,11 +544,30 @@ class AppDelegate: LowtechProAppDelegate {
         lowtechAllowedChannels()
     }
 
+    /// How long after the app goes to the background a status item click still counts as the
+    /// click that sent it there. A single click covers a few milliseconds; anything slower is
+    /// the user coming back to Cling and wanting it summoned.
+    private static let menuBarClickGrace: TimeInterval = 0.35
+
+    private var menuBarItem: NSStatusItem?
+    /// When the search window last stopped being the front window because the app went to the
+    /// background. Read by the menu bar click to tell "dismiss this" from "summon this".
+    private var mainWindowLeftFrontAt: Date?
     private var windowConfigured = false
     private var settingsWindowConfigured = false
     private var mainWindowDelegateProxy: MainWindowDelegateProxy?
 
     private var resizeCancellable: AnyCancellable?
+
+    /// Whether the search window is the one the user is looking at right now. Clicking a status
+    /// item doesn't activate the app, so key-window state can already have moved by the time this
+    /// runs; app activation plus visibility survives that. Settings being key means the search
+    /// window is behind it, so it counts as not in front.
+    private var mainWindowIsFrontmost: Bool {
+        guard let mainWindow, mainWindow.isVisible, NSApp.isActive else { return false }
+        if let settings = settingsWindow, settings.isVisible, settings.isKeyWindow { return false }
+        return true
+    }
 
 }
 

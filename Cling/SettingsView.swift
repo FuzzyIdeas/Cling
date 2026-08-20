@@ -635,6 +635,12 @@ private struct GeneralSettingsPane: View {
                 }
 
                 DescriptiveToggle(
+                    title: "Show menu bar icon",
+                    detail: "Click it to summon Cling, click again to hide it.",
+                    isOn: $showMenuBarIcon
+                )
+
+                DescriptiveToggle(
                     title: "Keep window open when app is in background",
                     detail: "Don't close the window when clicking outside the app.",
                     isOn: $keepWindowOpenWhenDefocused
@@ -702,6 +708,7 @@ private struct GeneralSettingsPane: View {
 
     @Default(.showWindowAtLaunch) private var showWindowAtLaunch
     @Default(.showDockIcon) private var showDockIcon
+    @Default(.showMenuBarIcon) private var showMenuBarIcon
     @Default(.keepWindowOpenWhenDefocused) private var keepWindowOpenWhenDefocused
     @Default(.instantMode) private var instantMode
     @Default(.resetSelectionAfter) private var resetSelectionAfter

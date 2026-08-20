@@ -603,6 +603,7 @@ extension Defaults.Keys {
     static let shelfApp = Key<String>("shelfApp", default: CLING_STASH_APP)
     static let showWindowAtLaunch = Key<Bool>("showWindowAtLaunch", default: true)
     static let showDockIcon = Key<Bool>("showDockIcon", default: false)
+    static let showMenuBarIcon = Key<Bool>("showMenuBarIcon", default: false)
     static let keepWindowOpenWhenDefocused = Key<Bool>("keepWindowOpenWhenDefocused", default: false)
     static let instantMode = Key<Bool>("instantMode", default: true)
     /// Seconds away (app in the background or window hidden) after which the result selection is
