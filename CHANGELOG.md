@@ -1,3 +1,31 @@
+# 2.7.0
+
+**[Download Cling 2.7.0 →](https://files.lowtechguys.com/releases/Cling-2.7.0.dmg)**
+## Features
+
+- **Dynamic text size** for the search window: `⌘+` and `⌘-` to change it, `⌘0` to reset
+    > Also in Settings > Interface > Window, adjustable from 80% to 200%
+
+- **Menu bar icon**: click it to show Cling. Off by default in Settings > General
+
+- **Reset selection after** starts a summon with no selection when Cling has been in the background for a while, so `↓` lands on the first result instead of the row you picked an hour ago
+    > Set the delay in Settings > General > Window: `1 min`, `5 min`, `15 min`, `1 hour`, or `Never` to keep the same selected files until a manual selection change
+    >
+    > Defaults to `5 min`
+
+## Fixes
+
+- Fixed a possible freeze when a volume or folder finished reindexing, caused by the old index being thrown away on the main thread
+
+# 2.6.11
+
+**[Download Cling 2.6.11 →](https://files.lowtechguys.com/releases/Cling-2.6.11.dmg)**
+## Fixes
+
+- Fixed a possible freeze while the recent files list refreshed, caused by one file sitting on a stalled drive
+- Fixed a possible freeze when opening the Open With menu for a selection it had not seen before
+- Fixed a possible stall while the index was built, caused by one folder on a slow drive holding up the rest
+
 # 2.6.10
 
 **[Download Cling 2.6.10 →](https://files.lowtechguys.com/releases/Cling-2.6.10.dmg)**

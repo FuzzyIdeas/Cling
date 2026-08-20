@@ -3,6 +3,24 @@
     <channel>
         <title>Cling</title>
         <item>
+            <title>2.7.0</title>
+            <pubDate>Thu, 20 Aug 2026 13:34:40 +0300</pubDate>
+            <link>https://lowtechguys.com/cling</link>
+            <sparkle:fullReleaseNotesLink>https://files.lowtechguys.com/cling/changelog.html</sparkle:fullReleaseNotesLink>
+            <sparkle:version>2.7.0</sparkle:version>
+            <sparkle:shortVersionString>2.7.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.7.0.html</sparkle:releaseNotesLink>
+            <enclosure url="https://files.lowtechguys.com/releases/Cling-2.7.0.dmg" length="30303820" type="application/octet-stream" sparkle:edSignature="Hn8YH933YRgZqumsKaMHFCg2xxr27zyiXH+dJQEfjdUs7q43xGOzPSmhoQOu/PdDrkgKJ9m14qM5xf5MvDwvCQ=="/>
+            <sparkle:deltas>
+                <enclosure url="https://files.lowtechguys.com/releases/Cling2.7.0-2.6.8.delta" sparkle:deltaFrom="2.6.8" length="2642946" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="uuHYca40cS6gvLmdQWYCg2CMThgZdPCuoOh+roaYRVMM7ksXqITIIjTPJg/ecmG8vgys2kePx1yxE9aYr7r1Ag=="/>
+                <enclosure url="https://files.lowtechguys.com/releases/Cling2.7.0-2.6.7.delta" sparkle:deltaFrom="2.6.7" length="2781442" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="erWtS0y8FjBD6OV9LUmM+K9CxTww3Q3L5w9em5ucsnW/+KC0JcM+oswSfR5LEN1L5I/mvA5vpe/h3IWTEo9jAA=="/>
+                <enclosure url="https://files.lowtechguys.com/releases/Cling2.7.0-2.6.6.delta" sparkle:deltaFrom="2.6.6" length="2844386" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="l870KJPy10gGf74QbpAlejI9Btlz0NUdvTaZSrV7E3zMsU/0z4kkClJYCMDLmEphauEJ+R0qCYpinfBg3JmuCQ=="/>
+                <enclosure url="https://files.lowtechguys.com/releases/Cling2.7.0-2.6.5.delta" sparkle:deltaFrom="2.6.5" length="3158710" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="Z5/ymJaCmZ3RGnuFHzvn3jufao7dMpgOVfWEhdaCWjrul8VuI4fDqnvRMg4RNL5g4I7ra3HNna/Hbutfa9VEDg=="/>
+                <enclosure url="https://files.lowtechguys.com/releases/Cling2.7.0-2.6.4.delta" sparkle:deltaFrom="2.6.4" length="3239662" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="szshQsOp+VdfbTZiqrN8V1eviB1tZxn4l6xHjQW/bBYqVISwWC0DKmIyduVpFv4xShL8VQwJU454uKEdfcksCQ=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>2.6.11</title>
             <pubDate>Mon, 17 Aug 2026 12:05:36 +0300</pubDate>
             <link>https://lowtechguys.com/cling</link>
@@ -72,6 +90,7 @@
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.8-2.6.4.delta" sparkle:deltaFrom="2.6.4" length="2963194" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="oXQtZiR1Q9aQuaoCMdxVHhSWc5uPX57wwPV0RolI0NboKozJd5Eglpem/tdxHL1AkwgVBzqK7A7/ZBaY4pfTBQ=="/>
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.8-2.6.3.delta" sparkle:deltaFrom="2.6.3" length="3240626" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="OY66vgqVKEhRJZlpVnU9b4pCxgV/hOg8W7r8gajY0lUH7Ss3nDtOyFNxqR9Wrb49MtTIVb2gO8ghuhKiawYIDw=="/>
             </sparkle:deltas>
+            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.6.8.html</sparkle:releaseNotesLink>
         </item>
         <item>
             <title>2.6.7</title>
@@ -89,6 +108,7 @@
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.7-2.6.3.delta" sparkle:deltaFrom="2.6.3" length="3160550" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="fTO3y0AFgjVJH+qhg6SEWfZq6X34fAXt8Y46EWnJ0cimfBXXPiutkrRt6qTS1EmHsCiV3ME6lNmHDgNzWPzXCA=="/>
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.7-2.6.2.delta" sparkle:deltaFrom="2.6.2" length="3192374" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="t5motYzRHBzXh96BfoGG0J/VTMZxql6VYxu8nCE3r1YGtSpBcgyPnIwvXIYkdqhHVogMR0j6sjRx69A4xZUUBw=="/>
             </sparkle:deltas>
+            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.6.7.html</sparkle:releaseNotesLink>
         </item>
         <item>
             <title>2.6.6</title>
@@ -106,6 +126,7 @@
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.6-2.6.2.delta" sparkle:deltaFrom="2.6.2" length="3095506" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="aedtgY0OnbW9WUgALGoxa0RwspT0DyjrEJ1B5mTECPyaA8PVSKtryk00WFRnnUIBcut28CjWKyd70CizhurzCQ=="/>
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.6-2.6.1.delta" sparkle:deltaFrom="2.6.1" length="4316294" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="EecYS5nng9/4POfVZGph1N+BwMXtHsLTK398e81nXF7LVxnxzD92TYggFZnbtZhbEaoLcZHKVOdB4tN4gf2KDA=="/>
             </sparkle:deltas>
+            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.6.6.html</sparkle:releaseNotesLink>
         </item>
         <item>
             <title>2.6.5</title>
@@ -123,6 +144,7 @@
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.5-2.6.1.delta" sparkle:deltaFrom="2.6.1" length="3971602" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="3AlP4GS2munWAfnBXtcsVVbgSHwSXNdEgX6eHMqyWf2+AhHZr3dDntYjiDorzUKoe2evNAwp29JGKw1Efe6DBA=="/>
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.5-2.6.0.delta" sparkle:deltaFrom="2.6.0" length="4829102" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="zth4+4cAoKDHM6rzxo6qg6UyrDLkxGlSVzT6FX2XH1Itkia1/Q5CUAz6Z6h5c/0Pozr5nvs4/I1rpDrTVLnNCw=="/>
             </sparkle:deltas>
+            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.6.5.html</sparkle:releaseNotesLink>
         </item>
         <item>
             <title>2.6.4</title>
@@ -140,6 +162,7 @@
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.4-2.6.0.delta" sparkle:deltaFrom="2.6.0" length="3933226" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="UJp1Q38MGu6PBuBwI29NIE618w5IfqLiAA8SdEFwLUzTqtLU9/nsx57qCwBvP0TFFiOAMOC8q8h8HsJ+6jvNCg=="/>
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.4-2.5.0.delta" sparkle:deltaFrom="2.5.0" length="13486146" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="UEwDNZxjBH6s6Z2IAdYVxSnWcL7AVYkR2M7cXbppgwi8BUTDRS/l4D9YSGFBUOxpU3tKH69K4qQgGG0Xc148AA=="/>
             </sparkle:deltas>
+            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.6.4.html</sparkle:releaseNotesLink>
         </item>
         <item>
             <title>2.6.3</title>
@@ -157,24 +180,6 @@
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.3-2.6.0.delta" sparkle:deltaFrom="2.6.0" length="3671246" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="EEooqkf4XdMiE7hYDpwH5RYqTnuVcHPWyCiCe03BF7gOdSVUvCZeWb8vZLzHssYrJe8ApKWbKu8YKttUUFZhCQ=="/>
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.3-2.5.0.delta" sparkle:deltaFrom="2.5.0" length="13321562" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="+cb5hWmFn5lt+7F4yZNhAFaJyU1E4us5nw1F+o1XPU1t26JbtlJ8eIsVjCut9/Qo8e0R9+O7r+p4jtWQ2RvYBg=="/>
                 <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.3-2.4.1.delta" sparkle:deltaFrom="2.4.1" length="16162558" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="Y9Q2HmAxV4AuC+pXojJRf7j8sEYjyFz8wISnn2sr6giPpOAXYS9hhp5W9zzFA4b8KaRYOx9bfxP0eSHsycQ3BA=="/>
-            </sparkle:deltas>
-        </item>
-        <item>
-            <title>2.6.2</title>
-            <pubDate>Wed, 24 Jun 2026 17:39:21 +0300</pubDate>
-            <link>https://lowtechguys.com/cling</link>
-            <sparkle:fullReleaseNotesLink>https://files.lowtechguys.com/cling/changelog.html</sparkle:fullReleaseNotesLink>
-            <sparkle:version>2.6.2</sparkle:version>
-            <sparkle:shortVersionString>2.6.2</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.6.2.html</sparkle:releaseNotesLink>
-            <enclosure url="https://files.lowtechguys.com/releases/Cling-2.6.2.dmg" length="29960753" type="application/octet-stream" sparkle:edSignature="9nbGbZJJFqSlr4eqMAz5TxH6GK+eG70ZAW11Bnpjhk5ofbvwHCq+jFsGfaChqx7rQwolKa5xE25q2opgyH8ABg=="/>
-            <sparkle:deltas>
-                <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.2-2.6.1.delta" sparkle:deltaFrom="2.6.1" length="2547222" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="S1Dyh6a6Hdie5XLWLi4K5O/X+qAeqtEf5Ln9+SE6FhZX5/lsdojqxoUz3RGo6c4oV7x6Bixv58OPvERQnuD9DA=="/>
-                <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.2-2.6.0.delta" sparkle:deltaFrom="2.6.0" length="3645926" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="6wnvq3l1sEdpbHO7ayERtp03Wbhzm7ez/4lcxMr+aUoLtzG9I+WGXavDtAZD/QJxpkFEFgBhyZnuwkN1aXHTBA=="/>
-                <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.2-2.5.0.delta" sparkle:deltaFrom="2.5.0" length="13297566" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="6Lafil+/jSJicrqf0o5DSyVrnZFsqhXZPCQh8FIJX8XeiyGqZ8IPF+DEKCiLTBUnH3Gjj+oUJbDaUfRxISrKAQ=="/>
-                <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.2-2.4.1.delta" sparkle:deltaFrom="2.4.1" length="16157106" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="rboieaEKHURMWH2fybR/flf/E0pKHYC68W3etDWHgd5oJ2e+zARpD/Njz1i744PbTrERJTxX4Ldo7iO3fcyyBA=="/>
-                <enclosure url="https://files.lowtechguys.com/releases/Cling2.6.2-2.4.0.delta" sparkle:deltaFrom="2.4.0" length="16145370" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="9lVzG+g6xq5boYf90QauIsX3C8IOQnCh73GC6WukaEmMz9LcUhsPu05ttR7A+sYKL5T2B/cQ0GA+dg5XvtV/BQ=="/>
             </sparkle:deltas>
         </item>
     </channel>
