@@ -357,6 +357,21 @@ private struct InterfaceSettingsPane: View {
                     .labelsHidden()
                     .fixedSize()
                 }
+
+                SettingRow(
+                    title: "Text size",
+                    detail: "\u{2318}+ / \u{2318}- to change, \u{2318}0 to reset"
+                ) {
+                    Stepper(
+                        value: $fontScale,
+                        in: FontScale.range,
+                        step: FontScale.step
+                    ) {
+                        Text(fontScale.formatted(.percent.precision(.fractionLength(0))))
+                            .monospacedDigit()
+                    }
+                    .fixedSize()
+                }
             }
 
             Section("Rows") {
@@ -503,6 +518,7 @@ private struct InterfaceSettingsPane: View {
     @Default(.rowsToggleModifier) private var rowsToggleModifier
 
     @Default(.showScriptRow) private var showScriptRow
+    @Default(.fontScale) private var fontScale
     @Default(.windowAppearance) private var windowAppearance
     @Default(.toolbarLabelStyle) private var toolbarLabelStyle
     @Default(.toolbarDensity) private var toolbarDensity

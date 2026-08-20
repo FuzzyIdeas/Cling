@@ -124,7 +124,7 @@ struct ActionButtons: View {
                             trashButton.disabled(focused.wrappedValue != .list && focused.wrappedValue != .stash)
                         }
                     }
-                    .font(.system(size: density.fontSize))
+                    .font(.scaled(density.fontSize, .control))
                     .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
                 } else {
                     HStack(spacing: density.spacing) {
@@ -141,12 +141,12 @@ struct ActionButtons: View {
                         }
                         overflowButton
                     }
-                    .font(.system(size: density.fontSize))
+                    .font(.scaled(density.fontSize, .control))
                     .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
                 }
             }
         }
-        .font(.system(size: 10))
+        .font(.scaled(10, .control))
         .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
         .lineLimit(1)
         .background(openWithPickerButton)
@@ -393,6 +393,10 @@ struct ActionButtons: View {
     @State private var copiedFeedbackText = "Copied"
     @State private var copiedClearTask: Task<Void, Never>?
 
+    /// Observed so the view redraws when the text size changes; the sizes themselves come
+    /// from FontScale.
+    @Default(.fontScale) private var fontScale
+
     @Default(.shortcutBadgesRevealedOnce) private var badgesRevealedOnce
 
     @Default(.sendSecurelyIntroShown) private var sendSecurelyIntroShown
@@ -472,7 +476,7 @@ struct ActionButtons: View {
         .frame(width: 0, height: 0)
         .sheet(isPresented: $isPresentingOpenWithPicker) {
             OpenWithPickerView(fileURLs: selectedResults.map(\.url))
-                .font(.medium(13))
+                .font(.scaled(13, .control, weight: .medium))
                 .focused(focused, equals: .openWith)
         }
         .disabled(selectedResults.isEmpty || fuzzy.openWithAppShortcuts.isEmpty)

@@ -121,20 +121,28 @@ struct OpenWithPickerView: View {
     @State private var keyMonitor: Any?
     @FocusState private var filterFocused: Bool
 
+    /// Observed so the view redraws when the text size changes; the sizes themselves come
+    /// from FontScale.
+    @Default(.fontScale) private var fontScale
+
     private var apps: [URL] {
         matchedApps(filterText)
+    }
+
+    private var badgeSide: CGFloat {
+        FontScale.length(17, .control)
     }
 
     @ViewBuilder
     private func numberBadge(_ number: Int?) -> some View {
         if let number {
             Text("\(number)")
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .font(.scaled(11, .control, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 17, height: 17)
+                .frame(width: badgeSide, height: badgeSide)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
         } else {
-            Color.clear.frame(width: 17, height: 17)
+            Color.clear.frame(width: badgeSide, height: badgeSide)
         }
     }
 
@@ -205,7 +213,7 @@ struct OpenWithActionButtons: View {
             if fuzzy.openWithAppShortcuts.isEmpty {
                 Text("Open with app hotkeys will appear here")
                     .foregroundStyle(.secondary)
-                    .font(.system(size: density.fontSize))
+                    .font(.scaled(density.fontSize, .control))
             } else {
                 if comboHintVisible {
                     ModifierComboHint(secondary: "⌥", secondaryHeld: optHeld, tint: ShortcutTint.apps)
@@ -221,7 +229,7 @@ struct OpenWithActionButtons: View {
                     .bold()
             }
         }
-        .font(.system(size: density.fontSize))
+        .font(.scaled(density.fontSize, .control))
         .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
         .lineLimit(1)
         .revealShortcutHints(held: cmdHeld, visible: $comboHintVisible)
@@ -232,6 +240,10 @@ struct OpenWithActionButtons: View {
     @ObservedObject private var km = KM
     @State private var comboHintVisible = false
     @State private var pillHintsVisible = false
+
+    /// Observed so the view redraws when the text size changes; the sizes themselves come
+    /// from FontScale.
+    @Default(.fontScale) private var fontScale
 
     @Default(.toolbarLabelStyle) private var labelStyle
     @Default(.toolbarDensity) private var density
@@ -272,13 +284,15 @@ struct OpenWithActionButtons: View {
         switch labelStyle {
         case .iconAndText:
             HStack(spacing: 4) {
-                SwiftUI.Image(nsImage: icon(for: app)).resizable().interpolation(.high).frame(width: 14, height: 14)
+                SwiftUI.Image(nsImage: icon(for: app)).resizable().interpolation(.high)
+                    .frame(width: ActionRowLayout.pillIconSide, height: ActionRowLayout.pillIconSide)
                 Text(app.lastPathComponent.ns.deletingPathExtension)
             }
         case .textOnly:
             Text(app.lastPathComponent.ns.deletingPathExtension)
         case .iconOnly:
-            SwiftUI.Image(nsImage: icon(for: app)).resizable().interpolation(.high).frame(width: 14, height: 14)
+            SwiftUI.Image(nsImage: icon(for: app)).resizable().interpolation(.high)
+                .frame(width: ActionRowLayout.pillIconSide, height: ActionRowLayout.pillIconSide)
         }
     }
 

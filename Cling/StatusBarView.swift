@@ -112,7 +112,7 @@ struct StatusBarView: View {
             }
             .buttonStyle(.text(borderColor: .clear))
         }
-        .font(.system(size: 10))
+        .font(.scaled(10, .chrome))
         .foregroundStyle(.secondary)
         .padding(1)
 
@@ -125,6 +125,10 @@ struct StatusBarView: View {
 
     @State private var fuzzy: FuzzyClient = FUZZY
     @State private var appearance = AM
+
+    /// Observed so the view redraws when the text size changes; the sizes themselves come
+    /// from FontScale.
+    @Default(.fontScale) private var fontScale
 
     @Default(.triggerKeys) private var triggerKeys
     @Default(.showAppKey) private var showAppKey

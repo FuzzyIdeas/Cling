@@ -115,7 +115,7 @@ struct ContentView: View {
             .padding(4)
             .contentShape(Rectangle())
         }
-        .font(.round(10))
+        .font(.scaled(10, .chrome, design: .rounded))
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .opacity(pinHovering ? 1 : 0.4)
@@ -134,7 +134,7 @@ struct ContentView: View {
             .padding(4)
             .contentShape(Rectangle())
         }
-        .font(.round(10))
+        .font(.scaled(10, .chrome, design: .rounded))
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .opacity(quitHovering ? 1 : 0.4)
@@ -294,8 +294,9 @@ struct ContentView: View {
     /// Space the results panel keeps for itself before the stash is allowed to grow; the stash
     /// shrinks (and scrolls internally) first, so a short window never starves the results table.
     private static let resultsReservedHeight: CGFloat = 240
-    /// The smallest useful stash panel: header chrome + one row.
-    private static let stashMinHeight: CGFloat = 24 + 43
+    /// Header chrome and the table's own vertical padding around the stash rows (28 + 5 + 10,
+    /// measured). Only the rows follow the text size, this part doesn't.
+    private static let stashChromeHeight: CGFloat = 43
 
     @State private var pinHovering = false
 
@@ -361,6 +362,8 @@ struct ContentView: View {
     /// and fall back to the first row if the whole selection is gone.
     @State private var lastSelectionQuery: String? = nil
 
+    @Default(.fontScale) private var fontScale
+
     @Default(.showFilePreview) private var showFilePreview
 
     @Default(.showOpenWithRow) private var showOpenWithRow
@@ -379,6 +382,14 @@ struct ContentView: View {
     @Default(.showSearchHints) private var showSearchHints
     @Default(.searchHintsManuallyEnabled) private var searchHintsManuallyEnabled
     @Default(.searchHintsFirstShownAt) private var searchHintsFirstShownAt
+
+    /// Re-read through `fontScale` above so the whole window redraws when the size changes.
+    private var rowHeight: CGFloat {
+        FontScale.length(24)
+    }
+    private var iconSide: CGFloat {
+        FontScale.length(16)
+    }
 
     /// Whether the normal results table (not a log/history/live view) is showing,
     /// the only context where the file preview panel makes sense.
@@ -511,8 +522,8 @@ struct ContentView: View {
 
     private var iconColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
         TableColumn("", value: \.string) { path in
-            Image(nsImage: path.memoz.icon).resizable().frame(width: 16, height: 16)
-        }.width(20)
+            Image(nsImage: path.memoz.icon).resizable().frame(width: iconSide, height: iconSide)
+        }.width(FontScale.length(20))
     }
 
     private var nameColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
@@ -520,28 +531,28 @@ struct ContentView: View {
             // .help sets the cell's NSView tooltip (cheap, no layout pass), so the truncated middle is
             // revealed on hover without the per-row measuring that would slow scrolling.
             let name = path.name.string
-            Text(name).font(.system(size: 12)).lineLimit(1).truncationMode(.middle).help(name)
-        }.width(min: 100, ideal: 200)
+            Text(name).font(.scaled(12)).lineLimit(1).truncationMode(.middle).help(name)
+        }.width(min: FontScale.length(100), ideal: FontScale.length(200))
     }
 
     private var pathColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
         TableColumn("Path", value: \.dir.string) { path in
             let dir = path.dir.shellString
-            Text(dir).font(.system(size: 12, design: .rounded)).tracking(-0.2).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary).help(dir)
-        }.width(min: 100, ideal: 300)
+            Text(dir).font(.scaled(12, design: .rounded)).tracking(-0.2).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary).help(dir)
+        }.width(min: FontScale.length(100), ideal: FontScale.length(300))
     }
 
     private var sizeColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
         TableColumn("Size", value: \.memoz.size) { path in
-            Text(path.memoz.humanizedFileSize).font(.system(size: 11, design: .monospaced)).lineLimit(1)
-        }.width(min: 60, ideal: 80)
+            Text(path.memoz.humanizedFileSize).font(.scaled(11, design: .monospaced)).lineLimit(1)
+        }.width(min: FontScale.length(60), ideal: FontScale.length(80))
     }
 
     private var dateColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
         TableColumn("Date Modified", value: \.memoz.date) { path in
             let date = path.memoz.formattedModificationDate
-            Text(date).font(.system(size: 11, design: .monospaced)).lineLimit(1).help(date)
-        }.width(min: 100, ideal: 160)
+            Text(date).font(.scaled(11, design: .monospaced)).lineLimit(1).help(date)
+        }.width(min: FontScale.length(100), ideal: FontScale.length(160))
     }
 
     /// Whether any of the three toolbar rows is actually on screen. When none is, the rows
@@ -622,7 +633,7 @@ struct ContentView: View {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
                         Text(op.message)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.scaled(11, design: .monospaced))
                             .lineLimit(1)
                             .truncationMode(.tail)
                         Spacer()
@@ -635,19 +646,19 @@ struct ContentView: View {
             ForEach(fuzzy.activityLog.reversed()) { entry in
                 HStack {
                     Text(entry.message)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.scaled(11, design: .monospaced))
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .textSelection(.enabled)
                     Spacer()
                     if let ms = entry.durationMs {
                         Text(ms >= 1000 ? String(format: "%.1fs", ms / 1000) : String(format: "%.0fms", ms))
-                            .font(.system(size: 9, design: .monospaced))
+                            .font(.scaled(9, .chrome, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .padding(.trailing, 4)
                     }
                     Text(entry.date.formatted(.dateTime.hour().minute().second()))
-                        .font(.system(size: 9, design: .monospaced))
+                        .font(.scaled(9, .chrome, design: .monospaced))
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -665,7 +676,7 @@ struct ContentView: View {
                         focused = .search
                     }) {
                         Text(entry)
-                            .font(.system(size: 12))
+                            .font(.scaled(12))
                             .lineLimit(1)
                             .hfill(.leading)
                     }
@@ -886,7 +897,7 @@ struct ContentView: View {
         HStack(spacing: 4) {
             if let subtitle = filterSubtitle {
                 Text(subtitle)
-                    .font(.system(size: 10))
+                    .font(.scaled(10, .chrome))
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -1009,6 +1020,10 @@ struct ContentView: View {
                     tableFocusTarget: tableFocusTarget
                 ))
         }
+        // One font for the placeholder, the ghost completion and the real field: the ghost
+        // suffix is positioned by drawing the query in clear text first, so any mismatch
+        // between the two would slide the suggestion off the end of what was typed.
+        .font(.scaled(13, .secondary))
         .animation(.easeInOut(duration: 0.45), value: placeholderHint)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.quaternary, lineWidth: 0.5))
@@ -1103,7 +1118,7 @@ struct ContentView: View {
                         // (which would force synchronous per-row stat/icon fetches on a bulk
                         // result update and freeze the app — CLING-B). Rows are uniform single
                         // line cells, so a constant height is exact, not just an approximation.
-                        .fixedTableRowHeight(24)
+                        .fixedTableRowHeight(rowHeight)
                         .onChange(of: sortOrder) { oldOrder, newOrder in
                             // SwiftUI resets a newly-clicked column to ascending. Size and Date read more
                             // naturally largest/newest first, so flip those to descending the first time
@@ -1218,7 +1233,7 @@ struct ContentView: View {
         Table(sortedRunHistory, selection: $runHistorySelection, sortOrder: $runHistorySortOrder) {
             TableColumn("Runs", value: \.count) { row in
                 Text("\(row.count)")
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.scaled(12, design: .monospaced))
                     .foregroundStyle(.orange)
             }.width(min: 40, ideal: 50)
 
@@ -1237,7 +1252,7 @@ struct ContentView: View {
 
             TableColumn("Last Run", value: \.lastRun) { row in
                 Text(row.lastRun.formatted(.dateTime.month().day().hour().minute()))
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.scaled(11, design: .monospaced))
                     .help(row.lastRun.formatted(date: .abbreviated, time: .standard))
             }.width(min: 100, ideal: 120)
         }
@@ -1253,7 +1268,7 @@ struct ContentView: View {
         Table(sortedLiveChanges, selection: $liveIndexSelection, sortOrder: $liveChangeSortOrder) {
             TableColumn("", value: \.kind.rawValue) { change in
                 Text(change.kind.rawValue)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.scaled(12, design: .monospaced))
                     .foregroundStyle(liveChangeColor(change.kind))
             }.width(16)
 
@@ -1272,7 +1287,7 @@ struct ContentView: View {
 
             TableColumn("Time", value: \.date) { change in
                 Text(change.date.formatted(.dateTime.hour().minute().second()))
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.scaled(11, design: .monospaced))
                     .help(change.date.formatted(date: .abbreviated, time: .standard))
             }.width(min: 70, ideal: 80)
         }
@@ -1288,12 +1303,13 @@ struct ContentView: View {
     /// The stash panel looks exactly like the results table: column headers + rows in a floating
     /// panel. Clearing lives in the icon column's header (red trash button, ⌘⇧S).
     private func stashSection(availableHeight: CGFloat) -> some View {
-        // Plain arithmetic instead of live measurement: rows are pinned to 24pt by
-        // fixedTableRowHeight, and the constant covers the header plus the table's own vertical
-        // padding (28 + 5 + 10, measured). The stash lives in its own floating panel, so a couple
-        // of points of OS drift just shift its inner breathing room.
-        let ideal = CGFloat(min(stash.files.count, 6)) * 24 + 43
-        let height = min(ideal, max(Self.stashMinHeight, availableHeight - Self.resultsReservedHeight))
+        // Plain arithmetic instead of live measurement: rows are pinned to rowHeight by
+        // fixedTableRowHeight, and stashChromeHeight covers the header and padding around them.
+        // The stash lives in its own floating panel, so a couple of points of OS drift just
+        // shift its inner breathing room.
+        let ideal = CGFloat(min(stash.files.count, 6)) * rowHeight + Self.stashChromeHeight
+        let minHeight = rowHeight + Self.stashChromeHeight
+        let height = min(ideal, max(minHeight, availableHeight - Self.resultsReservedHeight))
         return stashTable(height: height, locked: stash.files.count <= 6 && height >= ideal)
             .background(.background.opacity(0.3))
             .raisedPanel()
@@ -1314,7 +1330,7 @@ struct ContentView: View {
         }
         .scrollContentBackground(.hidden)
         .alternatingRowBackgrounds(.disabled)
-        .fixedTableRowHeight(24)
+        .fixedTableRowHeight(rowHeight)
         .onKeyPress(.downArrow) {
             // Walk off the end of the stash into the results table.
             guard focused == .stash, let last = stash.files.last,
@@ -1385,7 +1401,7 @@ struct ContentView: View {
 
     private func completionHint(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 10, design: .monospaced))
+            .font(.scaled(10, .chrome, design: .monospaced))
             .foregroundStyle(.tertiary)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
@@ -1562,6 +1578,22 @@ struct ContentView: View {
             let kc = event.keyCode
             let chars = (event.charactersIgnoringModifiers ?? "").lowercased()
 
+            // ⌘+ / ⌘- / ⌘0 → text size. ⌘= carries the plus without Shift, and the keypad
+            // sends its own keycodes, so all four spellings land here.
+            if mods == .command || mods == [.command, .shift] {
+                if chars == "=" || chars == "+" || kc == 69 {
+                    FontScale.adjust(by: FontScale.step)
+                    return nil
+                }
+                if chars == "-" || chars == "_" || kc == 78 {
+                    FontScale.adjust(by: -FontScale.step)
+                    return nil
+                }
+                if chars == "0" || kc == 82 {
+                    FontScale.reset()
+                    return nil
+                }
+            }
             // ⌘. → toggle pin
             if mods == .command, chars == "." {
                 wm.pinned.toggle()

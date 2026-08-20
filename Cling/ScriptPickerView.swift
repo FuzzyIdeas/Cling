@@ -165,7 +165,7 @@ struct ScriptActionButtons: View {
             if commonScripts.isEmpty {
                 Text("Script hotkeys will appear here")
                     .foregroundStyle(.secondary)
-                    .font(.system(size: density.fontSize))
+                    .font(.scaled(density.fontSize, .control))
                 Spacer()
             } else {
                 if comboHintVisible {
@@ -184,7 +184,7 @@ struct ScriptActionButtons: View {
             runningProcessButton
             clopButton
         }
-        .font(.system(size: density.fontSize))
+        .font(.scaled(density.fontSize, .control))
         .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
         .lineLimit(1)
         .revealShortcutHints(held: cmdHeld, visible: $comboHintVisible)
@@ -305,6 +305,10 @@ struct ScriptActionButtons: View {
     @ObservedObject private var km = KM
     @State private var comboHintVisible = false
     @State private var pillHintsVisible = false
+
+    /// Observed so the view redraws when the text size changes; the sizes themselves come
+    /// from FontScale.
+    @Default(.fontScale) private var fontScale
 
     @Default(.toolbarLabelStyle) private var labelStyle
     @Default(.toolbarDensity) private var density

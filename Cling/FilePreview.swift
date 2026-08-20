@@ -224,6 +224,10 @@ struct FilePreviewPanel: View {
     @State private var pathCount = 0
     @State private var arrowMonitor: Any?
 
+    /// Observed so the view redraws when the text size changes; the sizes themselves come
+    /// from FontScale.
+    @Default(.fontScale) private var fontScale
+
     @Default(.filePreviewHintSeenCount) private var hintSeenCount
 
     private var showHideHint: Bool {
@@ -254,7 +258,7 @@ struct FilePreviewPanel: View {
             .buttonStyle(.plain)
             .disabled(index <= 0)
             Text("\(index + 1) of \(paths.count)")
-                .font(.system(size: 10, design: .monospaced))
+                .font(.scaled(10, .chrome, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
             Button { step(1) } label: {
@@ -274,7 +278,7 @@ struct FilePreviewPanel: View {
                 Image(systemName: "sidebar.right")
                     .font(.system(size: 9))
                 Text("\(toggleShortcutLabel) to toggle")
-                    .font(.system(size: 10, design: .rounded))
+                    .font(.scaled(10, .chrome, design: .rounded))
             }
             .foregroundStyle(.secondary)
             .opacity(hintHovering ? 0.95 : 0.3)
@@ -294,7 +298,7 @@ struct FilePreviewPanel: View {
                 .font(.system(size: 32))
                 .foregroundStyle(.quaternary)
             Text("No selection")
-                .font(.system(size: 12))
+                .font(.scaled(12, .secondary))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -307,11 +311,11 @@ struct FilePreviewPanel: View {
                 .frame(width: 20, height: 20)
             VStack(alignment: .leading, spacing: 1) {
                 Text(path.name.string)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.scaled(12, .secondary, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(path.dir.shellString)
-                    .font(.system(size: 10))
+                    .font(.scaled(10, .secondary))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -710,7 +714,7 @@ struct FolderPreview: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if entries.isEmpty {
                 Text("Empty folder")
-                    .font(.system(size: 12))
+                    .font(.scaled(12, .secondary))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -722,7 +726,7 @@ struct FolderPreview: View {
                                     .resizable()
                                     .frame(width: 15, height: 15)
                                 Text(entry.path.name.string)
-                                    .font(.system(size: 11))
+                                    .font(.scaled(11, .secondary))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                 Spacer(minLength: 4)
@@ -732,7 +736,7 @@ struct FolderPreview: View {
                                         .foregroundStyle(.tertiary)
                                 } else {
                                     Text(entry.path.memoz.humanizedFileSize)
-                                        .font(.system(size: 9, design: .monospaced))
+                                        .font(.scaled(9, .secondary, design: .monospaced))
                                         .foregroundStyle(.secondary)
                                 }
                             }
@@ -756,6 +760,10 @@ struct FolderPreview: View {
     @State private var entries: [DirEntry] = []
     @State private var truncated = false
     @State private var loading = true
+
+    /// Observed so the view redraws when the text size changes; the sizes themselves come
+    /// from FontScale.
+    @Default(.fontScale) private var fontScale
 
     private func load() async {
         loading = true
@@ -810,7 +818,7 @@ struct ArchivePreview: View {
                                     .foregroundStyle(entry.isDir ? Color.accentColor : .secondary)
                                     .frame(width: 15)
                                 Text(entry.name)
-                                    .font(.system(size: 11, design: .monospaced))
+                                    .font(.scaled(11, .secondary, design: .monospaced))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                 Spacer(minLength: 0)
@@ -837,6 +845,10 @@ struct ArchivePreview: View {
 
     @State private var listing: SevenZip.Listing? = nil
     @State private var loading = true
+
+    /// Observed so the view redraws when the text size changes; the sizes themselves come
+    /// from FontScale.
+    @Default(.fontScale) private var fontScale
 
     private func load() async {
         loading = true

@@ -31,16 +31,23 @@ enum ActionRowLayout {
     /// overlap slightly (negative VStack spacing) to keep the visible gap tight.
     static let badgeClearance: CGFloat = 6
 
+    /// Icon box for the pills in the action rows, kept in step with their labels.
+    static var pillIconSide: CGFloat {
+        FontScale.length(14, .control)
+    }
+
     /// Fixed width for each row's leading button (Open With / Execute script) so their trailing
     /// dividers, and therefore the app and script pills, line up. Sized to hug the wider label
     /// ("Execute script") with ~4pt of slack before the divider.
     static func leadingWidth(for style: ToolbarLabelStyle, density: ToolbarDensity) -> CGFloat {
         let compact = density == .compact
-        switch style {
-        case .iconOnly: return 26
-        case .textOnly: return compact ? 90 : 98
-        case .iconAndText: return compact ? 108 : 116
+        let base: CGFloat = switch style {
+        case .iconOnly: 26
+        case .textOnly: compact ? 90 : 98
+        case .iconAndText: compact ? 108 : 116
         }
+        // Grows with the row's label, otherwise "Execute script" runs into its own divider.
+        return FontScale.length(base, .control)
     }
 
 }
@@ -66,7 +73,7 @@ struct ModifierComboHint: View {
             keycap("⌘", pressed: true)
             keycap(secondary, pressed: secondaryHeld)
             Text("+")
-                .font(.system(size: 11, weight: .medium))
+                .font(.scaled(11, .control, weight: .medium))
                 .foregroundStyle(.secondary)
                 .padding(.leading, 4)
         }
@@ -76,13 +83,17 @@ struct ModifierComboHint: View {
 
     @Environment(\.colorScheme) private var scheme
 
+    /// Observed so the view redraws when the text size changes; the sizes themselves come
+    /// from FontScale.
+    @Default(.fontScale) private var fontScale
+
     private var accent: Color {
         tint
     }
 
     private func keycap(_ glyph: String, pressed: Bool) -> some View {
         Text(glyph)
-            .font(.system(size: 10, weight: .semibold))
+            .font(.scaled(10, .control, weight: .semibold))
             .foregroundStyle(pressed ? pressedText : .secondary)
             .frame(minWidth: 13)
             .padding(.horizontal, 3).padding(.vertical, 1.5)
@@ -131,7 +142,8 @@ struct ActionPillButton: View {
         switch icon {
         case let .symbol(name): Image(systemName: name)
         case let .glyph(g): Text(g)
-        case let .image(img): Image(nsImage: img).resizable().interpolation(.high).frame(width: 14, height: 14)
+        case let .image(img): Image(nsImage: img).resizable().interpolation(.high)
+            .frame(width: ActionRowLayout.pillIconSide, height: ActionRowLayout.pillIconSide)
         }
     }
 
