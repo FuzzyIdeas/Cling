@@ -257,7 +257,11 @@ struct ContentView: View {
         .padding(.top, 24)
         .padding([.leading, .trailing])
         .padding(.bottom, 4)
-        .alert("File not found", isPresented: Binding(get: { pathNotFoundMessage != nil }, set: { if !$0 { pathNotFoundMessage = nil } })) {
+        .alert("File not found", isPresented: Binding(get: { pathNotFoundMessage != nil }, set: {
+            if !$0 {
+                pathNotFoundMessage = nil
+            }
+        })) {
             Button("OK") { pathNotFoundMessage = nil }
         } message: {
             Text(pathNotFoundMessage ?? "")
@@ -401,8 +405,12 @@ struct ContentView: View {
     /// back to the first row so the panel is never blank when results exist.
     private var previewPaths: [FilePath] {
         let selected = results.filter { selectedResults.contains($0) }
-        if !selected.isEmpty { return selected }
-        if let first = results.first { return [first] }
+        if !selected.isEmpty {
+            return selected
+        }
+        if let first = results.first {
+            return [first]
+        }
         return []
     }
 
@@ -721,7 +729,9 @@ struct ContentView: View {
                 guard focused == .list || focused == .stash else {
                     return .ignored
                 }
-                if !fuzzy.query.isEmpty { SearchHistory.shared.commit(fuzzy.query) }
+                if !fuzzy.query.isEmpty {
+                    SearchHistory.shared.commit(fuzzy.query)
+                }
                 QLP.present(
                     urls: selectedResults.count > 1 ? selectedResults.map(\.url) : displayedResults.map(\.url),
                     selectedItemIndex: selectedResults.count == 1 ? (displayedResults.firstIndex(of: selectedResults.first!) ?? 0) : 0
@@ -1038,15 +1048,21 @@ struct ContentView: View {
                 let hasQuery = !fuzzy.query.isEmpty
                 showHistorySuggestions = isFocused && hasQuery
             }
-            if imeComposing { imeComposing = false }
-            if showFullHistory { showFullHistory = false }
+            if imeComposing {
+                imeComposing = false
+            }
+            if showFullHistory {
+                showFullHistory = false
+            }
         }
         .onChange(of: focused) {
             showHistorySuggestions = focused == .search && !fuzzy.query.isEmpty
             if focused != .search {
                 showSuggestionsList = false
                 suggestionIndex = -1
-                if imeComposing { imeComposing = false }
+                if imeComposing {
+                    imeComposing = false
+                }
             }
         }
         .task(id: shouldCyclePlaceholder) {
@@ -1180,7 +1196,9 @@ struct ContentView: View {
                             else { return .ignored }
                             let drilled = drillIntoFolderQuery(folder)
                             // A fresh drill (query isn't one we set) starts a new back-stack.
-                            if fuzzy.query != lastDrillSetQuery { queryDrillStack.removeAll() }
+                            if fuzzy.query != lastDrillSetQuery {
+                                queryDrillStack.removeAll()
+                            }
                             queryDrillStack.append(fuzzy.query)
                             fuzzy.query = drilled
                             lastDrillSetQuery = drilled
@@ -1422,7 +1440,9 @@ struct ContentView: View {
             }
         }
         Button("Get Info") {
-            if let path = paths.first { openFinderGetInfo(path) }
+            if let path = paths.first {
+                openFinderGetInfo(path)
+            }
         }
         Divider()
         Button("Copy Path\(paths.count > 1 ? "s" : "")") {
@@ -1511,7 +1531,9 @@ struct ContentView: View {
         let inTokens: [FilePath] = tokens.compactMap { token in
             guard token.hasPrefix("in:"), token.count > 3 else { return nil }
             var path = String(token.dropFirst(3))
-            if path.hasPrefix("~") { path = homePath + path.dropFirst() }
+            if path.hasPrefix("~") {
+                path = homePath + path.dropFirst()
+            }
             return path.filePath
         }
         let fuzzyTokens = tokens.filter { !$0.hasPrefix(".") && !$0.hasPrefix("*.") && !$0.hasPrefix("in:") }
@@ -1559,15 +1581,23 @@ struct ContentView: View {
                 if !evMods.contains(.command), !evMods.contains(.control) {
                     DispatchQueue.main.async {
                         let composing = (NSApp.keyWindow?.firstResponder as? NSTextInputClient)?.hasMarkedText() ?? false
-                        if composing != imeComposing { imeComposing = composing }
+                        if composing != imeComposing {
+                            imeComposing = composing
+                        }
                     }
                 }
             } else if imeComposing {
                 imeComposing = false
             }
-            if NSApp.keyWindow?.attachedSheet != nil { return event }
-            if DropZoneOverlay.shared.isPresenting { return event }
-            if event.window !== AppDelegate.shared.mainWindow { return event }
+            if NSApp.keyWindow?.attachedSheet != nil {
+                return event
+            }
+            if DropZoneOverlay.shared.isPresenting {
+                return event
+            }
+            if event.window !== AppDelegate.shared.mainWindow {
+                return event
+            }
             // Let IME handle keys (Esc/arrows/Return/etc.) during active composition.
             if let responder = event.window?.firstResponder as? NSTextInputClient,
                responder.hasMarkedText()
@@ -1858,7 +1888,7 @@ class FilePathBackgroundTasks {
            let smbCache = FUZZY.smbMetadataCaches[volume],
            let meta = smbCache.get(path.string)
         {
-            attrCache[path] = [:]
+            storeAttrs([:], for: path)
 
             let date = meta.modificationDate
             path.cache(date.formatted(dateFormat), forKey: \FilePath.formattedModificationDate)
@@ -1869,7 +1899,7 @@ class FilePathBackgroundTasks {
             path.cache(size.humanSize, forKey: \FilePath.humanizedFileSize)
             path.cache(size, forKey: \FilePath.size)
 
-            FUZZY.reloadResults()
+            scheduleResultsRefresh()
             return
         }
 
@@ -1886,7 +1916,7 @@ class FilePathBackgroundTasks {
             }
 
             mainActor {
-                self.attrCache[path] = attrs
+                self.storeAttrs(attrs, for: path)
                 self.attrFetchers[path] = nil
 
                 let date = (attrs[.modificationDate] as? Date) ?? Date()
@@ -1899,19 +1929,23 @@ class FilePathBackgroundTasks {
                 path.cache(size, forKey: \FilePath.size)
 
                 path.cache(icon, forKey: \FilePath.icon)
-                FUZZY.reloadResults()
+                self.scheduleResultsRefresh()
             }
 
         }
         attrFetchers[path] = fetcher
-        DispatchQueue.global(qos: .background).async(execute: fetcher)
+        // Every visible row now waits on this rather than only the ones on external volumes, so it
+        // sits on the display path and `.background` would leave the columns reading "Fetching...".
+        DispatchQueue.global(qos: .userInitiated).async(execute: fetcher)
     }
 
     /// The real icon once it has arrived, a type-derived stand-in until then. This dictionary is the
     /// authority rather than the memo: the memo is NSCache-backed, so relying on it would let an
     /// eviction send the getter back through `fetchIcon`, refresh, re-render, and round again.
     func icon(for path: FilePath) -> NSImage {
-        if let real = iconCache[path] { return real }
+        if let real = iconCache[path] {
+            return real
+        }
         fetchIcon(of: path)
         return typeIcon(for: path)
     }
@@ -1937,7 +1971,7 @@ class FilePathBackgroundTasks {
                 self.knownDirs[path] = isDirectory.boolValue
                 self.storeIcon(icon, for: path)
                 path.cache(icon, forKey: \FilePath.icon)
-                self.scheduleIconRefresh()
+                self.scheduleResultsRefresh()
             }
         }
         iconFetchers[path] = fetcher
@@ -1956,11 +1990,15 @@ class FilePathBackgroundTasks {
     /// the type database and `icon(for:)` draws that type, so neither one reaches the file. Cached per
     /// extension because a result list is mostly a handful of repeated types.
     func typeIcon(for path: FilePath) -> NSImage {
-        if isKnownDir(path) { return Self.folderIcon }
+        if isKnownDir(path) {
+            return Self.folderIcon
+        }
 
         let ext = path.url.pathExtension.lowercased()
         guard !ext.isEmpty else { return Self.genericIcon }
-        if let cached = typeIcons[ext] { return cached }
+        if let cached = typeIcons[ext] {
+            return cached
+        }
 
         let icon = UTType(filenameExtension: ext).map { NSWorkspace.shared.icon(for: $0) } ?? Self.genericIcon
         typeIcons[ext] = icon
@@ -1978,12 +2016,13 @@ class FilePathBackgroundTasks {
 
     private var attrFetchers: [FilePath: DispatchWorkItem] = [:]
     private var attrCache: [FilePath: [FileAttributeKey: Any]] = [:]
+    private var attrOrder: [FilePath] = []
     private var iconFetchers: [FilePath: DispatchWorkItem] = [:]
     private var iconCache: [FilePath: NSImage] = [:]
     private var iconOrder: [FilePath] = []
     private var typeIcons: [String: NSImage] = [:]
     private var knownDirs: [FilePath: Bool] = [:]
-    private var iconRefreshTask: DispatchWorkItem?
+    private var refreshTask: DispatchWorkItem?
 
     private func isKnownDir(_ path: FilePath) -> Bool {
         knownDirs[path] ?? false
@@ -1993,15 +2032,28 @@ class FilePathBackgroundTasks {
     private func storeIcon(_ icon: NSImage, for path: FilePath) {
         if iconCache.updateValue(icon, forKey: path) == nil {
             iconOrder.append(path)
-            if iconOrder.count > 2000 { iconCache.removeValue(forKey: iconOrder.removeFirst()) }
+            if iconOrder.count > 2000 {
+                iconCache.removeValue(forKey: iconOrder.removeFirst())
+            }
         }
     }
 
-    /// Icons land one at a time, and refreshing per icon would rebuild the table once per row, so let
-    /// a burst settle into a single refresh.
-    private func scheduleIconRefresh() {
-        iconRefreshTask?.cancel()
-        iconRefreshTask = mainAsyncAfter(ms: 50) { FUZZY.reloadResults() }
+    /// Icons and attributes land one at a time, and refreshing per file would rebuild the table once
+    /// per row, so let a burst settle into a single refresh.
+    private func scheduleResultsRefresh() {
+        refreshTask?.cancel()
+        refreshTask = mainAsyncAfter(ms: 50) { FUZZY.reloadResults() }
+    }
+
+    /// Bounded for the same reason as `iconCache`: every row now goes through the attribute fetch,
+    /// so a long session would otherwise keep an entry for every file it has ever drawn.
+    private func storeAttrs(_ attrs: [FileAttributeKey: Any], for path: FilePath) {
+        if attrCache.updateValue(attrs, forKey: path) == nil {
+            attrOrder.append(path)
+            if attrOrder.count > 2000 {
+                attrCache.removeValue(forKey: attrOrder.removeFirst())
+            }
+        }
     }
 }
 
@@ -2020,52 +2072,64 @@ extension FilePath {
         disconnectedVolume != nil
     }
 
+    /// Read through `memoz` while SwiftUI builds a row and while the table sorts, so like `icon`
+    /// these must never touch the disk. The `isOnExternalVolume` guard they used to make was not
+    /// enough: it only caught volumes `isLocalVolume` reports as external, and a mount it calls
+    /// local still stalls. `fileSize()` then blocks the main thread for the full 5s of its
+    /// `withTimeout`, once per row, and sorting by size or date reads every result rather than
+    /// only the visible ones (CLING-18). Answer from the memo and let the background fetch
+    /// overwrite it, the same way icons already work.
     var date: Date {
-        if let meta = smbMeta { return meta.modificationDate }
-        if isOffline { return Date() }
-        guard !memoz.isOnExternalVolume else {
-            FilePathBackgroundTasks.shared.fetchAttributes(of: self)
+        if let meta = smbMeta {
+            return meta.modificationDate
+        }
+        if isOffline {
             return Date()
         }
-        return modificationDate ?? Date()
+        FilePathBackgroundTasks.shared.fetchAttributes(of: self)
+        return Date()
     }
     var formattedModificationDate: String {
-        if let meta = smbMeta { return meta.modificationDate.formatted(dateFormat) }
-        if isOffline { return "—" }
-        guard !memoz.isOnExternalVolume else {
-            FilePathBackgroundTasks.shared.fetchAttributes(of: self)
-            return "Fetching..."
+        if let meta = smbMeta {
+            return meta.modificationDate.formatted(dateFormat)
         }
-        return (modificationDate ?? Date()).formatted(dateFormat)
+        if isOffline {
+            return "—"
+        }
+        FilePathBackgroundTasks.shared.fetchAttributes(of: self)
+        return "Fetching..."
     }
     var isoFormattedModificationDate: String {
-        if let meta = smbMeta { return meta.modificationDate.iso8601String }
-        if isOffline { return "—" }
-        guard !memoz.isOnExternalVolume else {
-            FilePathBackgroundTasks.shared.fetchAttributes(of: self)
-            return "Fetching..."
+        if let meta = smbMeta {
+            return meta.modificationDate.iso8601String
         }
-        return (modificationDate ?? Date()).iso8601String
+        if isOffline {
+            return "—"
+        }
+        FilePathBackgroundTasks.shared.fetchAttributes(of: self)
+        return "Fetching..."
     }
 
     var size: Int {
-        if let meta = smbMeta { return Int(meta.size) }
-        if isOffline { return 0 }
-        guard !memoz.isOnExternalVolume else {
-            FilePathBackgroundTasks.shared.fetchAttributes(of: self)
+        if let meta = smbMeta {
+            return Int(meta.size)
+        }
+        if isOffline {
             return 0
         }
-        return fileSize() ?? 0
+        FilePathBackgroundTasks.shared.fetchAttributes(of: self)
+        return 0
     }
 
     var humanizedFileSize: String {
-        if let meta = smbMeta { return Int(meta.size).humanSize }
-        if isOffline { return "—" }
-        guard !memoz.isOnExternalVolume else {
-            FilePathBackgroundTasks.shared.fetchAttributes(of: self)
+        if let meta = smbMeta {
+            return Int(meta.size).humanSize
+        }
+        if isOffline {
             return "—"
         }
-        return (fileSize() ?? 0).humanSize
+        FilePathBackgroundTasks.shared.fetchAttributes(of: self)
+        return "—"
     }
     /// Read through `memoz` while SwiftUI builds a row, so this must never touch the disk.
     /// `NSWorkspace.icon(forFile:)` reads the file (and a bundle's Info.plist and .icns), and the
@@ -2183,7 +2247,9 @@ struct SearchBarKeyHandlers: ViewModifier {
         content
             .onKeyPress(.upArrow) {
                 guard focused.wrappedValue == .search else { return .ignored }
-                if isIMEComposing() { return .ignored }
+                if isIMEComposing() {
+                    return .ignored
+                }
                 if showSuggestionsList, !historySuggestions.isEmpty {
                     if suggestionIndex > 0 {
                         suggestionIndex -= 1
@@ -2195,7 +2261,9 @@ struct SearchBarKeyHandlers: ViewModifier {
                 }
                 let history = SearchHistory.shared.entries
                 guard !history.isEmpty else { return .ignored }
-                if historyIndex == -1 { querySaved = query }
+                if historyIndex == -1 {
+                    querySaved = query
+                }
                 let newIndex = min(historyIndex + 1, history.count - 1)
                 if newIndex != historyIndex {
                     historyIndex = newIndex
@@ -2206,7 +2274,9 @@ struct SearchBarKeyHandlers: ViewModifier {
             }
             .onKeyPress(.downArrow) {
                 guard focused.wrappedValue == .search else { return .ignored }
-                if isIMEComposing() { return .ignored }
+                if isIMEComposing() {
+                    return .ignored
+                }
                 if historyIndex > 0 {
                     historyIndex -= 1
                     navigatingHistory = true
@@ -2231,7 +2301,9 @@ struct SearchBarKeyHandlers: ViewModifier {
             }
             .onKeyPress(.rightArrow) {
                 guard focused.wrappedValue == .search else { return .ignored }
-                if isIMEComposing() { return .ignored }
+                if isIMEComposing() {
+                    return .ignored
+                }
                 guard let suggestion = inlineSuggestion else { return .ignored }
                 // Only intercept when the caret is at the very end of the typed text; otherwise let the
                 // arrow move the caret as usual.
@@ -2253,7 +2325,9 @@ struct SearchBarKeyHandlers: ViewModifier {
             }
             .onKeyPress(.tab) {
                 guard focused.wrappedValue == .search else { return .ignored }
-                if isIMEComposing() { return .ignored }
+                if isIMEComposing() {
+                    return .ignored
+                }
                 // Tab accepts the ghost completion in full.
                 if let suggestion = inlineSuggestion {
                     query = suggestion
@@ -2263,7 +2337,9 @@ struct SearchBarKeyHandlers: ViewModifier {
             }
             .onKeyPress(.return, phases: [.down]) { _ in
                 guard focused.wrappedValue == .search else { return .ignored }
-                if isIMEComposing() { return .ignored }
+                if isIMEComposing() {
+                    return .ignored
+                }
                 if historyIndex >= 0 {
                     historyIndex = -1
                     return .handled
