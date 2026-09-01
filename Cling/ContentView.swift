@@ -375,6 +375,7 @@ struct ContentView: View {
 
     @Default(.fontScale) private var fontScale
     @Default(.minQueryLength) private var minQueryLength
+    @Default(.filterWindowTint) private var filterWindowTint
 
     @Default(.showFilePreview) private var showFilePreview
 
@@ -475,8 +476,14 @@ struct ContentView: View {
         showSearchHints && fuzzy.query.isEmpty && wm.mainWindowActive
     }
 
+    /// The table is showing the default list (recents or run history) rather than the answer to a
+    /// search. A filter with no typed query still counts as a search: it has narrowed to something.
+    private var showingDefaultResults: Bool {
+        fuzzy.noQuery && fuzzy.volumeFilter == nil
+    }
+
     private var results: [FilePath] {
-        (fuzzy.noQuery && fuzzy.volumeFilter == nil)
+        showingDefaultResults
             ? (fuzzy.sortField == .score ? fuzzy.recents : fuzzy.sortedRecents)
             : fuzzy.results
     }
@@ -585,10 +592,17 @@ struct ContentView: View {
             && fuzzy.folderFilter == nil && fuzzy.quickFilter == nil
     }
 
+    /// The filter cards replace the action rows only on an untouched window: something typed, or a
+    /// row picked, means the person is past discovering and wants the actions back.
+    private var showFilterDiscovery: Bool {
+        fuzzy.query.isEmpty && selectedResults.isEmpty && fuzzy.folderFilter == nil
+            && fuzzy.quickFilter == nil && !toolbarRowsHidden
+    }
+
     /// Nothing at all while searching everything, so the tint itself carries the signal. Two
     /// filters at once give a gradient instead of a flat wash, so the window says both.
     @ViewBuilder private var scopeTint: some View {
-        if let wash = fuzzy.scopeWash {
+        if filterWindowTint, let wash = fuzzy.scopeWash {
             let dark = colorScheme == .dark
             LinearGradient(
                 stops: FilterColor.washStops(top: wash.top, bottom: wash.bottom, dark: dark),
@@ -836,9 +850,15 @@ struct ContentView: View {
             }
         }
 
+        // Nothing typed and nothing selected means the action rows have no subject to act on, so the
+        // space introduces the filters instead of showing buttons that would do nothing.
+        let showing: AnyView = showFilterDiscovery
+            ? AnyView(FilterDiscoveryPanel())
+            : AnyView(rows)
+
         return Group {
             if toolbarRowBackground, anyToolbarRowVisible {
-                rows
+                showing
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background {
@@ -857,7 +877,7 @@ struct ContentView: View {
                             )
                     }
             } else {
-                rows
+                showing
             }
         }
     }
@@ -1893,11 +1913,14 @@ struct ContentView: View {
     }
 
     private func selectFirstResult() {
-        if let firstResult = results.first {
-            selectedResultIDs = [firstResult.string]
-        } else {
+        // Nothing preselected while the list is just recents: a row selected on open is one the
+        // person never chose, and it makes every action in the toolbar look aimed at a file they
+        // have not picked. Arrowing down still lands on the first row.
+        guard !showingDefaultResults, let firstResult = results.first else {
             selectedResultIDs.removeAll()
+            return
         }
+        selectedResultIDs = [firstResult.string]
     }
 
     private func preserveSelectionAcrossResultsUpdate() {
