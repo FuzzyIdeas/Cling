@@ -372,6 +372,8 @@ private struct InterfaceSettingsPane: View {
                     }
                     .fixedSize()
                 }
+
+                Toggle("Dim status bar", isOn: $dimStatusBar)
             }
 
             Section("Rows") {
@@ -525,6 +527,7 @@ private struct InterfaceSettingsPane: View {
     @Default(.showActionMenu) private var showActionMenu
     @Default(.toolbarShowDividers) private var toolbarShowDividers
     @Default(.toolbarRowBackground) private var toolbarRowBackground
+    @Default(.dimStatusBar) private var dimStatusBar
     @Default(.defaultLinkExpiration) private var defaultLinkExpiration
 
     // MARK: Part B — placement state

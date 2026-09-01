@@ -103,7 +103,11 @@ struct StatusBarView: View {
 
             Spacer()
 
-            Text("**`\(triggerKeys.shortReadableStr) + \(showAppKey.character)`** to show/hide").padding(.trailing, 2)
+            if rowsToggleModifier != .disabled {
+                Text("double tap **`\(rowsToggleModifier.symbol)`** to \(toolbarRowsHidden ? "show" : "hide") actions")
+                Divider().frame(height: 10)
+            }
+            Text("**`\(triggerKeys.shortReadableStr) + \(showAppKey.character)`** to show/hide Cling").padding(.trailing, 2)
 
             Button {
                 WM.open("settings")
@@ -115,6 +119,7 @@ struct StatusBarView: View {
         .font(.scaled(10, .chrome))
         .foregroundStyle(.secondary)
         .padding(1)
+        .opacity(dimStatusBar ? 0.45 : 1)
 
         if AM.useGlass, #available(macOS 26, *) {
             GlassEffectContainer { bar }
@@ -132,5 +137,8 @@ struct StatusBarView: View {
 
     @Default(.triggerKeys) private var triggerKeys
     @Default(.showAppKey) private var showAppKey
+    @Default(.rowsToggleModifier) private var rowsToggleModifier
+    @Default(.toolbarRowsHidden) private var toolbarRowsHidden
+    @Default(.dimStatusBar) private var dimStatusBar
 
 }

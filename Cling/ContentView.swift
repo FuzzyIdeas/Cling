@@ -367,6 +367,7 @@ struct ContentView: View {
     @State private var lastSelectionQuery: String? = nil
 
     @Default(.fontScale) private var fontScale
+    @Default(.minQueryLength) private var minQueryLength
 
     @Default(.showFilePreview) private var showFilePreview
 
@@ -567,6 +568,14 @@ struct ContentView: View {
     /// area collapses to zero height and the results table takes the space.
     private var anyToolbarRowVisible: Bool {
         !toolbarRowsHidden && (showActionRow || showOpenWithRow || (proactive && showScriptRow))
+    }
+
+    /// Typed something, but not enough of it to search yet. Mirrors `FuzzyClient.emptyQuery`, and
+    /// reads `query` rather than that property so the hint appears and clears as the user types:
+    /// `emptyQuery` is `@ObservationIgnored`, so a view watching it would never be told it changed.
+    private var queryTooShort: Bool {
+        !fuzzy.query.isEmpty && fuzzy.query.count < minQueryLength
+            && fuzzy.folderFilter == nil && fuzzy.quickFilter == nil
     }
 
     /// The results/index table next to the optional file preview panel. The
@@ -922,13 +931,19 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .opacity(focused != .search ? 1 : 0)
             Group {
-                if fuzzy.searching {
+                if queryTooShort {
+                    Text("Type \(minQueryLength) or more characters to search")
+                        .round(10)
+                        .foregroundStyle(.secondary)
+                        .transition(.opacity)
+                } else if fuzzy.searching {
                     ProgressView()
                         .controlSize(.small)
                         .transition(.opacity)
                 }
             }
             .animation(.easeInOut(duration: 0.15), value: fuzzy.searching)
+            .animation(.easeInOut(duration: 0.15), value: queryTooShort)
             xButton
             historyButton
             saveFilterButton

@@ -598,6 +598,17 @@ enum RowToggleModifier: String, CaseIterable, Codable, Defaults.Serializable {
         case .shift: "⇧ Shift"
         }
     }
+
+    /// The glyph on its own, for the status bar hint where the word alongside it would not fit.
+    var symbol: String {
+        switch self {
+        case .disabled: ""
+        case .command: "⌘"
+        case .option: "⌥"
+        case .control: "⌃"
+        case .shift: "⇧"
+        }
+    }
 }
 
 func detectShelfApp() -> String {
@@ -746,6 +757,9 @@ extension Defaults.Keys {
     static let toolbarShowDividers = Key<Bool>("toolbarShowDividers", default: true)
     static let showActionMenu = Key<Bool>("showActionMenu", default: true)
     static let toolbarRowBackground = Key<Bool>("toolbarRowBackground", default: false)
+    /// Fades the status bar. Its hints are reference material you read once and then stop needing,
+    /// so they can sit further back without losing the counts and toggles that share the row.
+    static let dimStatusBar = Key<Bool>("dimStatusBar", default: false)
     static let barActions = Key<[ActionID]>("barActions", default: ToolbarAction.defaultBar)
     static let hiddenActions = Key<Set<ActionID>>("hiddenActions", default: [])
     static let didMigrateHiddenActions = Key<Bool>("didMigrateHiddenActions", default: false)
