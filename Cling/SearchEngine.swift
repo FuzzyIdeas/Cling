@@ -127,8 +127,12 @@ private func buildBonusFlat() -> [Int] {
             default: break
             }
         }
-        if p == .lower, c == .upper { return bonusCamel123 }
-        if p != .number, c == .number { return bonusCamel123 }
+        if p == .lower, c == .upper {
+            return bonusCamel123
+        }
+        if p != .number, c == .number {
+            return bonusCamel123
+        }
         switch c {
         case .nonWord, .delim: return bonusNonWord
         case .white: return bonusBdWhite
@@ -164,13 +168,17 @@ private func simdFindByte(_ base: UnsafePointer<UInt8>, count: Int, needle: UInt
         // Check if any lane matched
         var lane = 0
         while lane < 16 {
-            if cmp[lane] { return i &+ lane }
+            if cmp[lane] {
+                return i &+ lane
+            }
             lane &+= 1
         }
         i &+= 16
     }
     while i < count {
-        if base[i] == needle { return i }
+        if base[i] == needle {
+            return i
+        }
         i &+= 1
     }
     return -1
@@ -180,21 +188,31 @@ private func simdFindByte(_ base: UnsafePointer<UInt8>, count: Int, needle: UInt
 /// for the first byte, then verifying the rest. Used for literal/anchor/negation operators.
 @inline(__always)
 private func simdContains(_ base: UnsafePointer<UInt8>, count: Int, needle: UnsafePointer<UInt8>, needleLen: Int) -> Bool {
-    if needleLen == 0 { return true }
-    if needleLen > count { return false }
+    if needleLen == 0 {
+        return true
+    }
+    if needleLen > count {
+        return false
+    }
     let first = needle[0]
     let limit = count &- needleLen
     var from = 0
     while from <= limit {
         let pos = simdFindByte(base, count: count, needle: first, from: from)
-        if pos < 0 || pos > limit { return false }
+        if pos < 0 || pos > limit {
+            return false
+        }
         var j = 1
         var ok = true
         while j < needleLen {
-            if base[pos &+ j] != needle[j] { ok = false; break }
+            if base[pos &+ j] != needle[j] {
+                ok = false; break
+            }
             j &+= 1
         }
-        if ok { return true }
+        if ok {
+            return true
+        }
         from = pos &+ 1
     }
     return false
@@ -206,27 +224,39 @@ private func simdContains(_ base: UnsafePointer<UInt8>, count: Int, needle: Unsa
 @inline(__always)
 private func nameEndsWith(_ base: UnsafePointer<UInt8>, off: Int, len: Int, bnStart: Int, needle: UnsafePointer<UInt8>, needleLen: Int) -> Bool {
     let bnLen = len &- bnStart
-    if needleLen == 0 || needleLen > bnLen { return false }
+    if needleLen == 0 || needleLen > bnLen {
+        return false
+    }
     let bnFloor = off &+ bnStart
     @inline(__always) func endsAt(_ end: Int) -> Bool {
         let start = end &- needleLen
-        if start < bnFloor { return false }
+        if start < bnFloor {
+            return false
+        }
         var j = 0
         while j < needleLen {
-            if base[start &+ j] != needle[j] { return false }
+            if base[start &+ j] != needle[j] {
+                return false
+            }
             j &+= 1
         }
         return true
     }
-    if endsAt(off &+ len) { return true }
+    if endsAt(off &+ len) {
+        return true
+    }
     // Find the final '.' within the basename (skip a leading dotfile dot).
     var dot = -1
     var k = off &+ len &- 1
     while k > bnFloor {
-        if base[k] == 0x2E { dot = k; break }
+        if base[k] == 0x2E {
+            dot = k; break
+        }
         k &-= 1
     }
-    if dot > bnFloor { return endsAt(dot) }
+    if dot > bnFloor {
+        return endsAt(dot)
+    }
     return false
 }
 
@@ -250,7 +280,9 @@ private func simdFilterMasks(
         var anyMatch = false
         var lane = 0
         while lane < 8 {
-            if maskMatch[lane] { anyMatch = true; break }
+            if maskMatch[lane] {
+                anyMatch = true; break
+            }
             lane &+= 1
         }
         if anyMatch {
@@ -294,8 +326,12 @@ private func fuzzyScoreBytes(
     boundariesOffset: Int = 0
 ) -> (score: Int, start: Int, end: Int)? {
     let M = pat.count, N = txt.count
-    if M == 0 { return (0, 0, 0) }
-    if M > N { return nil }
+    if M == 0 {
+        return (0, 0, 0)
+    }
+    if M > N {
+        return nil
+    }
 
     let txtBase = txt.baseAddress!
     let firstChar = pat[0]
@@ -315,8 +351,12 @@ private func fuzzyScoreBytes(
 
     while anchorsTried < maxAnchors {
         let anchor = simdFindByte(txtBase, count: N, needle: firstChar, from: anchorFrom)
-        if anchor < 0 { break }
-        if anchor &+ M > N { break }
+        if anchor < 0 {
+            break
+        }
+        if anchor &+ M > N {
+            break
+        }
 
         // Forward greedy from this anchor
         var pi = 1
@@ -325,7 +365,9 @@ private func fuzzyScoreBytes(
         var matched = true
         while pi < M {
             let pos = simdFindByte(txtBase, count: N, needle: pat[pi], from: searchFrom)
-            if pos < 0 { matched = false; break }
+            if pos < 0 {
+                matched = false; break
+            }
             lastPos = pos
             searchFrom = pos &+ 1
             pi &+= 1
@@ -333,7 +375,9 @@ private func fuzzyScoreBytes(
         // If the suffix can't be matched from this anchor it can't be matched
         // from any later anchor either: forward-greedy from a > anchor would
         // either reuse the same suffix positions or skip past them.
-        if !matched { break }
+        if !matched {
+            break
+        }
 
         let eidx = lastPos &+ 1
         var sidx = anchor
@@ -344,7 +388,9 @@ private func fuzzyScoreBytes(
         while bi >= anchor {
             if txtBase[bi] == pat[pi] {
                 pi &-= 1
-                if pi < 0 { sidx = bi; break }
+                if pi < 0 {
+                    sidx = bi; break
+                }
             }
             bi &-= 1
         }
@@ -369,7 +415,9 @@ private func fuzzyScoreBytes(
                 if consecutive == 0 {
                     firstBonus = bonus
                 } else {
-                    if bonus >= bonusBoundary, bonus > firstBonus { firstBonus = bonus }
+                    if bonus >= bonusBoundary, bonus > firstBonus {
+                        firstBonus = bonus
+                    }
                     bonus = max(bonus, max(bonusConsec, firstBonus))
                 }
                 score &+= pi == 0 ? bonus &* firstCharMul : bonus
@@ -401,11 +449,17 @@ private func letterMaskBytes(_ p: UnsafeBufferPointer<UInt8>) -> UInt64 {
     var m: UInt64 = 0
     for i in 0 ..< p.count {
         let v = p[i]
-        if v >= 0x61, v <= 0x7A { m |= 1 << UInt64(v &- 0x61) }
-        else if v >= 0x30, v <= 0x39 { m |= 1 << UInt64(26 &+ v &- 0x30) }
-        else if v == 0x2E { m |= 1 << 36 }
-        else if v == 0x2D { m |= 1 << 37 }
-        else if v == 0x5F { m |= 1 << 38 }
+        if v >= 0x61, v <= 0x7A {
+            m |= 1 << UInt64(v &- 0x61)
+        } else if v >= 0x30, v <= 0x39 {
+            m |= 1 << UInt64(26 &+ v &- 0x30)
+        } else if v == 0x2E {
+            m |= 1 << 36
+        } else if v == 0x2D {
+            m |= 1 << 37
+        } else if v == 0x5F {
+            m |= 1 << 38
+        }
     }
     return m
 }
@@ -413,6 +467,76 @@ private func letterMaskBytes(_ p: UnsafeBufferPointer<UInt8>) -> UInt64 {
 /// Split a query into space-delimited tokens, but keep a double-quoted run as a single token
 /// (quotes removed). Lets a path with spaces survive, e.g. `in:"/Users/me/My Folder"`. Single
 /// quotes are left intact so the leading-quote literal operator ('foo) is unaffected.
+/// Levenshtein distance between two short byte strings, abandoned once it passes `limit`.
+/// Extensions are a handful of bytes, so the plain table is cheaper than anything cleverer.
+private func editDistance(_ a: [UInt8], _ b: [UInt8], limit: Int) -> Int {
+    if a.isEmpty {
+        return b.count
+    }
+    if b.isEmpty {
+        return a.count
+    }
+    if abs(a.count - b.count) > limit {
+        return limit + 1
+    }
+
+    var prev = Array(0 ... b.count)
+    var cur = [Int](repeating: 0, count: b.count + 1)
+    for i in 1 ... a.count {
+        cur[0] = i
+        var rowMin = cur[0]
+        for j in 1 ... b.count {
+            let cost = a[i - 1] == b[j - 1] ? 0 : 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            rowMin = min(rowMin, cur[j])
+        }
+        if rowMin > limit {
+            return limit + 1
+        }
+        swap(&prev, &cur)
+    }
+    return prev[b.count]
+}
+
+/// How far a typed extension may sit from the real one before it stops counting as that extension.
+/// Two edits is what `yml` costs against `toml`, which is the case this exists for.
+private let extTailMaxDistance = 2
+
+/// What an approximately-matched extension is worth, on the same scale the fuzzy matcher pays for
+/// characters it really did match (`scoreMatch` each). An exact extension earns the full amount, so
+/// reading `hrdrcfgtml` as name + `tml` scores like the ten-character match it is; two edits away
+/// earns a third of it. Without this a split reading always loses to a longer literal subsequence,
+/// however much junk that subsequence had to walk through.
+private func extCredit(distance: Int, maxDist: Int, tailLen: Int) -> Int {
+    (maxDist + 1 - distance) * tailLen * SC.scoreMatch / (maxDist + 1)
+}
+
+/// Ways to read a single-token query as `<name><extension>`, longest name first.
+///
+/// Bare fuzzy queries only. A space, dot, slash or operator sigil means the query already states
+/// what it wants (`in:`, `.toml`, `^foo`, `!bar`), and guessing an extension on top of that would
+/// fight the user rather than help.
+private func extensionTailSplits(_ q: String) -> [(head: String, tail: [UInt8])] {
+    let bytes = Array(q.utf8)
+    guard bytes.count >= 6 else { return [] }
+    for b in bytes {
+        let isLower = b >= 0x61 && b <= 0x7A
+        let isDigit = b >= 0x30 && b <= 0x39
+        guard isLower || isDigit else { return [] }
+    }
+    var splits: [(head: String, tail: [UInt8])] = []
+    // The name has to carry the search on its own. At 4 or 5 bytes a head matches half the disk,
+    // and the extension credit then promotes whichever of those happened to rank well:
+    // `hrdrcfg` split into `hrdr` + `cfg` lands on `hdr_sdr.cc`, two edits from `cfg`.
+    for tailLen in 2 ... 5 where bytes.count - tailLen >= 6 {
+        splits.append((
+            String(decoding: bytes[0 ..< (bytes.count - tailLen)], as: UTF8.self),
+            Array(bytes[(bytes.count - tailLen)...])
+        ))
+    }
+    return splits
+}
+
 private func tokenizeQuery(_ s: String) -> [String] {
     var tokens: [String] = []
     var cur = ""
@@ -422,12 +546,16 @@ private func tokenizeQuery(_ s: String) -> [String] {
         if ch == "\"" {
             inQuote.toggle(); has = true
         } else if ch == " ", !inQuote {
-            if has { tokens.append(cur); cur = ""; has = false }
+            if has {
+                tokens.append(cur); cur = ""; has = false
+            }
         } else {
             cur.append(ch); has = true
         }
     }
-    if has { tokens.append(cur) }
+    if has {
+        tokens.append(cur)
+    }
     return tokens
 }
 
@@ -444,15 +572,35 @@ struct SearchResult: Comparable {
     let prefixMatch: Bool
     let depth: Int
     var sourceLabel = ""
+    /// Score credited for an extension the user typed approximately, on the same scale as characters
+    /// the matcher really did match. Zero unless this result came from an extension reading.
+    var extCredit = 0
 
     /// Composite rank combining match type, importance, and quality into a single comparable value.
     /// hasBase and prefixMatch provide bonuses, but quality differences can overcome them.
     /// Uses max(score, quality) so boundary-aligned matches with wider windows aren't penalized.
+    ///
+    /// `quality` is the match's density (score per byte of the window it spans). People abbreviate
+    /// by dropping vowels from words they can hear, so a real query lands in a tight window, while
+    /// a long path can always be made to yield the same letters by scattering them across unrelated
+    /// words. Both come out with a high `score`, and taking the better of the two let the scattered
+    /// one ride on length alone. Charge it for the difference, but only once density has fallen
+    /// below half the score: dense matches, which is nearly all of them, are left exactly as they
+    /// were, so this costs the ranking nothing where the match already looks human.
     var rank: Int {
         var r = max(score, quality)
-        if hasBase { r += SC.rankHasBaseBonus }
+        let densityFloor = score / 2
+        if quality < densityFloor {
+            r -= densityFloor - quality
+        }
+        if hasBase {
+            r += SC.rankHasBaseBonus
+        }
         r += segmentMatches * SC.rankHasBaseBonus
-        if prefixMatch { r += SC.rankPrefixMatchBonus }
+        if prefixMatch {
+            r += SC.rankPrefixMatchBonus
+        }
+        r += extCredit
         r += pathImportance * SC.rankImportanceMultiplier
         r -= max(0, path.count - SC.rankLongPathThreshold)
         return r
@@ -460,9 +608,15 @@ struct SearchResult: Comparable {
 
     static func < (lhs: SearchResult, rhs: SearchResult) -> Bool {
         let lr = lhs.rank, rr = rhs.rank
-        if lr != rr { return lr < rr }
-        if lhs.score != rhs.score { return lhs.score < rhs.score }
-        if lhs.depth != rhs.depth { return lhs.depth > rhs.depth }
+        if lr != rr {
+            return lr < rr
+        }
+        if lhs.score != rhs.score {
+            return lhs.score < rhs.score
+        }
+        if lhs.depth != rhs.depth {
+            return lhs.depth > rhs.depth
+        }
         return lhs.path.count > rhs.path.count
     }
 }
@@ -504,7 +658,9 @@ final class SearchEngine: @unchecked Sendable {
     static func gitignoreFile(in dir: String) -> String? {
         for name in [".gitignore", ".ignore"] {
             let p = dir + "/" + name
-            if access(p, F_OK) == 0 { return p }
+            if access(p, F_OK) == 0 {
+                return p
+            }
         }
         return nil
     }
@@ -734,7 +890,9 @@ final class SearchEngine: @unchecked Sendable {
                 byteLengths[i] = l
                 // extID and the scorer read allBytes[off ..< off + len] raw, so a corrupt pair walks
                 // off the end of the buffer. Checked here because both values are already in hand.
-                if byteOffsets[i] &+ l > allBytesCount { slicesValid = false; break }
+                if byteOffsets[i] &+ l > allBytesCount {
+                    slicesValid = false; break
+                }
                 i &+= 1
             }
             guard slicesValid else {
@@ -874,7 +1032,9 @@ final class SearchEngine: @unchecked Sendable {
                 let l = Int(ptr.load(fromByteOffset: offset + i * 2, as: UInt16.self))
                 newByteLengths[i] = l
                 // Same unchecked slice into allBytes as loadBinaryIndex; see binaryHeaderBounds.
-                if newByteOffsets[i] &+ l > allBytesCount { slicesValid = false; break }
+                if newByteOffsets[i] &+ l > allBytesCount {
+                    slicesValid = false; break
+                }
                 i &+= 1
             }
             guard slicesValid else {
@@ -1032,7 +1192,9 @@ final class SearchEngine: @unchecked Sendable {
                 let aOff = byteOffsets[a], aLen = byteLengths[a]
                 let bOff = byteOffsets[b], bLen = byteLengths[b]
                 let cmp = memcmp(base + aOff, base + bOff, min(aLen, bLen))
-                if cmp != 0 { return cmp < 0 }
+                if cmp != 0 {
+                    return cmp < 0
+                }
                 return aLen < bLen
             }
         }
@@ -1074,7 +1236,9 @@ final class SearchEngine: @unchecked Sendable {
             var nlCount = 0
             var _k = 0
             while _k < len {
-                if base[_k] == 0x0A { nlCount &+= 1 }; _k &+= 1
+                if base[_k] == 0x0A {
+                    nlCount &+= 1
+                }; _k &+= 1
             }
             let countMs = (CFAbsoluteTimeGetCurrent() - t_count) * 1000
             slog.debug("loadIndex: counted \(nlCount) lines in \(countMs, format: .fixed(precision: 1))ms")
@@ -1126,7 +1290,9 @@ final class SearchEngine: @unchecked Sendable {
                     while k < pathLen {
                         let b = allBytes[copyStart &+ k]
                         let low = toLowerByte(b)
-                        if low != b { allBytes[copyStart &+ k] = low }
+                        if low != b {
+                            allBytes[copyStart &+ k] = low
+                        }
 
                         if low == 0x2F {
                             segCount &+= 1
@@ -1134,11 +1300,17 @@ final class SearchEngine: @unchecked Sendable {
                             bnMaskAccum = 0
                         } else {
                             var bit: UInt64 = 0
-                            if low >= 0x61, low <= 0x7A { bit = 1 << UInt64(low &- 0x61) }
-                            else if low >= 0x30, low <= 0x39 { bit = 1 << UInt64(26 &+ low &- 0x30) }
-                            else if low == 0x2E { bit = 1 << 36 }
-                            else if low == 0x2D { bit = 1 << 37 }
-                            else if low == 0x5F { bit = 1 << 38 }
+                            if low >= 0x61, low <= 0x7A {
+                                bit = 1 << UInt64(low &- 0x61)
+                            } else if low >= 0x30, low <= 0x39 {
+                                bit = 1 << UInt64(26 &+ low &- 0x30)
+                            } else if low == 0x2E {
+                                bit = 1 << 36
+                            } else if low == 0x2D {
+                                bit = 1 << 37
+                            } else if low == 0x5F {
+                                bit = 1 << 38
+                            }
                             mask |= bit
                             bnMaskAccum |= bit
                         }
@@ -1278,10 +1450,14 @@ final class SearchEngine: @unchecked Sendable {
         }
 
         while let ent = fts_read(ftsp) {
-            if cancelled?() == true { break }
+            if cancelled?() == true {
+                break
+            }
 
             let info = ent.pointee.fts_info
-            if ent.pointee.fts_level == 0 { continue }
+            if ent.pointee.fts_level == 0 {
+                continue
+            }
 
             let pathLen = Int(ent.pointee.fts_pathlen)
             let pathPtr = UnsafeRawPointer(ent.pointee.fts_path!).assumingMemoryBound(to: UInt8.self)
@@ -1345,18 +1521,31 @@ final class SearchEngine: @unchecked Sendable {
                 let nameLen = Int(ent.pointee.fts_namelen)
                 let n = ent.pointee.fts_path!.advanced(by: pathLen &- nameLen)
                 if nameLen == 9, n[0] == 0x2E, n[1] == 0x44, n[2] == 0x53,
-                   n[3] == 0x5F, n[4] == 0x53 { continue } // .DS_Store
+                   n[3] == 0x5F, n[4] == 0x53
+                {
+                    continue
+                } // .DS_Store
                 if nameLen == 10, n[0] == 0x2E, n[1] == 0x6C, n[2] == 0x6F,
-                   n[3] == 0x63 { continue } // .localized
+                   n[3] == 0x63
+                {
+                    continue
+                } // .localized
                 if nameLen == 5, n[0] == 0x49, n[1] == 0x63, n[2] == 0x6F,
-                   n[3] == 0x6E, n[4] == 0x0D { continue } // Icon\r
+                   n[3] == 0x6E, n[4] == 0x0D
+                {
+                    continue
+                } // Icon\r
 
                 if !ignoredExtensions.isEmpty {
                     var extStart = -1
                     for k in stride(from: pathLen - 1, through: max(pathLen - 20, 0), by: -1) {
                         let b = pathPtr[k]
-                        if b == 0x2F { break }
-                        if b == 0x2E { extStart = k; break }
+                        if b == 0x2F {
+                            break
+                        }
+                        if b == 0x2E {
+                            extStart = k; break
+                        }
                     }
                     if extStart >= 0 {
                         let ext = String(decoding: UnsafeBufferPointer(start: pathPtr + extStart, count: pathLen - extStart), as: UTF8.self)
@@ -1390,7 +1579,9 @@ final class SearchEngine: @unchecked Sendable {
             default: continue
             }
 
-            if batch.count >= batchSize { flushBatch() }
+            if batch.count >= batchSize {
+                flushBatch()
+            }
 
             // Progress reporting (every 500ms)
             let now = CFAbsoluteTimeGetCurrent()
@@ -1481,52 +1672,74 @@ final class SearchEngine: @unchecked Sendable {
         var qi = 0
 
         while qi < queue.count {
-            if cancelled?() == true { break }
+            if cancelled?() == true {
+                break
+            }
 
             let dirURL = queue[qi]
             qi += 1
             let dirPath = dirURL.path
 
             // Skip already-completed checkpoint dirs
-            if completedDirs.contains(dirPath) { continue }
+            if completedDirs.contains(dirPath) {
+                continue
+            }
 
             guard let contents = try? fm.contentsOfDirectory(at: dirURL, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
                 continue
             }
 
             for url in contents {
-                if cancelled?() == true { break }
+                if cancelled?() == true {
+                    break
+                }
 
                 let path = url.path
                 let name = url.lastPathComponent
 
-                if name == ".DS_Store" || name == ".localized" { continue }
-                if name.hasSuffix("\r"), name.hasPrefix("Icon") { continue }
+                if name == ".DS_Store" || name == ".localized" {
+                    continue
+                }
+                if name.hasSuffix("\r"), name.hasPrefix("Icon") {
+                    continue
+                }
 
                 let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
 
                 if isDir {
-                    if name == ".git" { continue }
+                    if name == ".git" {
+                        continue
+                    }
                     if let effectiveIgnoreFile, path.isIgnored(in: effectiveIgnoreFile) {
                         // When negation patterns exist, keep traversing ignored dirs
                         // so un-ignored descendants can still be found.
-                        if hasNegationPatterns { queue.append(url) }
+                        if hasNegationPatterns {
+                            queue.append(url)
+                        }
                         continue
                     }
-                    if let skipDir, skipDir(path) { continue }
+                    if let skipDir, skipDir(path) {
+                        continue
+                    }
                     queue.append(url)
                 } else {
                     if !ignoredExtensions.isEmpty {
                         let ext = "." + (url.pathExtension.lowercased())
-                        if ext.count > 1, ignoredExtensions.contains(ext) { continue }
+                        if ext.count > 1, ignoredExtensions.contains(ext) {
+                            continue
+                        }
                     }
-                    if let effectiveIgnoreFile, path.isIgnored(in: effectiveIgnoreFile) { continue }
+                    if let effectiveIgnoreFile, path.isIgnored(in: effectiveIgnoreFile) {
+                        continue
+                    }
                 }
 
                 batch.append((path, isDir))
                 added += 1
 
-                if batch.count >= batchSize { flushBatch() }
+                if batch.count >= batchSize {
+                    flushBatch()
+                }
 
                 let now = CFAbsoluteTimeGetCurrent()
                 if now - lastProgress > 0.3 {
@@ -1584,7 +1797,9 @@ final class SearchEngine: @unchecked Sendable {
 
         var i = 0
         while i < n {
-            if dirsOnly, !entries[i].isDir { i &+= 1; continue }
+            if dirsOnly, !entries[i].isDir {
+                i &+= 1; continue
+            }
             if hasSuffixFilter {
                 var matched = false
                 // Check known ext IDs (O(1) per ID)
@@ -1592,7 +1807,9 @@ final class SearchEngine: @unchecked Sendable {
                     let eid = extIDs[i]
                     var ei = 0
                     while ei < knownExtIDs.count {
-                        if eid == knownExtIDs[ei] { matched = true; break }
+                        if eid == knownExtIDs[ei] {
+                            matched = true; break
+                        }
                         ei &+= 1
                     }
                 }
@@ -1606,15 +1823,21 @@ final class SearchEngine: @unchecked Sendable {
                         if len >= sfx.count {
                             var ok = true; var j = 0
                             while j < sfx.count {
-                                if allBytes[off + len - sfx.count + j] != sfx[j] { ok = false; break }
+                                if allBytes[off + len - sfx.count + j] != sfx[j] {
+                                    ok = false; break
+                                }
                                 j &+= 1
                             }
-                            if ok { matched = true; break }
+                            if ok {
+                                matched = true; break
+                            }
                         }
                         si &+= 1
                     }
                 }
-                if !matched { i &+= 1; continue }
+                if !matched {
+                    i &+= 1; continue
+                }
             }
             result.append(i)
             i &+= 1
@@ -1623,6 +1846,14 @@ final class SearchEngine: @unchecked Sendable {
         return result
     }
 
+    /// Searches, and for a bare query also reads it as a name plus a possibly-mistyped extension,
+    /// keeping whichever reading produces the better top result. `hrdrcfgyml` finds
+    /// `.config/herdr/config.toml`, because `yml` is two edits from `toml` and so is credited as a
+    /// near-match instead of having to contain its letters.
+    ///
+    /// The literal reading always competes on equal terms and keeps ties, so a query that today
+    /// finds what the user wanted still finds it. A split only wins by ranking higher, which needs
+    /// both a better name match and an extension that resembles what they typed.
     func search(
         query: String,
         maxResults: Int = 200,
@@ -1635,6 +1866,276 @@ final class SearchEngine: @unchecked Sendable {
         candidatePool: [Int]? = nil,
         literalDefault: Bool = false,
         cancelled: (() -> Bool)? = nil
+    ) -> [SearchResult] {
+        let strict = searchCore(
+            query: query, maxResults: maxResults, folderPrefixes: folderPrefixes,
+            excludedPrefixes: excludedPrefixes, excludedPaths: excludedPaths,
+            suffixPattern: suffixPattern, dirsOnly: dirsOnly, maxDepth: maxDepth,
+            candidatePool: candidatePool, literalDefault: literalDefault, cancelled: cancelled
+        )
+        guard !literalDefault else { return strict }
+        // The literal reading matched a filename, so it found something the user could have meant.
+        // Guessing at a mistyped extension on top of that is how `modifiedpyc` stops finding
+        // `modified.cpython-311.pyc` and starts finding `modified.py`, one edit away and not what
+        // was asked for. Reinterpret only when every literal match is scattered down a path.
+        guard !strict.contains(where: { $0.hasBase || $0.segmentMatches > 0 }) else { return strict }
+        // A dense literal match is one a human could have typed on purpose, so leave it alone.
+        // Without this `srcmainjava` pays for four extra searches to re-derive the `Main.java` it
+        // had already found.
+        if let top = strict.first, top.quality >= top.score / 2 {
+            return strict
+        }
+
+        let splits = extensionTailSplits(query.trimmingCharacters(in: .whitespaces).lowercased())
+        // Only the reading whose tail comes closest to a real extension is worth a search. Scoring
+        // the splits against the extension list first keeps this to one extra search rather than
+        // one per candidate tail length.
+        guard let split = Self.closestExtensionSplit(splits, maxDist: extTailMaxDistance) else { return strict }
+        if cancelled?() == true {
+            return strict
+        }
+
+        let table = Self.extCreditTable(for: split.tail, maxDist: extTailMaxDistance)
+        let retry = searchCore(
+            query: split.head, maxResults: maxResults, folderPrefixes: folderPrefixes,
+            excludedPrefixes: excludedPrefixes, excludedPaths: excludedPaths,
+            suffixPattern: suffixPattern, dirsOnly: dirsOnly, maxDepth: maxDepth,
+            candidatePool: candidatePool, literalDefault: literalDefault, cancelled: cancelled,
+            extCredits: table
+        )
+        // Three things before a split may displace the literal reading: it landed on a file whose
+        // extension really does resemble the typed one, its own match is dense rather than
+        // scattered, and it wins by a clear margin. Ranks from two different queries aren't
+        // strictly comparable, so a hair's-breadth win means nothing and the literal keeps ties.
+        //
+        // Density is what stops gibberish inventing answers: `xyzwvutsrq` has no literal match at
+        // all, so anything the split turns up would otherwise win by default.
+        //
+        // The split's match may still be path-scattered across segments: `hrdrcfg` finds
+        // `.config/herdr/config.toml` over two directories and a filename, so requiring a basename
+        // match would rule out the case this exists for. Density allows that; noise it does not.
+        guard let top = retry.first, top.extCredit > 0,
+              top.quality >= top.score / 2,
+              top.rank > (strict.first?.rank ?? Int.min) + SC.rankPrefixMatchBonus
+        else { return strict }
+        return retry
+    }
+
+    // MARK: - Search
+
+    /// Sort dimensions (all descending: higher = better):
+    ///   a = has_base:       1 if basename matched (non-slash queries), else 0
+    ///   b = prefix_match:   1 if basename starts/ends with query or extension token
+    ///   c = path_importance: 4=important user dir, 3=home, 2=library, 1=system, 0=hidden
+    ///   d = basename:     fuzzy score of query vs basename (checked before tightness so boundary matches win)
+    ///   e = tightness:    -(match window width), tighter = better
+    ///   f = fullpath:     fuzzy score of query vs full path
+    ///   g = dir_bonus:    +100 if dir and query ends with /, -100 if file, 0 if no /
+    ///   h = depth:        -(segment count), shallower = better
+    ///   i = shorter:      -(path byte length), shorter = better
+    private struct SortKey: Comparable {
+        let a, b, c, d, e, f, g, h, i: Int32
+
+        @inline(__always) static func < (l: SortKey, r: SortKey) -> Bool {
+            if l.a != r.a {
+                return l.a > r.a
+            }
+            if l.b != r.b {
+                return l.b > r.b
+            }
+            if l.c != r.c {
+                return l.c > r.c
+            }
+            if l.d != r.d {
+                return l.d > r.d
+            }
+            if l.e != r.e {
+                return l.e > r.e
+            }
+            if l.f != r.f {
+                return l.f > r.f
+            }
+            if l.g != r.g {
+                return l.g > r.g
+            }
+            if l.h != r.h {
+                return l.h > r.h
+            }
+            return l.i > r.i
+        }
+        @inline(__always) static func == (l: SortKey, r: SortKey) -> Bool {
+            l.a == r.a && l.b == r.b && l.c == r.c && l.d == r.d && l.e == r.e && l.f == r.f && l.g == r.g && l.h == r.h && l.i == r.i
+        }
+    }
+
+    private struct ScoredEntry {
+        let id: Int
+        let key: SortKey
+        let bestScore: Int
+        let quality: Int
+        let hasBase: Bool
+        var segmentMatches = 0
+    }
+
+    /// Per-entry bytes in the fixed-size section: masks + bnMasks + bnBoundaries (8 each), byteOffsets (4),
+    /// byteLengths + bnStarts (2 each), segCounts + isDirs (1 each).
+    private static let binaryBytesPerEntry = 34
+
+    // MARK: - Binary Persistence (fast load via mmap + memcpy)
+
+    // Binary format:
+    // [8]  magic: "CLINGIX3"
+    // [8]  entryCount: UInt64
+    // [8]  allBytesCount: UInt64
+    // [entryCount * 8]  masks: [UInt64]
+    // [entryCount * 8]  bnMasks: [UInt64]
+    // [entryCount * 8]  bnBoundaries: [UInt64]
+    // [entryCount * 4]  byteOffsets: [UInt32]  (max 4GB of path bytes)
+    // [entryCount * 2]  byteLengths: [UInt16]  (max 65535 bytes per path)
+    // [entryCount * 2]  bnStarts: [UInt16]
+    // [entryCount * 1]  segCounts: [UInt8]
+    // [entryCount * 1]  isDirs: [UInt8]        (0 or 1)
+    // [allBytesCount]   allBytes: [UInt8]       (lowercased path bytes)
+    // [remaining]       pathStrings: null-terminated UTF-8 strings concatenated
+
+    private static let binaryMagic: UInt64 = 0x3349_584E_494C_4C43 // "CLINGIX3" little-endian
+
+    private static var globalExtToID: [String: UInt16] = [:]
+    private static var globalExtHashToID: [UInt64: UInt16] = [:]
+    private static var globalIdToExt: [UInt16: String] = [:]
+    private static var globalNextExtID: UInt16 = 1
+    private static let extLock = NSLock()
+
+    private var masks: [UInt64] = []
+    private var bnMasks: [UInt64] = []
+    private var allBytes: [UInt8] = []
+    private var byteOffsets: [Int] = []
+    private var byteLengths: [Int] = []
+
+    private var extIDs: [UInt16] = [] // Extension ID per entry (0 = no extension)
+
+    private var free: [Int] = []
+    private var pathToID: [String: Int] = [:]
+    private var pathIndexBuilt = false
+    private var sortedByPath: [Int]?
+
+    /// Lock for thread-safe mutations during parallel walks
+    private let lock = NSLock()
+
+    /// Per-engine accessors that delegate to global state
+    private var extToID: [String: UInt16] {
+        get { Self.globalExtToID }
+        set { Self.globalExtToID = newValue }
+    }
+    private var extHashToID: [UInt64: UInt16] {
+        get { Self.globalExtHashToID }
+        set { Self.globalExtHashToID = newValue }
+    }
+    private var idToExt: [UInt16: String] {
+        get { Self.globalIdToExt }
+        set { Self.globalIdToExt = newValue }
+    }
+    private var nextExtID: UInt16 {
+        get { Self.globalNextExtID }
+        set { Self.globalNextExtID = newValue }
+    }
+
+    /// The split whose tail sits closest to a real extension, longest tail breaking ties. Scans the
+    /// extension list without building a table or running a search, so the readings that resemble
+    /// nothing cost almost nothing to rule out.
+    private static func closestExtensionSplit(
+        _ splits: [(head: String, tail: [UInt8])], maxDist: Int
+    ) -> (head: String, tail: [UInt8])? {
+        guard !splits.isEmpty else { return nil }
+        extLock.lock()
+        let known = globalIdToExt
+        extLock.unlock()
+
+        var best: (head: String, tail: [UInt8])?
+        var bestDist = maxDist + 1
+        for split in splits {
+            var d = maxDist + 1
+            for ext in known.values {
+                let e = Array(ext.dropFirst().utf8)
+                guard !e.isEmpty else { continue }
+                d = min(d, editDistance(split.tail, e, limit: maxDist))
+                if d == 0 {
+                    break
+                }
+            }
+            if d <= maxDist, d <= bestDist {
+                bestDist = d; best = split
+            }
+        }
+        return best
+    }
+
+    /// Known extensions within `maxDist` edits of what the user typed, keyed by extension ID and
+    /// valued by the score credited for landing on one, so ranking a candidate is a lookup.
+    private static func extCreditTable(for tail: [UInt8], maxDist: Int) -> [UInt16: Int] {
+        extLock.lock()
+        let known = globalIdToExt
+        extLock.unlock()
+
+        var table: [UInt16: Int] = [:]
+        for (id, ext) in known {
+            let e = Array(ext.dropFirst().utf8) // stored with the leading dot
+            guard !e.isEmpty else { continue }
+            let d = editDistance(tail, e, limit: maxDist)
+            if d <= maxDist {
+                table[id] = extCredit(distance: d, maxDist: maxDist, tailLen: tail.count)
+            }
+        }
+        return table
+    }
+
+    /// The entry count and byte count come out of the file's own header, and every read below is an
+    /// unchecked `memcpy` or pointer walk against them. A crash or a full disk mid-write leaves a
+    /// truncated index whose header still claims the full size, so check the declared sizes fit the
+    /// file before reading a single byte of it: a bad index must lose to a re-index, not read off the
+    /// end of the map. The per-entry checks are folded into the loops that already read those values,
+    /// so this stays O(1) and index loading keeps its speed.
+    private static func binaryHeaderBounds(
+        rawN: UInt64, rawAllBytes: UInt64, totalLen: Int
+    ) -> (n: Int, allBytesCount: Int)? {
+        // Bound both counts while they are still UInt64. `Int(_: UInt64)` traps above Int.max, so
+        // converting first would crash on a garbage header before any bounds check could run. Every
+        // entry costs binaryBytesPerEntry in the fixed section plus at least a NUL terminator, and
+        // allBytes has to fit too, so the file's own size caps both.
+        guard rawN <= UInt64(totalLen / (binaryBytesPerEntry + 1)), rawAllBytes <= UInt64(totalLen) else {
+            return nil
+        }
+        let n = Int(rawN)
+        let allBytesCount = Int(rawAllBytes)
+        guard 24 + n * binaryBytesPerEntry + allBytesCount <= totalLen else { return nil }
+        return (n, allBytesCount)
+    }
+
+    /// Hash extension bytes into a UInt64 key (up to 8 bytes including the dot)
+    @inline(__always) private static func extHash(_ bytes: UnsafePointer<UInt8>, from dotPos: Int, len: Int) -> UInt64 {
+        var h: UInt64 = 0
+        let extLen = min(len - dotPos, 8)
+        var k = 0
+        while k < extLen {
+            h |= UInt64(bytes[dotPos + k]) << UInt64(k &* 8)
+            k &+= 1
+        }
+        return h
+    }
+
+    private func searchCore(
+        query: String,
+        maxResults: Int = 200,
+        folderPrefixes: [String]? = nil,
+        excludedPrefixes: [String]? = nil,
+        excludedPaths: Set<String>? = nil,
+        suffixPattern: String? = nil,
+        dirsOnly: Bool = false,
+        maxDepth: Int? = nil,
+        candidatePool: [Int]? = nil,
+        literalDefault: Bool = false,
+        cancelled: (() -> Bool)? = nil,
+        extCredits: [UInt16: Int]? = nil
     ) -> [SearchResult] {
         let t0 = CFAbsoluteTimeGetCurrent()
 
@@ -1691,15 +2192,21 @@ final class SearchEngine: @unchecked Sendable {
             // Negation sigil (leading '!')
             var negate = false
             if t.hasPrefix("!") {
-                if t.count == 1 { fuzzyTokens.append("!"); continue } // bare "!" is literal text
+                if t.count == 1 {
+                    fuzzyTokens.append("!"); continue
+                } // bare "!" is literal text
                 negate = true; t = String(t.dropFirst())
             }
-            if negate, t == "/" { filesOnly = true; continue }
+            if negate, t == "/" {
+                filesOnly = true; continue
+            }
 
             // Folder-scope / depth tokens (positive only)
             if !negate, t.hasPrefix("in:"), t.count > 3 {
                 var path = String(t.dropFirst(3))
-                if path.hasPrefix("~") { path = homePath + path.dropFirst() }
+                if path.hasPrefix("~") {
+                    path = homePath + path.dropFirst()
+                }
                 while path.count > 1, path.hasSuffix("/") {
                     path = String(path.dropLast())
                 }
@@ -1719,13 +2226,17 @@ final class SearchEngine: @unchecked Sendable {
                 continue
             }
             if !negate, t.hasPrefix("depth:"), t.count > 6 {
-                if let d = Int(t.dropFirst(6)) { queryDepths.append(d) }
+                if let d = Int(t.dropFirst(6)) {
+                    queryDepths.append(d)
+                }
                 continue
             }
 
             // Anchor sigils: trailing '$' (end), leading '^'/single-segment '/' (start), leading '\'' (quote).
             var anchorEnd = false
-            if t.hasSuffix("$"), t.count > 1 { anchorEnd = true; t = String(t.dropLast()) }
+            if t.hasSuffix("$"), t.count > 1 {
+                anchorEnd = true; t = String(t.dropLast())
+            }
             var anchorStart = false
             var quoted = false
             if t.hasPrefix("'"), t.count > 1 {
@@ -1742,17 +2253,27 @@ final class SearchEngine: @unchecked Sendable {
                     } // legacy: strip leading slashes
                 }
             }
-            if t.isEmpty { continue }
+            if t.isEmpty {
+                continue
+            }
             let body = t
 
             if anchorStart || anchorEnd {
                 if anchorStart {
                     let b = opNeedle("/" + body)
-                    if negate { negAnchorStarts.append(b) } else { anchorStarts.append(b) }
+                    if negate {
+                        negAnchorStarts.append(b)
+                    } else {
+                        anchorStarts.append(b)
+                    }
                 }
                 if anchorEnd {
                     let b = opNeedle(body)
-                    if negate { negAnchorEnds.append(b) } else { anchorEnds.append(b) }
+                    if negate {
+                        negAnchorEnds.append(b)
+                    } else {
+                        anchorEnds.append(b)
+                    }
                 }
                 continue
             }
@@ -1760,23 +2281,36 @@ final class SearchEngine: @unchecked Sendable {
             // Extension / dir-segment classifiers are skipped for a quoted body so the quote
             // operator always treats it as plain text (e.g. "'.tar", "'photos/").
             if !quoted, body.hasPrefix("."), body.count > 1 {
-                if negate { negExtStrings.append(body) } else { extStrings.append(body) }
+                if negate {
+                    negExtStrings.append(body)
+                } else {
+                    extStrings.append(body)
+                }
                 continue
             }
             if !quoted, body.hasPrefix("*."), body.count > 2 {
                 let ext = "." + body.dropFirst(2)
-                if negate { negExtStrings.append(ext) } else { extStrings.append(ext) }
+                if negate {
+                    negExtStrings.append(ext)
+                } else {
+                    extStrings.append(ext)
+                }
                 continue
             }
             if !quoted, body.hasSuffix("/"), body.count > 1 {
-                if negate { negSubstrings.append(opNeedle(body)) } else { dirSegStrings.append(body) }
+                if negate {
+                    negSubstrings.append(opNeedle(body))
+                } else {
+                    dirSegStrings.append(body)
+                }
                 continue
             }
             // Plain word: fuzzy by default, literal substring when quoted or negated. The quote
             // flips whichever mode is NOT the default, so under literalDefault a bareword is the
             // literal one and 'foo is the fuzzy escape hatch (like fzf's --exact).
-            if negate { negSubstrings.append(opNeedle(body)) }
-            else if literalDefault != quoted {
+            if negate {
+                negSubstrings.append(opNeedle(body))
+            } else if literalDefault != quoted {
                 litSubstrings.append(opNeedle(body))
                 // A bareword under literalDefault also feeds the fuzzy scorer: the substring gate
                 // above decides WHICH paths match, the score only ranks them. Without it a literal
@@ -1784,8 +2318,12 @@ final class SearchEngine: @unchecked Sendable {
                 // to path importance alone. Contiguous text always matches as a subsequence, so
                 // this never widens the result set. Explicit 'foo keeps its pure-gate semantics
                 // (order-independent across several quoted words) untouched.
-                if literalDefault { fuzzyTokens.append(body) }
-            } else { fuzzyTokens.append(body) }
+                if literalDefault {
+                    fuzzyTokens.append(body)
+                }
+            } else {
+                fuzzyTokens.append(body)
+            }
         }
 
         let extTokenBytes: [[UInt8]] = extStrings.map { Array($0.utf8) }
@@ -1936,9 +2474,11 @@ final class SearchEngine: @unchecked Sendable {
             homePrefix + "/projects", homePrefix + "/temp",
             homePrefix + "/music", homePrefix + "/movies", homePrefix + "/pictures",
             homePrefix + "/library/mobile documents", // iCloud Drive
+            homePrefix + "/.config",
             "/applications",
         ].map { Array($0.utf8) }
         let libraryPrefix = Array((homePrefix + "/library").utf8)
+        let configPrefix = Array((homePrefix + "/.config").utf8)
 
         /// Path importance (higher = more relevant to the user), shared by the fuzzy scoring loop
         /// and the extension-only fast path:
@@ -1949,16 +2489,39 @@ final class SearchEngine: @unchecked Sendable {
         ///   0 = hidden (dotfile/dotdir anywhere in the path)
         @inline(__always)
         func computePathImportance(_ allBase: UnsafePointer<UInt8>, _ off: Int, _ len: Int, _ bnOff: Int) -> Int32 {
+            // `~/.config` is where a lot of what people go looking for actually lives, and it is
+            // hidden only by the dot on the directory itself. Skip that one segment when deciding
+            // whether the path is hidden; a dot anywhere below it still counts.
+            var hiddenScanFrom = 0
+            if len > configPrefix.count, allBase[off + configPrefix.count] == 0x2F {
+                var ok = true
+                var j = 0
+                while j < configPrefix.count {
+                    if allBase[off + j] != configPrefix[j] {
+                        ok = false; break
+                    }
+                    j &+= 1
+                }
+                if ok {
+                    hiddenScanFrom = configPrefix.count
+                }
+            }
             let isHidden: Bool = !queryHasDot && {
-                if bnOff < len, allBase[off + bnOff] == 0x2E { return true }
-                var p = 0
+                if bnOff < len, allBase[off + bnOff] == 0x2E {
+                    return true
+                }
+                var p = hiddenScanFrom
                 while p < len {
-                    if allBase[off + p] == 0x2F, p + 1 < len, allBase[off + p + 1] == 0x2E { return true }
+                    if allBase[off + p] == 0x2F, p + 1 < len, allBase[off + p + 1] == 0x2E {
+                        return true
+                    }
                     p &+= 1
                 }
                 return false
             }()
-            if isHidden { return 0 }
+            if isHidden {
+                return 0
+            }
             // Important dirs first.
             var ipi = 0
             while ipi < importantPrefixes.count {
@@ -1967,10 +2530,14 @@ final class SearchEngine: @unchecked Sendable {
                     var ok = true
                     var j = 0
                     while j < pfx.count {
-                        if allBase[off + j] != pfx[j] { ok = false; break }
+                        if allBase[off + j] != pfx[j] {
+                            ok = false; break
+                        }
                         j &+= 1
                     }
-                    if ok { return 4 }
+                    if ok {
+                        return 4
+                    }
                 }
                 ipi &+= 1
             }
@@ -1978,7 +2545,9 @@ final class SearchEngine: @unchecked Sendable {
             if len >= homePrefixBytes.count, {
                 var hp = 0
                 while hp < homePrefixBytes.count {
-                    if allBase[off + hp] != homePrefixBytes[hp] { return false }
+                    if allBase[off + hp] != homePrefixBytes[hp] {
+                        return false
+                    }
                     hp &+= 1
                 }
                 return true
@@ -1987,7 +2556,9 @@ final class SearchEngine: @unchecked Sendable {
                 if isLib {
                     var j = 0
                     while j < libraryPrefix.count {
-                        if allBase[off + j] != libraryPrefix[j] { isLib = false; break }
+                        if allBase[off + j] != libraryPrefix[j] {
+                            isLib = false; break
+                        }
                         j &+= 1
                     }
                 }
@@ -2006,7 +2577,9 @@ final class SearchEngine: @unchecked Sendable {
         // Match the indexer's segCount convention: 1 + number of slashes (with trailing slashes trimmed),
         // except root "/" which is 1.
         let folderPrefixSegCounts: [Int]? = allFolderPrefixes?.map { p -> Int in
-            if p == "/" { return 1 }
+            if p == "/" {
+                return 1
+            }
             var s = p
             while s.count > 1, s.hasSuffix("/") {
                 s.removeLast()
@@ -2033,10 +2606,14 @@ final class SearchEngine: @unchecked Sendable {
                         var ok = true
                         var j = 0
                         while j < prefix.count {
-                            if allBytes[off + j] != prefix[j] { ok = false; break }
+                            if allBytes[off + j] != prefix[j] {
+                                ok = false; break
+                            }
                             j &+= 1
                         }
-                        if ok, segs[pi] > base { base = segs[pi] }
+                        if ok, segs[pi] > base {
+                            base = segs[pi]
+                        }
                     }
                     pi &+= 1
                 }
@@ -2084,10 +2661,14 @@ final class SearchEngine: @unchecked Sendable {
                     var ok = true
                     var j = 0
                     while j < segLen {
-                        if allBytes[off + p + j] != seg[j] { ok = false; break }
+                        if allBytes[off + p + j] != seg[j] {
+                            ok = false; break
+                        }
                         j &+= 1
                     }
-                    if ok { found = true; break }
+                    if ok {
+                        found = true; break
+                    }
                     p &+= 1
                 }
                 // Folder-self: a directory whose own last segment equals "X" (drop the trailing '/').
@@ -2097,16 +2678,22 @@ final class SearchEngine: @unchecked Sendable {
                         var ok = true
                         var j = 0
                         while j < core {
-                            if allBytes[off + len - core + j] != seg[j] { ok = false; break }
+                            if allBytes[off + len - core + j] != seg[j] {
+                                ok = false; break
+                            }
                             j &+= 1
                         }
                         if ok {
                             let start = off + len - core
-                            if start == off || allBytes[start - 1] == 0x2F { found = true }
+                            if start == off || allBytes[start - 1] == 0x2F {
+                                found = true
+                            }
                         }
                     }
                 }
-                if !found { return false }
+                if !found {
+                    return false
+                }
                 si &+= 1
             }
             return true
@@ -2119,7 +2706,9 @@ final class SearchEngine: @unchecked Sendable {
         @inline(__always) func extensionMatches(_ eid: UInt16, _ off: Int, _ len: Int) -> Bool {
             var ei = 0
             while ei < extTokenIDs.count {
-                if eid == extTokenIDs[ei] { return true }
+                if eid == extTokenIDs[ei] {
+                    return true
+                }
                 ei &+= 1
             }
             var ui = 0
@@ -2129,10 +2718,14 @@ final class SearchEngine: @unchecked Sendable {
                     var m = true
                     var j = 0
                     while j < ext.count {
-                        if allBytes[off + len - ext.count + j] != ext[j] { m = false; break }
+                        if allBytes[off + len - ext.count + j] != ext[j] {
+                            m = false; break
+                        }
                         j &+= 1
                     }
-                    if m { return true }
+                    if m {
+                        return true
+                    }
                 }
                 ui &+= 1
             }
@@ -2141,16 +2734,24 @@ final class SearchEngine: @unchecked Sendable {
 
         /// Common filter: mask, extension ID, excluded IDs/prefixes
         @inline(__always) func applyBaseFilters(_ i: Int) -> Bool {
-            if hasFuzzyQuery, masks[i] & combinedMask != combinedMask { return false }
-            if !hasFuzzyQuery, masks[i] == 0 { return false }
+            if hasFuzzyQuery, masks[i] & combinedMask != combinedMask {
+                return false
+            }
+            if !hasFuzzyQuery, masks[i] == 0 {
+                return false
+            }
 
-            if let excl = excludedIDs, excl.contains(i) { return false }
+            if let excl = excludedIDs, excl.contains(i) {
+                return false
+            }
 
             let off = byteOffsets[i]
             let len = byteLengths[i]
 
             // Extension filter (disjunctive): reject unless the entry matches ANY queried extension.
-            if hasExtFilter, !extensionMatches(extIDs[i], off, len) { return false }
+            if hasExtFilter, !extensionMatches(extIDs[i], off, len) {
+                return false
+            }
 
             if let prefixes = excludedPrefixBytes {
                 var pi = 0
@@ -2160,17 +2761,23 @@ final class SearchEngine: @unchecked Sendable {
                         var ok = true
                         var j = 0
                         while j < prefix.count {
-                            if allBytes[off + j] != prefix[j] { ok = false; break }
+                            if allBytes[off + j] != prefix[j] {
+                                ok = false; break
+                            }
                             j &+= 1
                         }
-                        if ok { return false }
+                        if ok {
+                            return false
+                        }
                     }
                     pi &+= 1
                 }
             }
 
             // Dir segment match (descendant substring + folder-self), shared helper.
-            if !dirSegMatches(i) { return false }
+            if !dirSegMatches(i) {
+                return false
+            }
 
             return true
         }
@@ -2179,19 +2786,27 @@ final class SearchEngine: @unchecked Sendable {
         @inline(__always) func applyAllFilters(_ i: Int) -> Bool {
             guard applyBaseFilters(i) else { return false }
 
-            if dirsOnly, !entries[i].isDir { return false }
+            if dirsOnly, !entries[i].isDir {
+                return false
+            }
 
             if let sfx = suffixBytes {
                 let off = byteOffsets[i]
                 let len = byteLengths[i]
-                if len < sfx.count { return false }
+                if len < sfx.count {
+                    return false
+                }
                 var match = true
                 var j = 0
                 while j < sfx.count {
-                    if allBytes[off + len - sfx.count + j] != sfx[j] { match = false; break }
+                    if allBytes[off + len - sfx.count + j] != sfx[j] {
+                        match = false; break
+                    }
                     j &+= 1
                 }
-                if !match { return false }
+                if !match {
+                    return false
+                }
             }
 
             return true
@@ -2208,10 +2823,14 @@ final class SearchEngine: @unchecked Sendable {
             guard pc > 0, len > pc else { return false }
             var j = 0
             while j < pc {
-                if allBytes[off + j] != prefix[j] { return false }
+                if allBytes[off + j] != prefix[j] {
+                    return false
+                }
                 j &+= 1
             }
-            if prefix[pc - 1] == 0x2F { return true }
+            if prefix[pc - 1] == 0x2F {
+                return true
+            }
             return allBytes[off + pc] == 0x2F
         }
 
@@ -2221,7 +2840,9 @@ final class SearchEngine: @unchecked Sendable {
             let len = byteLengths[i]
             var pi = 0
             while pi < prefixes.count {
-                if strictlyInside(off, len, prefixes[pi]) { return true }
+                if strictlyInside(off, len, prefixes[pi]) {
+                    return true
+                }
                 pi &+= 1
             }
             return false
@@ -2233,12 +2854,16 @@ final class SearchEngine: @unchecked Sendable {
         /// start of the shared lowercased byte buffer; valid for the lock's duration.
         /// Match an operator needle in either normalization form (NFD primary, NFC fallback).
         @inline(__always) func containsOp(_ pathPtr: UnsafePointer<UInt8>, _ len: Int, _ n: OpNeedle) -> Bool {
-            if n.nfd.withUnsafeBufferPointer({ simdContains(pathPtr, count: len, needle: $0.baseAddress!, needleLen: $0.count) }) { return true }
+            if n.nfd.withUnsafeBufferPointer({ simdContains(pathPtr, count: len, needle: $0.baseAddress!, needleLen: $0.count) }) {
+                return true
+            }
             guard let alt = n.nfc else { return false }
             return alt.withUnsafeBufferPointer { simdContains(pathPtr, count: len, needle: $0.baseAddress!, needleLen: $0.count) }
         }
         @inline(__always) func nameEndsOp(_ allBase: UnsafePointer<UInt8>, _ off: Int, _ len: Int, _ bnStart: Int, _ n: OpNeedle) -> Bool {
-            if n.nfd.withUnsafeBufferPointer({ nameEndsWith(allBase, off: off, len: len, bnStart: bnStart, needle: $0.baseAddress!, needleLen: $0.count) }) { return true }
+            if n.nfd.withUnsafeBufferPointer({ nameEndsWith(allBase, off: off, len: len, bnStart: bnStart, needle: $0.baseAddress!, needleLen: $0.count) }) {
+                return true
+            }
             guard let alt = n.nfc else { return false }
             return alt.withUnsafeBufferPointer { nameEndsWith(allBase, off: off, len: len, bnStart: bnStart, needle: $0.baseAddress!, needleLen: $0.count) }
         }
@@ -2247,22 +2872,30 @@ final class SearchEngine: @unchecked Sendable {
             let off = byteOffsets[i]
             let len = byteLengths[i]
             let e = entries[i]
-            if filesOnly, e.isDir { return false }
+            if filesOnly, e.isDir {
+                return false
+            }
             let pathPtr = allBase + off
 
             var k = 0
             while k < litSubstrings.count {
-                if !containsOp(pathPtr, len, litSubstrings[k]) { return false }
+                if !containsOp(pathPtr, len, litSubstrings[k]) {
+                    return false
+                }
                 k &+= 1
             }
             k = 0
             while k < anchorStarts.count {
-                if !containsOp(pathPtr, len, anchorStarts[k]) { return false }
+                if !containsOp(pathPtr, len, anchorStarts[k]) {
+                    return false
+                }
                 k &+= 1
             }
             k = 0
             while k < anchorEnds.count {
-                if !nameEndsOp(allBase, off, len, e.bnStart, anchorEnds[k]) { return false }
+                if !nameEndsOp(allBase, off, len, e.bnStart, anchorEnds[k]) {
+                    return false
+                }
                 k &+= 1
             }
 
@@ -2270,7 +2903,9 @@ final class SearchEngine: @unchecked Sendable {
                 let eid = extIDs[i]
                 var ni = 0
                 while ni < negExtIDs.count {
-                    if eid == negExtIDs[ni] { return false }; ni &+= 1
+                    if eid == negExtIDs[ni] {
+                        return false
+                    }; ni &+= 1
                 }
             }
             if !negExtUnknownBytes.isEmpty {
@@ -2281,26 +2916,36 @@ final class SearchEngine: @unchecked Sendable {
                         var match = true
                         var j = 0
                         while j < ext.count {
-                            if allBase[off + len - ext.count + j] != ext[j] { match = false; break }; j &+= 1
+                            if allBase[off + len - ext.count + j] != ext[j] {
+                                match = false; break
+                            }; j &+= 1
                         }
-                        if match { return false }
+                        if match {
+                            return false
+                        }
                     }
                     ni &+= 1
                 }
             }
             k = 0
             while k < negSubstrings.count {
-                if masks[i] & negSubMasks[k] == negSubMasks[k], containsOp(pathPtr, len, negSubstrings[k]) { return false }
+                if masks[i] & negSubMasks[k] == negSubMasks[k], containsOp(pathPtr, len, negSubstrings[k]) {
+                    return false
+                }
                 k &+= 1
             }
             k = 0
             while k < negAnchorStarts.count {
-                if masks[i] & negAnchorStartMasks[k] == negAnchorStartMasks[k], containsOp(pathPtr, len, negAnchorStarts[k]) { return false }
+                if masks[i] & negAnchorStartMasks[k] == negAnchorStartMasks[k], containsOp(pathPtr, len, negAnchorStarts[k]) {
+                    return false
+                }
                 k &+= 1
             }
             k = 0
             while k < negAnchorEnds.count {
-                if nameEndsOp(allBase, off, len, e.bnStart, negAnchorEnds[k]) { return false }
+                if nameEndsOp(allBase, off, len, e.bnStart, negAnchorEnds[k]) {
+                    return false
+                }
                 k &+= 1
             }
             return true
@@ -2318,7 +2963,9 @@ final class SearchEngine: @unchecked Sendable {
             var pi = 0
             while pi < pool.count {
                 let i = pool[pi]
-                if i >= 0, i < n, applyBaseFilters(i), matchesFolderPrefix(i), depthOK(i) { cands.append(i) }
+                if i >= 0, i < n, applyBaseFilters(i), matchesFolderPrefix(i), depthOK(i) {
+                    cands.append(i)
+                }
                 pi &+= 1
             }
         } else if let prefixBytes = folderPrefixBytes, let sorted = sortedByPath {
@@ -2333,7 +2980,9 @@ final class SearchEngine: @unchecked Sendable {
                     let i = sorted[idx]
                     // The [lo, hi) range matches the prefix loosely (includes the folder itself and
                     // prefix-siblings); strictlyInside keeps only true descendants.
-                    if strictlyInside(byteOffsets[i], byteLengths[i], prefix), applyAllFilters(i), depthOK(i) { cands.append(i) }
+                    if strictlyInside(byteOffsets[i], byteLengths[i], prefix), applyAllFilters(i), depthOK(i) {
+                        cands.append(i)
+                    }
                     idx &+= 1
                 }
                 pxi &+= 1
@@ -2358,26 +3007,38 @@ final class SearchEngine: @unchecked Sendable {
                     var i = lo
                     while i < hi {
                         if hasFuzzyQuery {
-                            if maskPtr[i] & combinedMask != combinedMask { i &+= 1; continue }
+                            if maskPtr[i] & combinedMask != combinedMask {
+                                i &+= 1; continue
+                            }
                         } else {
-                            if maskPtr[i] == 0 { i &+= 1; continue }
+                            if maskPtr[i] == 0 {
+                                i &+= 1; continue
+                            }
                         }
-                        if let excl = excludedIDs, excl.contains(i) { i &+= 1; continue }
+                        if let excl = excludedIDs, excl.contains(i) {
+                            i &+= 1; continue
+                        }
 
                         let off = byteOffsets[i]
                         let len = byteLengths[i]
 
                         // Extension filter (disjunctive): keep only entries matching ANY queried extension.
-                        if hasExtFilter, !extensionMatches(self.extIDs[i], off, len) { i &+= 1; continue }
+                        if hasExtFilter, !extensionMatches(self.extIDs[i], off, len) {
+                            i &+= 1; continue
+                        }
 
                         if let prefixes = folderPrefixBytes {
                             var matched = false
                             var pi = 0
                             while pi < prefixes.count {
-                                if strictlyInside(off, len, prefixes[pi]) { matched = true; break }
+                                if strictlyInside(off, len, prefixes[pi]) {
+                                    matched = true; break
+                                }
                                 pi &+= 1
                             }
-                            if !matched { i &+= 1; continue }
+                            if !matched {
+                                i &+= 1; continue
+                            }
                         }
 
                         if let prefixes = excludedPrefixBytes {
@@ -2389,33 +3050,51 @@ final class SearchEngine: @unchecked Sendable {
                                     var ok = true
                                     var j = 0
                                     while j < prefix.count {
-                                        if allBytes[off + j] != prefix[j] { ok = false; break }
+                                        if allBytes[off + j] != prefix[j] {
+                                            ok = false; break
+                                        }
                                         j &+= 1
                                     }
-                                    if ok { excluded = true; break }
+                                    if ok {
+                                        excluded = true; break
+                                    }
                                 }
                                 pi &+= 1
                             }
-                            if excluded { i &+= 1; continue }
+                            if excluded {
+                                i &+= 1; continue
+                            }
                         }
 
-                        if dirsOnly, !entries[i].isDir { i &+= 1; continue }
+                        if dirsOnly, !entries[i].isDir {
+                            i &+= 1; continue
+                        }
 
                         if let sfx = suffixBytes {
-                            if len < sfx.count { i &+= 1; continue }
+                            if len < sfx.count {
+                                i &+= 1; continue
+                            }
                             var match = true
                             var j = 0
                             while j < sfx.count {
-                                if allBytes[off + len - sfx.count + j] != sfx[j] { match = false; break }
+                                if allBytes[off + len - sfx.count + j] != sfx[j] {
+                                    match = false; break
+                                }
                                 j &+= 1
                             }
-                            if !match { i &+= 1; continue }
+                            if !match {
+                                i &+= 1; continue
+                            }
                         }
 
                         // Dir segment match (descendant substring + folder-self), shared helper.
-                        if !dirSegMatches(i) { i &+= 1; continue }
+                        if !dirSegMatches(i) {
+                            i &+= 1; continue
+                        }
 
-                        if !depthOK(i) { i &+= 1; continue }
+                        if !depthOK(i) {
+                            i &+= 1; continue
+                        }
 
                         local.append(i)
                         i &+= 1
@@ -2497,7 +3176,9 @@ final class SearchEngine: @unchecked Sendable {
                 var eli = 0
                 while eli < maxPathLen {
                     ecumul &+= exemptLenCounts[eli]
-                    if ecumul >= exemptCap { exemptCutoff = eli; break }
+                    if ecumul >= exemptCap {
+                        exemptCutoff = eli; break
+                    }
                     eli &+= 1
                 }
                 exemptCount = ecumul
@@ -2508,7 +3189,9 @@ final class SearchEngine: @unchecked Sendable {
             var li = 0
             while li < maxPathLen {
                 cumul &+= lenCounts[li]
-                if cumul >= budget { cutoff = li; break }
+                if cumul >= budget {
+                    cutoff = li; break
+                }
                 li &+= 1
             }
             lenCounts.deallocate()
@@ -2537,7 +3220,9 @@ final class SearchEngine: @unchecked Sendable {
                 var ci = 0
                 while ci < cands.count {
                     let id = cands[ci]
-                    if extensionMatches(extIDs[id], byteOffsets[id], byteLengths[id]) { extFiltered.append(id) }
+                    if extensionMatches(extIDs[id], byteOffsets[id], byteLengths[id]) {
+                        extFiltered.append(id)
+                    }
                     ci &+= 1
                 }
                 cands = extFiltered
@@ -2560,9 +3245,13 @@ final class SearchEngine: @unchecked Sendable {
             // Sort an index permutation so `imp` stays aligned with its candidate.
             var order = Array(0 ..< cands.count)
             order.sort { x, y in
-                if imp[x] != imp[y] { return imp[x] > imp[y] }
+                if imp[x] != imp[y] {
+                    return imp[x] > imp[y]
+                }
                 let aSeg = entries[cands[x]].segCount, bSeg = entries[cands[y]].segCount
-                if aSeg != bSeg { return aSeg < bSeg }
+                if aSeg != bSeg {
+                    return aSeg < bSeg
+                }
                 return byteLengths[cands[x]] < byteLengths[cands[y]]
             }
             let results = order.prefix(maxResults).map { oi -> SearchResult in
@@ -2577,7 +3266,9 @@ final class SearchEngine: @unchecked Sendable {
 
         // Phase 2: fuzzy scoring
         let t2 = CFAbsoluteTimeGetCurrent()
-        if isCancelled() { return [] }
+        if isCancelled() {
+            return []
+        }
 
         let nCands = cands.count
         let nProcs = max(ProcessInfo.processInfo.activeProcessorCount, 1)
@@ -2599,7 +3290,9 @@ final class SearchEngine: @unchecked Sendable {
                         local.reserveCapacity(hi - lo)
                         var idx = lo
                         while idx < hi {
-                            if idx & 0x1FF == 0, isCancelled() { break }
+                            if idx & 0x1FF == 0, isCancelled() {
+                                break
+                            }
                             let id = cands[idx]
                             let e = self.entries[id]
                             let off = self.byteOffsets[id]
@@ -2668,7 +3361,9 @@ final class SearchEngine: @unchecked Sendable {
                                                 tokenSegMatches &+= 1
                                             }
                                             pathSearchFrom = absEnd
-                                        } else { allTokensMatchPath = false; break }
+                                        } else {
+                                            allTokensMatchPath = false; break
+                                        }
                                     }
                                     if allTokensMatchPath, tokenPathScore > pathScore {
                                         pathScore = tokenPathScore; pathWindow = tokenPathEnd - tokenPathStart
@@ -2702,7 +3397,9 @@ final class SearchEngine: @unchecked Sendable {
                                             tokenBaseStart = min(tokenBaseStart, baseSearchFrom + r.start)
                                             tokenBaseEnd = max(tokenBaseEnd, baseSearchFrom + r.end)
                                             baseSearchFrom = baseSearchFrom + r.end
-                                        } else { allTokensMatchBase = false; break }
+                                        } else {
+                                            allTokensMatchBase = false; break
+                                        }
                                     }
                                     if allTokensMatchBase, tokenBaseScore > baseScore {
                                         baseScore = tokenBaseScore; baseWindow = tokenBaseEnd - tokenBaseStart
@@ -2757,7 +3454,9 @@ final class SearchEngine: @unchecked Sendable {
                                 let eid = self.extIDs[id]
                                 var ei = 0
                                 while ei < extTokenIDs.count {
-                                    if eid == extTokenIDs[ei] { extOK = true; break }
+                                    if eid == extTokenIDs[ei] {
+                                        extOK = true; break
+                                    }
                                     ei &+= 1
                                 }
                             } else if !extTokenBytes.isEmpty {
@@ -2768,10 +3467,14 @@ final class SearchEngine: @unchecked Sendable {
                                         var match = true
                                         var p = 0
                                         while p < ext.count {
-                                            if allBase[off + e.bnStart + bnLen - ext.count + p] != ext[p] { match = false; break }
+                                            if allBase[off + e.bnStart + bnLen - ext.count + p] != ext[p] {
+                                                match = false; break
+                                            }
                                             p &+= 1
                                         }
-                                        if match { extOK = true; break }
+                                        if match {
+                                            extOK = true; break
+                                        }
                                     }
                                     ei &+= 1
                                 }
@@ -2791,10 +3494,14 @@ final class SearchEngine: @unchecked Sendable {
                                     var p = 0
                                     var prefixOK = true
                                     while p < tLen {
-                                        if allBase[bnBase + p] != token[p] { prefixOK = false; break }
+                                        if allBase[bnBase + p] != token[p] {
+                                            prefixOK = false; break
+                                        }
                                         p &+= 1
                                     }
-                                    if prefixOK { found = true }
+                                    if prefixOK {
+                                        found = true
+                                    }
                                     if !found {
                                         // Check after each word boundary (space, dash, underscore, dot, slash)
                                         var bi = 1
@@ -2803,15 +3510,21 @@ final class SearchEngine: @unchecked Sendable {
                                             if prev == 0x20 || prev == 0x2D || prev == 0x5F || prev == 0x2E || prev == 0x2F {
                                                 var ok = true; p = 0
                                                 while p < tLen {
-                                                    if allBase[bnBase + bi + p] != token[p] { ok = false; break }
+                                                    if allBase[bnBase + bi + p] != token[p] {
+                                                        ok = false; break
+                                                    }
                                                     p &+= 1
                                                 }
-                                                if ok { found = true; break }
+                                                if ok {
+                                                    found = true; break
+                                                }
                                             }
                                             bi &+= 1
                                         }
                                     }
-                                    if found { tokenBoundaryCount &+= 1 }
+                                    if found {
+                                        tokenBoundaryCount &+= 1
+                                    }
                                     ti &+= 1
                                 }
                                 if tokenBoundaryCount == tokens.count || extOK {
@@ -2828,7 +3541,9 @@ final class SearchEngine: @unchecked Sendable {
                                 var prefixOK = true
                                 var p = 0
                                 while p < baseBytes.count {
-                                    if allBase[bnBase + p] != baseBytes[p] { prefixOK = false; break }
+                                    if allBase[bnBase + p] != baseBytes[p] {
+                                        prefixOK = false; break
+                                    }
                                     p &+= 1
                                 }
                                 if prefixOK || extOK {
@@ -2842,10 +3557,14 @@ final class SearchEngine: @unchecked Sendable {
                                         if prev == 0x2D || prev == 0x5F || prev == 0x2E || prev == 0x2F || prev == 0x20 {
                                             var ok = true; p = 0
                                             while p < baseBytes.count {
-                                                if allBase[bnBase + bi + p] != baseBytes[p] { ok = false; break }
+                                                if allBase[bnBase + bi + p] != baseBytes[p] {
+                                                    ok = false; break
+                                                }
                                                 p &+= 1
                                             }
-                                            if ok { boundaryMatch = true; break }
+                                            if ok {
+                                                boundaryMatch = true; break
+                                            }
                                         }
                                         bi &+= 1
                                     }
@@ -2919,7 +3638,9 @@ final class SearchEngine: @unchecked Sendable {
             scored.append(contentsOf: chunkStore[i])
         }
 
-        if isCancelled() { return [] }
+        if isCancelled() {
+            return []
+        }
 
         let t3 = CFAbsoluteTimeGetCurrent()
         scored.sort { $0.key < $1.key }
@@ -2947,7 +3668,19 @@ final class SearchEngine: @unchecked Sendable {
         let pool = scored.prefix(maxResults * 4)
         var results = pool.map { s in
             let e = entries[s.id]
-            return SearchResult(path: e.path, isDir: e.isDir, score: s.bestScore, quality: s.quality, hasBase: s.hasBase, segmentMatches: s.segmentMatches, pathImportance: Int(s.key.c), prefixMatch: s.key.b > 0, depth: e.segCount)
+            let credit = extCredits.map { $0[s.id < extIDs.count ? extIDs[s.id] : 0] ?? 0 } ?? 0
+            return SearchResult(
+                path: e.path,
+                isDir: e.isDir,
+                score: s.bestScore,
+                quality: s.quality,
+                hasBase: s.hasBase,
+                segmentMatches: s.segmentMatches,
+                pathImportance: Int(s.key.c),
+                prefixMatch: s.key.b > 0,
+                depth: e.segCount,
+                extCredit: credit
+            )
         }
         results.sort { $0 > $1 }
         results = Array(results.prefix(maxResults))
@@ -2958,143 +3691,6 @@ final class SearchEngine: @unchecked Sendable {
                 "search: q=\"\(query)\" \(n) entries, \(cands.count) cands, \(scored.count) scored, \(results.count) results in \(totalMs, format: .fixed(precision: 1))ms (filter=\(filterMs, format: .fixed(precision: 1))ms score=\(scoreMs, format: .fixed(precision: 1))ms sort=\(sortMs, format: .fixed(precision: 1))ms)"
             )
         return results
-    }
-
-    // MARK: - Search
-
-    /// Sort dimensions (all descending: higher = better):
-    ///   a = has_base:       1 if basename matched (non-slash queries), else 0
-    ///   b = prefix_match:   1 if basename starts/ends with query or extension token
-    ///   c = path_importance: 4=important user dir, 3=home, 2=library, 1=system, 0=hidden
-    ///   d = basename:     fuzzy score of query vs basename (checked before tightness so boundary matches win)
-    ///   e = tightness:    -(match window width), tighter = better
-    ///   f = fullpath:     fuzzy score of query vs full path
-    ///   g = dir_bonus:    +100 if dir and query ends with /, -100 if file, 0 if no /
-    ///   h = depth:        -(segment count), shallower = better
-    ///   i = shorter:      -(path byte length), shorter = better
-    private struct SortKey: Comparable {
-        let a, b, c, d, e, f, g, h, i: Int32
-
-        @inline(__always) static func < (l: SortKey, r: SortKey) -> Bool {
-            if l.a != r.a { return l.a > r.a }
-            if l.b != r.b { return l.b > r.b }
-            if l.c != r.c { return l.c > r.c }
-            if l.d != r.d { return l.d > r.d }
-            if l.e != r.e { return l.e > r.e }
-            if l.f != r.f { return l.f > r.f }
-            if l.g != r.g { return l.g > r.g }
-            if l.h != r.h { return l.h > r.h }
-            return l.i > r.i
-        }
-        @inline(__always) static func == (l: SortKey, r: SortKey) -> Bool {
-            l.a == r.a && l.b == r.b && l.c == r.c && l.d == r.d && l.e == r.e && l.f == r.f && l.g == r.g && l.h == r.h && l.i == r.i
-        }
-    }
-
-    private struct ScoredEntry {
-        let id: Int
-        let key: SortKey
-        let bestScore: Int
-        let quality: Int
-        let hasBase: Bool
-        var segmentMatches = 0
-    }
-
-    /// Per-entry bytes in the fixed-size section: masks + bnMasks + bnBoundaries (8 each), byteOffsets (4),
-    /// byteLengths + bnStarts (2 each), segCounts + isDirs (1 each).
-    private static let binaryBytesPerEntry = 34
-
-    // MARK: - Binary Persistence (fast load via mmap + memcpy)
-
-    // Binary format:
-    // [8]  magic: "CLINGIX3"
-    // [8]  entryCount: UInt64
-    // [8]  allBytesCount: UInt64
-    // [entryCount * 8]  masks: [UInt64]
-    // [entryCount * 8]  bnMasks: [UInt64]
-    // [entryCount * 8]  bnBoundaries: [UInt64]
-    // [entryCount * 4]  byteOffsets: [UInt32]  (max 4GB of path bytes)
-    // [entryCount * 2]  byteLengths: [UInt16]  (max 65535 bytes per path)
-    // [entryCount * 2]  bnStarts: [UInt16]
-    // [entryCount * 1]  segCounts: [UInt8]
-    // [entryCount * 1]  isDirs: [UInt8]        (0 or 1)
-    // [allBytesCount]   allBytes: [UInt8]       (lowercased path bytes)
-    // [remaining]       pathStrings: null-terminated UTF-8 strings concatenated
-
-    private static let binaryMagic: UInt64 = 0x3349_584E_494C_4C43 // "CLINGIX3" little-endian
-
-    private static var globalExtToID: [String: UInt16] = [:]
-    private static var globalExtHashToID: [UInt64: UInt16] = [:]
-    private static var globalIdToExt: [UInt16: String] = [:]
-    private static var globalNextExtID: UInt16 = 1
-    private static let extLock = NSLock()
-
-    private var masks: [UInt64] = []
-    private var bnMasks: [UInt64] = []
-    private var allBytes: [UInt8] = []
-    private var byteOffsets: [Int] = []
-    private var byteLengths: [Int] = []
-
-    private var extIDs: [UInt16] = [] // Extension ID per entry (0 = no extension)
-
-    private var free: [Int] = []
-    private var pathToID: [String: Int] = [:]
-    private var pathIndexBuilt = false
-    private var sortedByPath: [Int]?
-
-    /// Lock for thread-safe mutations during parallel walks
-    private let lock = NSLock()
-
-    /// Per-engine accessors that delegate to global state
-    private var extToID: [String: UInt16] {
-        get { Self.globalExtToID }
-        set { Self.globalExtToID = newValue }
-    }
-    private var extHashToID: [UInt64: UInt16] {
-        get { Self.globalExtHashToID }
-        set { Self.globalExtHashToID = newValue }
-    }
-    private var idToExt: [UInt16: String] {
-        get { Self.globalIdToExt }
-        set { Self.globalIdToExt = newValue }
-    }
-    private var nextExtID: UInt16 {
-        get { Self.globalNextExtID }
-        set { Self.globalNextExtID = newValue }
-    }
-
-    /// The entry count and byte count come out of the file's own header, and every read below is an
-    /// unchecked `memcpy` or pointer walk against them. A crash or a full disk mid-write leaves a
-    /// truncated index whose header still claims the full size, so check the declared sizes fit the
-    /// file before reading a single byte of it: a bad index must lose to a re-index, not read off the
-    /// end of the map. The per-entry checks are folded into the loops that already read those values,
-    /// so this stays O(1) and index loading keeps its speed.
-    private static func binaryHeaderBounds(
-        rawN: UInt64, rawAllBytes: UInt64, totalLen: Int
-    ) -> (n: Int, allBytesCount: Int)? {
-        // Bound both counts while they are still UInt64. `Int(_: UInt64)` traps above Int.max, so
-        // converting first would crash on a garbage header before any bounds check could run. Every
-        // entry costs binaryBytesPerEntry in the fixed section plus at least a NUL terminator, and
-        // allBytes has to fit too, so the file's own size caps both.
-        guard rawN <= UInt64(totalLen / (binaryBytesPerEntry + 1)), rawAllBytes <= UInt64(totalLen) else {
-            return nil
-        }
-        let n = Int(rawN)
-        let allBytesCount = Int(rawAllBytes)
-        guard 24 + n * binaryBytesPerEntry + allBytesCount <= totalLen else { return nil }
-        return (n, allBytesCount)
-    }
-
-    /// Hash extension bytes into a UInt64 key (up to 8 bytes including the dot)
-    @inline(__always) private static func extHash(_ bytes: UnsafePointer<UInt8>, from dotPos: Int, len: Int) -> UInt64 {
-        var h: UInt64 = 0
-        let extLen = min(len - dotPos, 8)
-        var k = 0
-        while k < extLen {
-            h |= UInt64(bytes[dotPos + k]) << UInt64(k &* 8)
-            k &+= 1
-        }
-        return h
     }
 
     /// Binary search: first index in sorted where path >= prefix
@@ -3114,8 +3710,14 @@ final class SearchEngine: @unchecked Sendable {
                 }
                 j &+= 1
             }
-            if j == cmpLen { less = len < prefix.count }
-            if less { lo = mid &+ 1 } else { hi = mid }
+            if j == cmpLen {
+                less = len < prefix.count
+            }
+            if less {
+                lo = mid &+ 1
+            } else {
+                hi = mid
+            }
         }
         return lo
     }
@@ -3131,10 +3733,16 @@ final class SearchEngine: @unchecked Sendable {
             var starts = true
             var j = 0
             while j < prefix.count {
-                if allBytes[off + j] != prefix[j] { starts = false; break }
+                if allBytes[off + j] != prefix[j] {
+                    starts = false; break
+                }
                 j &+= 1
             }
-            if starts { lo = mid &+ 1 } else { hi = mid }
+            if starts {
+                lo = mid &+ 1
+            } else {
+                hi = mid
+            }
         }
         return lo
     }
@@ -3165,8 +3773,12 @@ final class SearchEngine: @unchecked Sendable {
         var dotPos = -1
         var k = len - 1
         while k >= bnStart {
-            if bytes[k] == 0x2E { dotPos = k; break }
-            if bytes[k] == 0x2F { break }
+            if bytes[k] == 0x2E {
+                dotPos = k; break
+            }
+            if bytes[k] == 0x2F {
+                break
+            }
             k -= 1
         }
         guard dotPos >= 0, dotPos < len - 1 else { return 0 }
@@ -3199,7 +3811,9 @@ final class SearchEngine: @unchecked Sendable {
 
     private func _addPath(_ path: String, isDir: Bool) -> Int {
         ensurePathIndex()
-        if let existing = pathToID[path] { return existing }
+        if let existing = pathToID[path] {
+            return existing
+        }
 
         let byteOff = allBytes.count
         var bnStart = 0, segCount = 1
@@ -3226,11 +3840,17 @@ final class SearchEngine: @unchecked Sendable {
                     prevCC = .delim
                 } else {
                     var bit: UInt64 = 0
-                    if low >= 0x61, low <= 0x7A { bit = 1 << UInt64(low &- 0x61) }
-                    else if low >= 0x30, low <= 0x39 { bit = 1 << UInt64(26 &+ low &- 0x30) }
-                    else if low == 0x2E { bit = 1 << 36 }
-                    else if low == 0x2D { bit = 1 << 37 }
-                    else if low == 0x5F { bit = 1 << 38 }
+                    if low >= 0x61, low <= 0x7A {
+                        bit = 1 << UInt64(low &- 0x61)
+                    } else if low >= 0x30, low <= 0x39 {
+                        bit = 1 << UInt64(26 &+ low &- 0x30)
+                    } else if low == 0x2E {
+                        bit = 1 << 36
+                    } else if low == 0x2D {
+                        bit = 1 << 37
+                    } else if low == 0x5F {
+                        bit = 1 << 38
+                    }
                     mask |= bit
                     bnMaskAccum |= bit
 
@@ -3243,7 +3863,9 @@ final class SearchEngine: @unchecked Sendable {
                             (prevCC == .delim || prevCC == .white || prevCC == .nonWord) || // after delimiter
                             (prevCC != .number && curCC == .number) || // letter->digit
                             bnPos == 0 // start of basename
-                        if isBoundary { boundaries |= 1 << UInt64(bnPos) }
+                        if isBoundary {
+                            boundaries |= 1 << UInt64(bnPos)
+                        }
                     }
                     prevCC = curCC
                 }
@@ -3322,11 +3944,17 @@ final class SearchEngine: @unchecked Sendable {
                     bnMaskAccum = 0
                 } else {
                     var bit: UInt64 = 0
-                    if low >= 0x61, low <= 0x7A { bit = 1 << UInt64(low &- 0x61) }
-                    else if low >= 0x30, low <= 0x39 { bit = 1 << UInt64(26 &+ low &- 0x30) }
-                    else if low == 0x2E { bit = 1 << 36 }
-                    else if low == 0x2D { bit = 1 << 37 }
-                    else if low == 0x5F { bit = 1 << 38 }
+                    if low >= 0x61, low <= 0x7A {
+                        bit = 1 << UInt64(low &- 0x61)
+                    } else if low >= 0x30, low <= 0x39 {
+                        bit = 1 << UInt64(26 &+ low &- 0x30)
+                    } else if low == 0x2E {
+                        bit = 1 << 36
+                    } else if low == 0x2D {
+                        bit = 1 << 37
+                    } else if low == 0x5F {
+                        bit = 1 << 38
+                    }
                     mask |= bit
                     bnMaskAccum |= bit
                 }
