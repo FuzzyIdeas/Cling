@@ -8,7 +8,9 @@ import System
 // MARK: - FilterPicker
 
 struct FilterPicker: View {
-    static let iconWidth: CGFloat = 20
+    /// Wide enough that the scope icon's tinted disc has room around the glyph. Also drives the
+    /// leading inset of the rows under the search field, so growing it keeps them aligned.
+    static let iconWidth: CGFloat = 26
 
     var body: some View {
         menu
@@ -83,6 +85,8 @@ struct FilterPicker: View {
     private enum IndexStatus {
         case indexed, indexing, notIndexed, disconnected
     }
+
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var defaults = DEFAULTS_CACHE
     @State private var fuzzy: FuzzyClient = FUZZY
@@ -171,9 +175,25 @@ struct FilterPicker: View {
         }
     }
 
+    /// The scope's own icon and colour when the search is narrowed, so the window says what it is
+    /// looking through before you read a word of it. Falls back to the generic filter glyph while
+    /// searching everything.
     private var filterLabel: some View {
-        Image(systemName: "line.3.horizontal.decrease.circle" + (fuzzy.quickFilter != nil || fuzzy.folderFilter != nil ? ".fill" : ""))
-            .frame(width: FilterPicker.iconWidth)
+        Group {
+            if let scope = fuzzy.scopeAppearance {
+                let dark = colorScheme == .dark
+                Image(systemName: scope.icon)
+                    .foregroundStyle(scope.color.accent(dark: dark))
+                    // Square frame so the disc is round, and sized to the slot the generic glyph
+                    // already occupied so adding it moves nothing else in the toolbar.
+                    .frame(width: FilterPicker.iconWidth, height: FilterPicker.iconWidth)
+                    .filterIconBackground(scope.color, dark: dark)
+            } else {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .frame(width: FilterPicker.iconWidth, height: FilterPicker.iconWidth)
+            }
+        }
+        .frame(width: FilterPicker.iconWidth)
     }
 
     private func filterItem(_ filter: FilePath, key: Character?) -> some View {
@@ -269,9 +289,15 @@ struct FilterPicker: View {
     private func installFilterShortcutMonitor() {
         guard filterShortcutMonitor == nil else { return }
         filterShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            if NSApp.keyWindow?.attachedSheet != nil { return event }
-            if DropZoneOverlay.shared.isPresenting { return event }
-            if event.window !== AppDelegate.shared.mainWindow { return event }
+            if NSApp.keyWindow?.attachedSheet != nil {
+                return event
+            }
+            if DropZoneOverlay.shared.isPresenting {
+                return event
+            }
+            if event.window !== AppDelegate.shared.mainWindow {
+                return event
+            }
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard mods == .option else { return event }
 
@@ -320,24 +346,42 @@ struct FilterPicker: View {
     }
 
     private func volumeStatus(_ volume: FilePath) -> IndexStatus {
-        if volume == .root { return .indexed }
+        if volume == .root {
+            return .indexed
+        }
         if fuzzy.disconnectedVolumes.contains(volume) {
-            if fuzzy.volumeEngines[volume] != nil { return .disconnected }
+            if fuzzy.volumeEngines[volume] != nil {
+                return .disconnected
+            }
             return .disconnected
         }
-        if fuzzy.volumesIndexing.contains(volume) { return .indexing }
-        if fuzzy.volumeEngines[volume] != nil { return .indexed }
+        if fuzzy.volumesIndexing.contains(volume) {
+            return .indexing
+        }
+        if fuzzy.volumeEngines[volume] != nil {
+            return .indexed
+        }
         return .notIndexed
     }
 
     private func scopeForFolder(_ folder: FilePath) -> SearchScope? {
         let s = folder.string
         let home = HOME.string
-        if s.hasPrefix(home + "/Library") { return .library }
-        if s.hasPrefix(home) { return .home }
-        if s.hasPrefix("/Applications") || s.hasPrefix("/System/Applications") { return .applications }
-        if s.hasPrefix("/System") { return .system }
-        if ["/usr", "/bin", "/sbin", "/opt", "/etc", "/Library", "/var", "/private"].contains(where: { s.hasPrefix($0) }) { return .root }
+        if s.hasPrefix(home + "/Library") {
+            return .library
+        }
+        if s.hasPrefix(home) {
+            return .home
+        }
+        if s.hasPrefix("/Applications") || s.hasPrefix("/System/Applications") {
+            return .applications
+        }
+        if s.hasPrefix("/System") {
+            return .system
+        }
+        if ["/usr", "/bin", "/sbin", "/opt", "/etc", "/Library", "/var", "/private"].contains(where: { s.hasPrefix($0) }) {
+            return .root
+        }
         return nil
     }
 
@@ -345,12 +389,18 @@ struct FilterPicker: View {
         let scopes = defaults.searchScopes
         for folder in filter.folders {
             if let volume = fuzzy.enabledVolumes.first(where: { folder.starts(with: $0) }) {
-                if fuzzy.volumesIndexing.contains(volume) { return .indexing }
-                if fuzzy.volumeEngines[volume] == nil { return .notIndexed }
+                if fuzzy.volumesIndexing.contains(volume) {
+                    return .indexing
+                }
+                if fuzzy.volumeEngines[volume] == nil {
+                    return .notIndexed
+                }
                 continue
             }
             if let scope = scopeForFolder(folder) {
-                if !scopes.contains(scope) { return .notIndexed }
+                if !scopes.contains(scope) {
+                    return .notIndexed
+                }
                 if fuzzy.scopeEngines[scope] == nil {
                     return fuzzy.indexing ? .indexing : .notIndexed
                 }
@@ -391,7 +441,10 @@ func saveQuickFilter(draft: QuickFilterDraft, originalID: String = "") {
 }
 
 @MainActor
-func saveFolderFilter(id: String, folders: [FilePath], key: SauceKey, originalID: String = "") {
+func saveFolderFilter(
+    id: String, folders: [FilePath], key: SauceKey, originalID: String = "",
+    icon: String? = nil, color: FilterColor? = nil
+) {
     guard !folders.isEmpty, !id.isEmpty else {
         return
     }
@@ -400,7 +453,7 @@ func saveFolderFilter(id: String, folders: [FilePath], key: SauceKey, originalID
     let editedUUID = Defaults[.folderFilters].first { $0.id == originalID }?.uuid ?? UUID().uuidString
 
     guard key != .escape else {
-        let filter = FolderFilter(id: id, folders: folders, key: nil, uuid: editedUUID)
+        let filter = FolderFilter(id: id, folders: folders, key: nil, icon: icon, color: color, uuid: editedUUID)
         let originalFilter = Defaults[.folderFilters].first { $0.id == originalID }
 
         Defaults[.folderFilters] = Defaults[.folderFilters].without(originalFilter ?? filter) + [filter]
@@ -411,7 +464,7 @@ func saveFolderFilter(id: String, folders: [FilePath], key: SauceKey, originalID
 
     // Check for existing filter with the same key and set its key to nil
     let key = key.lowercasedChar.first
-    let filter = FolderFilter(id: id, folders: folders, key: key, uuid: editedUUID)
+    let filter = FolderFilter(id: id, folders: folders, key: key, icon: icon, color: color, uuid: editedUUID)
     let originalFilter = Defaults[.folderFilters].first { $0.id == originalID }
     // if let key, let existingFilter = Defaults[.quickFilters].first(where: { $0.key == key }) {
     //     Defaults[.quickFilters] = Defaults[.quickFilters].without(existingFilter) + [existingFilter.withKey(nil)]
@@ -721,6 +774,8 @@ struct QuickFilterDraft {
         folders = f.folders ?? []
         hotkey = f.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape
         maxDepth = f.maxDepth ?? -1
+        icon = f.icon ?? "line.3.horizontal.decrease.circle.fill"
+        color = f.color ?? .forName(f.id)
     }
 
     /// Carried so edits preserve the filter's stable identity (see `QuickFilter.uuid`).
@@ -735,6 +790,8 @@ struct QuickFilterDraft {
     var folders: [FilePath] = []
     var hotkey: SauceKey = .escape
     var maxDepth: Int = -1
+    var icon = "line.3.horizontal.decrease.circle.fill"
+    var color: FilterColor = .palette[0]
 
     var asFilter: QuickFilter {
         QuickFilter(
@@ -749,6 +806,8 @@ struct QuickFilterDraft {
             exclude: exclude.trimmed.isEmpty ? nil : exclude.trimmed,
             rawQuery: rawQuery?.trimmed.isEmpty == true ? nil : rawQuery?.trimmed,
             match: match,
+            icon: icon,
+            color: color,
             uuid: uuid
         )
     }
@@ -793,6 +852,14 @@ struct QuickFilterEditor: View {
         }
 
         Section {
+            LabeledContent("Icon") {
+                HStack(spacing: 8) {
+                    HueSlider(color: $draft.color)
+                    FilterIconButton(icon: $draft.icon, color: draft.color)
+                }
+                .onChange(of: draft.icon) { onEdit() }
+                .onChange(of: draft.color) { onEdit() }
+            }
             TextField("Name", text: $draft.name, prompt: Text("Filter name"))
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: draft.name) { onEdit() }
@@ -943,14 +1010,18 @@ struct QuickFilterRow: View {
         let f = draft.asFilter
         countTask = Task {
             try? await Task.sleep(for: .milliseconds(200))
-            if Task.isCancelled { return }
+            if Task.isCancelled {
+                return
+            }
             let n = await FUZZY.matchCount(
                 query: f.queryString,
                 dirsOnly: f.searchDirsOnly,
                 folders: f.folders ?? [],
                 maxDepth: f.maxDepth
             )
-            if Task.isCancelled { return }
+            if Task.isCancelled {
+                return
+            }
             await MainActor.run { matchCountText = n >= 5000 ? "~5000+ results" : "~\(n) results" }
         }
     }
@@ -959,12 +1030,16 @@ struct QuickFilterRow: View {
         guard let idx = quickFilters.firstIndex(where: { $0.uuid == filter.uuid }) else { return }
         let updated = draft.asFilter
         quickFilters[idx] = updated
-        if FUZZY.quickFilter?.uuid == filter.uuid { FUZZY.quickFilter = updated }
+        if FUZZY.quickFilter?.uuid == filter.uuid {
+            FUZZY.quickFilter = updated
+        }
     }
 
     private func delete() {
         quickFilters.removeAll { $0.uuid == filter.uuid }
-        if FUZZY.quickFilter?.uuid == filter.uuid { FUZZY.quickFilter = nil }
+        if FUZZY.quickFilter?.uuid == filter.uuid {
+            FUZZY.quickFilter = nil
+        }
     }
 
     private func addFolder() {
@@ -975,7 +1050,9 @@ struct QuickFilterRow: View {
         panel.begin { response in
             if response == .OK {
                 for url in panel.urls {
-                    if let path = url.existingFilePath, !draft.folders.contains(path) { draft.folders.append(path) }
+                    if let path = url.existingFilePath, !draft.folders.contains(path) {
+                        draft.folders.append(path)
+                    }
                 }
                 save()
                 refreshCount()
@@ -993,6 +1070,8 @@ struct FolderFilterRow: View {
         _folders = State(initialValue: filter.folders)
         _hotkey = State(initialValue: filter.key.flatMap { SauceKey(rawValue: $0.lowercased()) } ?? .escape)
         _maxDepth = State(initialValue: filter.maxDepth ?? -1)
+        _icon = State(initialValue: filter.icon ?? "folder.fill")
+        _color = State(initialValue: filter.color ?? .forName(filter.id))
     }
 
     @EnvironmentObject var env: EnvState
@@ -1006,8 +1085,18 @@ struct FolderFilterRow: View {
                 .focused($nameFocused)
                 .onSubmit { save() }
                 .onChange(of: nameFocused) { _, focused in
-                    if !focused { save() }
+                    if !focused {
+                        save()
+                    }
                 }
+            LabeledContent("Icon") {
+                HStack(spacing: 8) {
+                    HueSlider(color: $color)
+                    FilterIconButton(icon: $icon, color: color)
+                }
+                .onChange(of: icon) { save() }
+                .onChange(of: color) { save() }
+            }
             LabeledContent("Folders") {
                 folderEditor(folders: $folders, emptyText: "No folders", onChange: { save(); refreshCount() }, onAdd: addFolder)
             }
@@ -1058,6 +1147,8 @@ struct FolderFilterRow: View {
 
     @State private var name: String
     @State private var folders: [FilePath]
+    @State private var icon: String
+    @State private var color: FilterColor
     @State private var hotkey: SauceKey
     @State private var recording = false
     @State private var maxDepth: Int
@@ -1073,28 +1164,39 @@ struct FolderFilterRow: View {
         let currentMaxDepth = maxDepth
         countTask = Task {
             try? await Task.sleep(for: .milliseconds(200))
-            if Task.isCancelled { return }
+            if Task.isCancelled {
+                return
+            }
             let n = await FUZZY.matchCount(
                 query: "",
                 dirsOnly: false,
                 folders: currentFolders,
                 maxDepth: currentMaxDepth < 0 ? nil : currentMaxDepth
             )
-            if Task.isCancelled { return }
+            if Task.isCancelled {
+                return
+            }
             await MainActor.run { matchCountText = n >= 5000 ? "~5000+ results" : "~\(n) results" }
         }
     }
 
     private func save() {
         guard let idx = folderFilters.firstIndex(where: { $0.uuid == filter.uuid }) else { return }
-        let updated = FolderFilter(id: name, folders: folders, key: hotkey == .escape ? nil : hotkey.lowercasedChar.first, maxDepth: maxDepth < 0 ? nil : maxDepth, uuid: filter.uuid)
+        let updated = FolderFilter(
+            id: name, folders: folders, key: hotkey == .escape ? nil : hotkey.lowercasedChar.first,
+            maxDepth: maxDepth < 0 ? nil : maxDepth, icon: icon, color: color, uuid: filter.uuid
+        )
         folderFilters[idx] = updated
-        if FUZZY.folderFilter?.uuid == filter.uuid { FUZZY.folderFilter = updated }
+        if FUZZY.folderFilter?.uuid == filter.uuid {
+            FUZZY.folderFilter = updated
+        }
     }
 
     private func delete() {
         folderFilters.removeAll { $0.uuid == filter.uuid }
-        if FUZZY.folderFilter?.uuid == filter.uuid { FUZZY.folderFilter = nil }
+        if FUZZY.folderFilter?.uuid == filter.uuid {
+            FUZZY.folderFilter = nil
+        }
     }
 
     private func addFolder() {
@@ -1105,7 +1207,9 @@ struct FolderFilterRow: View {
         panel.begin { response in
             if response == .OK {
                 for url in panel.urls {
-                    if let path = url.existingFilePath, !folders.contains(path) { folders.append(path) }
+                    if let path = url.existingFilePath, !folders.contains(path) {
+                        folders.append(path)
+                    }
                 }
                 save()
             }

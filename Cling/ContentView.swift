@@ -219,6 +219,11 @@ struct ContentView: View {
                     in: quickLook.items
                 )
         }
+        // A wash in the scope's colour, so being narrowed to something is visible before you read
+        // the icon. Deliberately a plain colour and not a Material: a Material blurs the desktop
+        // behind the window rather than the surface it sits on, which on the glass window style
+        // would pick up whatever wallpaper happens to be back there.
+        .background(scopeTint)
     }
 
     var content: some View {
@@ -365,6 +370,8 @@ struct ContentView: View {
     /// than a new query (file watching, reindexing). Only drop ids that vanished,
     /// and fall back to the first row if the whole selection is gone.
     @State private var lastSelectionQuery: String? = nil
+
+    @Environment(\.colorScheme) private var colorScheme
 
     @Default(.fontScale) private var fontScale
     @Default(.minQueryLength) private var minQueryLength
@@ -576,6 +583,23 @@ struct ContentView: View {
     private var queryTooShort: Bool {
         !fuzzy.query.isEmpty && fuzzy.query.count < minQueryLength
             && fuzzy.folderFilter == nil && fuzzy.quickFilter == nil
+    }
+
+    /// Nothing at all while searching everything, so the tint itself carries the signal. Two
+    /// filters at once give a gradient instead of a flat wash, so the window says both.
+    @ViewBuilder private var scopeTint: some View {
+        if let wash = fuzzy.scopeWash {
+            let dark = colorScheme == .dark
+            LinearGradient(
+                stops: FilterColor.washStops(top: wash.top, bottom: wash.bottom, dark: dark),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .opacity(FilterColor.tintOpacity(dark: dark))
+            .animation(.easeOut(duration: 0.18), value: wash.top)
+            .animation(.easeOut(duration: 0.18), value: wash.bottom)
+            .ignoresSafeArea()
+        }
     }
 
     /// The results/index table next to the optional file preview panel. The

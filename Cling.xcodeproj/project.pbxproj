@@ -181,6 +181,7 @@
 			);
 			name = Cling;
 			packageProductDependencies = (
+				C7SP00020000000000000002 /* SymbolPicker */,
 				C76172282D50F5D000D78B4F /* Lowtech */,
 				C761722A2D50F5D000D78B4F /* LowtechIndie */,
 				C761722C2D50F5D000D78B4F /* LowtechPro */,
@@ -230,6 +231,7 @@
 				AA11000000000000000000A1 /* XCRemoteSwiftPackageReference "HighlighterSwift" */,
 				C7C2CDD12FDFE0B6005EC019 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
 				C7C2CDD42FDFE115005EC019 /* XCLocalSwiftPackageReference "../../../Github/alin23/warpdrop/swift" */,
+				C7SP00010000000000000001 /* XCRemoteSwiftPackageReference "SymbolPicker" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C76172142D50E43600D78B4F /* Products */;
@@ -564,6 +566,14 @@
 				minimumVersion = 1.5.0;
 			};
 		};
+		C7SP00010000000000000001 /* XCRemoteSwiftPackageReference "SymbolPicker" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/alin23/SymbolPicker";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.1.0;
+			};
+		};
 		C76172272D50F5D000D78B4F /* XCRemoteSwiftPackageReference "Lowtech" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/FuzzyIdeas/Lowtech";
@@ -613,6 +623,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C7605CCE2F77E0000087B195 /* XCRemoteSwiftPackageReference "swift-argument-parser" */;
 			productName = ArgumentParser;
+		};
+		C7SP00020000000000000002 /* SymbolPicker */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C7SP00010000000000000001 /* XCRemoteSwiftPackageReference "SymbolPicker" */;
+			productName = SymbolPicker;
 		};
 		C76172282D50F5D000D78B4F /* Lowtech */ = {
 			isa = XCSwiftPackageProductDependency;

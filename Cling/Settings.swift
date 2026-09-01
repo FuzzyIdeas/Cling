@@ -46,11 +46,18 @@ extension Character: @retroactive Codable {
 // MARK: - FolderFilter
 
 struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
-    init(id: String, folders: [FilePath], key: Character?, maxDepth: Int? = nil, uuid: String = UUID().uuidString) {
+    init(
+        id: String, folders: [FilePath], key: Character?, maxDepth: Int? = nil,
+        icon: String? = nil, color: FilterColor? = nil, uuid: String = UUID().uuidString
+    ) {
         self.id = id
         self.folders = folders
         self.key = key
         self.maxDepth = maxDepth
+        // A filter shipped with the app gets its look from its name, so the defaults live in one
+        // table instead of being repeated at every call site.
+        self.icon = icon ?? BuiltinFilterAppearance.icon(for: id, kind: .folder)
+        self.color = color ?? BuiltinFilterAppearance.color(for: id, kind: .folder)
         self.uuid = uuid
     }
 
@@ -63,6 +70,10 @@ struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         // Stable identity, decoupled from the editable name (`id`). Older stored filters predate this
         // field, so synthesize one on first decode; it persists once the filter is next saved.
         uuid = try container.decodeIfPresent(String.self, forKey: .uuid) ?? UUID().uuidString
+        // Filters stored before icons existed fall back to the built-in look for their name, so an
+        // upgrade shows icons straight away instead of a row of blanks.
+        icon = try container.decodeIfPresent(String.self, forKey: .icon) ?? BuiltinFilterAppearance.icon(for: id, kind: .folder)
+        color = try container.decodeIfPresent(FilterColor.self, forKey: .color) ?? BuiltinFilterAppearance.color(for: id, kind: .folder)
     }
 
     /// Stable identity used for SwiftUI view identity and array lookups, so renaming (which changes
@@ -72,6 +83,8 @@ struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     let folders: [FilePath]
     let key: Character?
     let maxDepth: Int?
+    let icon: String?
+    let color: FilterColor?
 
     var keyEquivalent: KeyEquivalent? {
         key.map { KeyEquivalent($0) }
@@ -86,7 +99,7 @@ struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     }
 
     func withKey(_ key: Character?) -> FolderFilter {
-        FolderFilter(id: id, folders: folders, key: key, maxDepth: maxDepth, uuid: uuid)
+        FolderFilter(id: id, folders: folders, key: key, maxDepth: maxDepth, icon: icon, color: color, uuid: uuid)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -95,11 +108,13 @@ struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         try container.encode(folders, forKey: .folders)
         try container.encodeIfPresent(key, forKey: .key)
         try container.encodeIfPresent(maxDepth, forKey: .maxDepth)
+        try container.encodeIfPresent(icon, forKey: .icon)
+        try container.encodeIfPresent(color, forKey: .color)
         try container.encode(uuid, forKey: .uuid)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, folders, key, maxDepth, uuid
+        case id, folders, key, maxDepth, icon, color, uuid
     }
 }
 
@@ -119,6 +134,8 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         maxDepth = try container.decodeIfPresent(Int.self, forKey: .maxDepth)
         exclude = try container.decodeIfPresent(String.self, forKey: .exclude)
         rawQuery = try container.decodeIfPresent(String.self, forKey: .rawQuery)
+        icon = try container.decodeIfPresent(String.self, forKey: .icon) ?? BuiltinFilterAppearance.icon(for: id, kind: .quick)
+        color = try container.decodeIfPresent(FilterColor.self, forKey: .color) ?? BuiltinFilterAppearance.color(for: id, kind: .quick)
 
         if container.contains(.extensions) {
             extensions = try container.decodeIfPresent(String.self, forKey: .extensions)
@@ -168,8 +185,12 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         exclude: String? = nil,
         rawQuery: String? = nil,
         match: FilterMatch = .both,
+        icon: String? = nil,
+        color: FilterColor? = nil,
         uuid: String = UUID().uuidString
     ) {
+        self.icon = icon ?? BuiltinFilterAppearance.icon(for: id, kind: .quick)
+        self.color = color ?? BuiltinFilterAppearance.color(for: id, kind: .quick)
         self.id = id; self.extensions = extensions; self.preQuery = preQuery; self.postQuery = postQuery
         self.dirsOnly = dirsOnly; self.folders = folders; self.key = key; self.maxDepth = maxDepth
         self.exclude = exclude; self.rawQuery = rawQuery; self.match = match; self.uuid = uuid
@@ -189,6 +210,8 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     let exclude: String?
     let rawQuery: String?
     let match: FilterMatch
+    let icon: String?
+    let color: FilterColor?
 
     var keyEquivalent: KeyEquivalent? {
         key.map { KeyEquivalent($0) }
@@ -280,12 +303,14 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         try container.encodeIfPresent(exclude, forKey: .exclude)
         try container.encodeIfPresent(rawQuery, forKey: .rawQuery)
         try container.encode(match, forKey: .match)
+        try container.encodeIfPresent(icon, forKey: .icon)
+        try container.encodeIfPresent(color, forKey: .color)
         try container.encode(uuid, forKey: .uuid)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, extensions, preQuery, postQuery, dirsOnly, folders, key, maxDepth
-        case exclude, rawQuery, match, uuid
+        case exclude, rawQuery, match, icon, color, uuid
         case suffix, query // legacy keys for decoding only
     }
 
