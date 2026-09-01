@@ -3314,6 +3314,11 @@ final class SearchEngine: @unchecked Sendable {
                         let hi = min(lo + chunkSize, nCands)
                         var local = [ScoredEntry]()
                         local.reserveCapacity(hi - lo)
+                        // Scratch for the reordered token pass, allocated per chunk rather than per
+                        // candidate so the scoring loop stays allocation-free.
+                        let tokenCount = tokenBytes?.count ?? 0
+                        var tokenPos = [Int](repeating: 0, count: tokenCount)
+                        var tokenOrder = [Int](repeating: 0, count: tokenCount)
                         var idx = lo
                         while idx < hi {
                             if idx & 0x1FF == 0, isCancelled() {
@@ -3354,42 +3359,96 @@ final class SearchEngine: @unchecked Sendable {
                                     var allTokensMatchPath = true
                                     var pathSearchFrom = 0
                                     var tokenSegMatches = 0
-                                    for (ti, token) in tokens.enumerated() {
-                                        guard allTokensMatchPath, pathSearchFrom < len else {
-                                            allTokensMatchPath = false; break
+                                    // Terms get added in the order they occur to the person typing,
+                                    // which need not be the order the path stores them in: someone
+                                    // narrowing `brgldpng` to one project types `brgldpng redink`,
+                                    // and the path spells it `redinkCore/.../ltg-barglider.png`.
+                                    // Attempt 0 walks the tokens as typed; on failure, attempt 1
+                                    // places each token independently and walks them in the order
+                                    // the path actually puts them in. Only a query that would have
+                                    // found nothing pays for the second pass.
+                                    var attempt = 0
+                                    while attempt < 2 {
+                                        if attempt == 0 {
+                                            for i in 0 ..< tokens.count {
+                                                tokenOrder[i] = i
+                                            }
+                                        } else {
+                                            let whole = UnsafeBufferPointer(start: allBase + off, count: len)
+                                            var placed = true
+                                            for (ti, token) in tokens.enumerated() {
+                                                var pr = token.withUnsafeBufferPointer {
+                                                    fuzzyScoreBytes($0, whole, boundaries: bnBounds, boundariesOffset: bnOff)
+                                                }
+                                                if pr == nil, let alt = tokenAltBytes[ti] {
+                                                    pr = alt.withUnsafeBufferPointer {
+                                                        fuzzyScoreBytes($0, whole, boundaries: bnBounds, boundariesOffset: bnOff)
+                                                    }
+                                                }
+                                                guard let pr else { placed = false; break }
+                                                tokenPos[ti] = pr.start
+                                                tokenOrder[ti] = ti
+                                            }
+                                            // A token that matches nowhere on its own can't be
+                                            // rescued by reordering.
+                                            guard placed else { break }
+                                            // Insertion sort: a query is a handful of tokens.
+                                            var si = 1
+                                            while si < tokens.count {
+                                                let v = tokenOrder[si]
+                                                var sj = si - 1
+                                                while sj >= 0, tokenPos[tokenOrder[sj]] > tokenPos[v] {
+                                                    tokenOrder[sj + 1] = tokenOrder[sj]; sj &-= 1
+                                                }
+                                                tokenOrder[sj + 1] = v; si &+= 1
+                                            }
                                         }
-                                        let slice = UnsafeBufferPointer(start: allBase + off + pathSearchFrom, count: len - pathSearchFrom)
-                                        // May go negative once pathSearchFrom passes bnOff: bpos = i - boff
-                                        // must stay basename-relative, and fuzzyScoreBytes guards 0..<64.
-                                        let boff = bnOff - pathSearchFrom
-                                        var r = token.withUnsafeBufferPointer {
-                                            fuzzyScoreBytes($0, slice, boundaries: bnBounds, boundariesOffset: boff)
-                                        }
-                                        // NFC fallback: the stored path may be in the other normalization form.
-                                        // Scale the score up to the NFD byte length so NFC-stored paths rank
-                                        // on the same scale as NFD-stored twins (NFD hangul is ~2x the bytes).
-                                        if r == nil, let alt = tokenAltBytes[ti] {
-                                            r = alt.withUnsafeBufferPointer {
+                                        tokenPathScore = 0; tokenPathStart = Int.max; tokenPathEnd = 0
+                                        allTokensMatchPath = true; pathSearchFrom = 0; tokenSegMatches = 0
+
+                                        for oi in 0 ..< tokens.count {
+                                            let ti = tokenOrder[oi]
+                                            let token = tokens[ti]
+                                            guard allTokensMatchPath, pathSearchFrom < len else {
+                                                allTokensMatchPath = false; break
+                                            }
+                                            let slice = UnsafeBufferPointer(start: allBase + off + pathSearchFrom, count: len - pathSearchFrom)
+                                            // May go negative once pathSearchFrom passes bnOff: bpos = i - boff
+                                            // must stay basename-relative, and fuzzyScoreBytes guards 0..<64.
+                                            let boff = bnOff - pathSearchFrom
+                                            var r = token.withUnsafeBufferPointer {
                                                 fuzzyScoreBytes($0, slice, boundaries: bnBounds, boundariesOffset: boff)
                                             }
-                                            if let rr = r, !alt.isEmpty {
-                                                r = (rr.score * token.count / alt.count, rr.start, rr.end)
+                                            // NFC fallback: the stored path may be in the other normalization form.
+                                            // Scale the score up to the NFD byte length so NFC-stored paths rank
+                                            // on the same scale as NFD-stored twins (NFD hangul is ~2x the bytes).
+                                            if r == nil, let alt = tokenAltBytes[ti] {
+                                                r = alt.withUnsafeBufferPointer {
+                                                    fuzzyScoreBytes($0, slice, boundaries: bnBounds, boundariesOffset: boff)
+                                                }
+                                                if let rr = r, !alt.isEmpty {
+                                                    r = (rr.score * token.count / alt.count, rr.start, rr.end)
+                                                }
+                                            }
+                                            if let r {
+                                                tokenPathScore &+= r.score
+                                                let absStart = pathSearchFrom + r.start
+                                                let absEnd = pathSearchFrom + r.end
+                                                tokenPathStart = min(tokenPathStart, absStart)
+                                                tokenPathEnd = max(tokenPathEnd, absEnd)
+                                                // Check if match starts at a segment boundary (after / or start of path)
+                                                if absStart == 0 || allBase[off + absStart - 1] == 0x2F {
+                                                    tokenSegMatches &+= 1
+                                                }
+                                                pathSearchFrom = absEnd
+                                            } else {
+                                                allTokensMatchPath = false; break
                                             }
                                         }
-                                        if let r {
-                                            tokenPathScore &+= r.score
-                                            let absStart = pathSearchFrom + r.start
-                                            let absEnd = pathSearchFrom + r.end
-                                            tokenPathStart = min(tokenPathStart, absStart)
-                                            tokenPathEnd = max(tokenPathEnd, absEnd)
-                                            // Check if match starts at a segment boundary (after / or start of path)
-                                            if absStart == 0 || allBase[off + absStart - 1] == 0x2F {
-                                                tokenSegMatches &+= 1
-                                            }
-                                            pathSearchFrom = absEnd
-                                        } else {
-                                            allTokensMatchPath = false; break
+                                        if allTokensMatchPath {
+                                            break
                                         }
+                                        attempt &+= 1
                                     }
                                     if allTokensMatchPath, tokenPathScore > pathScore {
                                         pathScore = tokenPathScore; pathWindow = tokenPathEnd - tokenPathStart
