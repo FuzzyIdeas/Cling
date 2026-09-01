@@ -176,11 +176,12 @@ struct FilterDiscoveryPanel: View {
     @Default(.toolbarRowBackground) private var toolbarRowBackground
 
     /// Puts the divider on the seam between the results table and the file preview, so the bottom
-    /// row repeats a split the window already draws above it at any size. The subtraction is the
-    /// padding stacked between this HStack and the table's: this panel's own 4, the row background's
-    /// 10 when it is on, the 14 of column spacing, half the divider, and half the table's own gap.
+    /// row repeats a split the window already draws above it at any size. The inset is the padding
+    /// stacked between this HStack and the table's (this panel's own 4, plus the row background's 10
+    /// when it is on), the 14 of column spacing and half the divider, less half the 10pt gutter the
+    /// table leaves for the preview, since the divider lands in the middle of that gutter.
     private var folderColumnWidth: CGFloat {
-        let inset = 4 + (toolbarRowBackground ? 10.0 : 0) + 14 + 0.5 + 5
+        let inset = 4 + (toolbarRowBackground ? 10.0 : 0) + 14 + 0.5 - 5
         return max(WindowManager.previewWidth(forWindowWidth: wm.size.width) - inset, 160)
     }
 
