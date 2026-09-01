@@ -467,6 +467,32 @@ private func letterMaskBytes(_ p: UnsafeBufferPointer<UInt8>) -> UInt64 {
 /// Split a query into space-delimited tokens, but keep a double-quoted run as a single token
 /// (quotes removed). Lets a path with spaces survive, e.g. `in:"/Users/me/My Folder"`. Single
 /// quotes are left intact so the leading-quote literal operator ('foo) is unaffected.
+/// How far a typed extension is from a real one, in the terms the person typing was thinking in.
+///
+/// Dropping letters is abbreviation, not error: `ml` is how you shorten `toml`, the same way
+/// `cfghrd` shortens `config herdr`. Levenshtein charges two deletions for that while charging only
+/// one substitution for `ml` against `md`, which ranked a README above the `.toml` actually being
+/// looked for. A tail contained in the extension in order is therefore free, and edit distance is
+/// left to do what it is good at: catching a genuine slip like `yml` for `toml`.
+private func extDistance(_ tail: [UInt8], _ ext: [UInt8], limit: Int) -> Int {
+    // Half the extension at least, or it isn't an abbreviation of it. `extID` puts no length cap
+    // on what counts as an extension, so the index is full of junk like `.o-5VSGCNWGXUX6`, and a
+    // long enough string contains almost any short tail in order: `ml` "abbreviates" `.metal`, and
+    // `gyml` matched a build-artifact suffix well enough to be picked over the real `yml`.
+    if tail.count * 2 >= ext.count {
+        var t = 0
+        for c in ext where t < tail.count {
+            if tail[t] == c {
+                t &+= 1
+            }
+        }
+        if t == tail.count {
+            return 0
+        }
+    }
+    return editDistance(tail, ext, limit: limit)
+}
+
 /// Levenshtein distance between two short byte strings, abandoned once it passes `limit`.
 /// Extensions are a handful of bytes, so the plain table is cheaper than anything cleverer.
 private func editDistance(_ a: [UInt8], _ b: [UInt8], limit: Int) -> Int {
@@ -2058,7 +2084,7 @@ final class SearchEngine: @unchecked Sendable {
             for ext in known.values {
                 let e = Array(ext.dropFirst().utf8)
                 guard !e.isEmpty else { continue }
-                d = min(d, editDistance(split.tail, e, limit: maxDist))
+                d = min(d, extDistance(split.tail, e, limit: maxDist))
                 if d == 0 {
                     break
                 }
@@ -2081,7 +2107,7 @@ final class SearchEngine: @unchecked Sendable {
         for (id, ext) in known {
             let e = Array(ext.dropFirst().utf8) // stored with the leading dot
             guard !e.isEmpty else { continue }
-            let d = editDistance(tail, e, limit: maxDist)
+            let d = extDistance(tail, e, limit: maxDist)
             if d <= maxDist {
                 table[id] = extCredit(distance: d, maxDist: maxDist, tailLen: tail.count)
             }
