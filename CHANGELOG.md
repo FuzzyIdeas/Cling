@@ -1,3 +1,28 @@
+# 2.7.1
+
+**[Download Cling 2.7.1 →](https://files.lowtechguys.com/releases/Cling-2.7.1.dmg)**
+## Features
+
+- **Minimum query length**: Cling waits for 3 characters before searching instead of matching on the first keystroke. You can configure it in Settings > Search, `1` brings back the old behaviour
+
+- **Dim status bar**: the bottom bar sits faded and comes back to full strength when you hover it. You can turn it off in Settings > Style
+
+- **Filter icons and colors**: set icons and colors that change the appearance of the Cling window when a filter gets activated to make it more obvious when the search is scoped to a limited set of files
+
+## Fixes
+
+- Fixed a possible freeze while the results list was showing files from a drive that had stalled, caused by reading each row's size and date from the disk as the list drew and sorted
+- Fixed a possible freeze when a script step timed out or failed to start
+- Script steps no longer leave a temp folder behind on every run
+
+## Improvements
+
+- Size and date fill in immediately for files on the startup disk
+- Results whose letters are scattered across a long path now rank below the ones that should match naturally
+- Config files rank alongside everything else instead of ranking lower because they're in a hidden folder
+- Getting the extension wrong still finds the file: a query ending in `yml` can turn up `.toml`
+- Search terms match in any order, so you can narrow a search by adding a folder name after what you already typed
+
 # 2.7.0
 
 **[Download Cling 2.7.0 →](https://files.lowtechguys.com/releases/Cling-2.7.0.dmg)**
