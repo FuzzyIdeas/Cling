@@ -217,7 +217,9 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     /// The part of the query that goes BEFORE the user's typed search: the raw query when set,
     /// otherwise the compiled structured tokens followed by the Prepend text.
     var queryPrefix: String {
-        if let raw = rawQuery?.trimmingCharacters(in: .whitespaces), !raw.isEmpty { return raw }
+        if let raw = rawQuery?.trimmingCharacters(in: .whitespaces), !raw.isEmpty {
+            return raw
+        }
         return [compiledCore, preQuery]
             .compactMap { $0?.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
@@ -315,9 +317,15 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         case .folders: parts.append("folders only")
         case .both: break
         }
-        if let exclude, !exclude.isEmpty { parts.append("not " + exclude) }
-        if let preQuery { parts.append(preQuery) }
-        if let postQuery { parts.append("...\(postQuery)") }
+        if let exclude, !exclude.isEmpty {
+            parts.append("not " + exclude)
+        }
+        if let preQuery {
+            parts.append(preQuery)
+        }
+        if let postQuery {
+            parts.append("...\(postQuery)")
+        }
         if let folders, !folders.isEmpty {
             var names = folders.map { FuzzyClient.friendlyName(for: $0) }
             if let maxFolders, names.count > maxFolders {
@@ -326,7 +334,9 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
             }
             parts.append("in \(names.joined(separator: ", "))")
         }
-        if let maxDepth { parts.append("depth ≤ \(maxDepth)") }
+        if let maxDepth {
+            parts.append("depth ≤ \(maxDepth)")
+        }
         return parts.joined(separator: ", ")
     }
 
@@ -525,7 +535,9 @@ enum WindowAppearance: String, CaseIterable, Defaults.Serializable {
     case opaque = "Opaque"
 
     static var defaultValue: WindowAppearance {
-        if #available(macOS 26, *) { return .glassy }
+        if #available(macOS 26, *) {
+            return .glassy
+        }
         return .vibrant
     }
 
@@ -541,7 +553,9 @@ enum WindowAppearance: String, CaseIterable, Defaults.Serializable {
 
     var available: Bool {
         if self == .glassy {
-            if #available(macOS 26, *) { return true }
+            if #available(macOS 26, *) {
+                return true
+            }
             return false
         }
         return true
@@ -631,6 +645,9 @@ extension Defaults.Keys {
     static let hiddenActionButtons = Key<[HiddenActionButton]>("hiddenActionButtons", default: [])
     static let folderFilters = Key<[FolderFilter]>("folderFilters", default: DEFAULT_FOLDER_FILTERS)
     static let maxResultsCount = Key<Int>("maxResultsCount", default: 1000)
+    /// Characters needed before a query is searched at all. One or two letters match a large share
+    /// of a 400k-path index, which is both the slowest search there is and the least useful.
+    static let minQueryLength = Key<Int>("minQueryLength", default: 3)
     static let externalVolumes = Key<[FilePath]>("externalVolumes", default: [])
     static let disabledVolumes = Key<[FilePath]>("disabledVolumes", default: [])
     static let indexedVolumePaths = Key<[FilePath]>("indexedVolumePaths", default: [])

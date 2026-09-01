@@ -556,7 +556,9 @@ private struct InterfaceSettingsPane: View {
     private func toolbarPlacement(for id: ActionID) -> Binding<ToolbarPlacement> {
         Binding(
             get: {
-                if hiddenActions.contains(id) { return .hidden }
+                if hiddenActions.contains(id) {
+                    return .hidden
+                }
                 return barActions.contains(id) ? .bar : .more
             },
             set: { newValue in
@@ -886,6 +888,17 @@ private struct SearchSettingsPane: View {
                     detail: "Words match as typed, not fuzzily. Prefix a word with ' to fuzzy match it.",
                     isOn: $literalSearch
                 )
+                SettingRow(title: "Minimum query length") {
+                    Picker("", selection: $minQueryLength) {
+                        Text("1").tag(1)
+                        Text("2").tag(2)
+                        Text("3").tag(3)
+                        Text("4").tag(4)
+                        Text("5").tag(5)
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
             }
 
             Section("Results") {
@@ -998,6 +1011,7 @@ private struct SearchSettingsPane: View {
     @State private var cliInstallSuccess = false
 
     @Default(.maxResultsCount) private var maxResultsCount
+    @Default(.minQueryLength) private var minQueryLength
     @Default(.defaultResultsMode) private var defaultResultsMode
     @Default(.searchScopes) private var searchScopes
     @Default(.showSearchHints) private var showSearchHints
@@ -1777,7 +1791,9 @@ struct ReindexTimeIntervalSlider: View {
         } else {
             (anchors[min(idx + 1, anchors.count - 1)] - nearest) * magneticFraction
         }
-        if abs(raw - nearest) <= radius { return nearest }
+        if abs(raw - nearest) <= radius {
+            return nearest
+        }
         return (raw / 3600).rounded() * 3600
     }
 

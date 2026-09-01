@@ -62,7 +62,9 @@ final class PathBlocklist: @unchecked Sendable {
             guard !line.isEmpty, !line.hasPrefix("#") else { continue }
             if line.hasPrefix("!") {
                 let value = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
-                if !value.isEmpty { allow.append(value) }
+                if !value.isEmpty {
+                    allow.append(value)
+                }
             } else {
                 block.append(line)
             }
@@ -94,7 +96,9 @@ private func blocklistMatchLength(_ path: String, prefixes: [[UInt8]], component
         for prefix in prefixes {
             let pLen = prefix.count
             guard pLen > best else { continue } // can't beat the current best
-            if len >= pLen, memcmp(buf.baseAddress!, prefix, pLen) == 0 { best = pLen; continue }
+            if len >= pLen, memcmp(buf.baseAddress!, prefix, pLen) == 0 {
+                best = pLen; continue
+            }
             // A prefix ending in "/" also matches the bare directory itself ("X/" matches path "X").
             if prefix[pLen - 1] == 0x2F, len == pLen - 1, memcmp(buf.baseAddress!, prefix, pLen - 1) == 0 {
                 best = pLen
@@ -111,7 +115,9 @@ private func blocklistMatchLength(_ path: String, prefixes: [[UInt8]], component
             if !matched, cLen >= 2, component[cLen - 1] == 0x2F, len >= cLen - 1 {
                 matched = memcmp(buf.baseAddress! + len - (cLen - 1), component, cLen - 1) == 0
             }
-            if matched { best = cLen }
+            if matched {
+                best = cLen
+            }
         }
     }
     return best
@@ -156,8 +162,12 @@ func blocklistDirHasAllowedDescendant(_ path: String) -> Bool {
     let withSlash = path + "/"
     for rule in bl.allowComponentsStr {
         // The allow pattern already appears in the path, or continuing down could complete it.
-        if withSlash.contains(rule) { return true }
-        if suffixIsPrefix(of: rule, in: withSlash) { return true }
+        if withSlash.contains(rule) {
+            return true
+        }
+        if suffixIsPrefix(of: rule, in: withSlash) {
+            return true
+        }
     }
     for rule in bl.allowPrefixesStr where rule.hasPrefix(withSlash) {
         return true
@@ -176,10 +186,14 @@ private func suffixIsPrefix(of r: String, in s: String) -> Bool {
         var ok = true
         var k = 0
         while k < len {
-            if sb[off + k] != rb[k] { ok = false; break }
+            if sb[off + k] != rb[k] {
+                ok = false; break
+            }
             k += 1
         }
-        if ok { return true }
+        if ok {
+            return true
+        }
     }
     return false
 }
@@ -194,8 +208,12 @@ nonisolated func explainPathExclusion(_ rawPath: String, coord: SearchCoordinato
     func firmlinkVariants(_ p: String) -> [String] {
         var out = [p]
         for fl in ["/tmp", "/var", "/etc"] {
-            if p == fl || p.hasPrefix(fl + "/") { out.append("/private" + p) }
-            if p == "/private" + fl || p.hasPrefix("/private" + fl + "/") { out.append(String(p.dropFirst("/private".count))) }
+            if p == fl || p.hasPrefix(fl + "/") {
+                out.append("/private" + p)
+            }
+            if p == "/private" + fl || p.hasPrefix("/private" + fl + "/") {
+                out.append(String(p.dropFirst("/private".count)))
+            }
         }
         return out
     }
@@ -217,9 +235,15 @@ nonisolated func explainPathExclusion(_ rawPath: String, coord: SearchCoordinato
     let home = HOME.string
     let library = home + "/Library"
     let (scope, scopeNote): (SearchScope?, String) = {
-        if let (s, root) = ScopeIgnore.scopeAndRoot(forPath: rawPath) { return (s, " (root \(root))") }
-        if rawPath == library || rawPath.hasPrefix(library + "/") { return (.library, "") }
-        if rawPath == home || rawPath.hasPrefix(home + "/") { return (.home, "") }
+        if let (s, root) = ScopeIgnore.scopeAndRoot(forPath: rawPath) {
+            return (s, " (root \(root))")
+        }
+        if rawPath == library || rawPath.hasPrefix(library + "/") {
+            return (.library, "")
+        }
+        if rawPath == home || rawPath.hasPrefix(home + "/") {
+            return (.home, "")
+        }
         return (nil, "")
     }()
     if let scope {
@@ -493,7 +517,9 @@ class FuzzyClient {
                 logActivity("QuickFilter: \(quickFilter.id)")
                 // Deselect folder filter unless quick filter has its own folders
                 if quickFilter.folders == nil || quickFilter.folders?.isEmpty == true {
-                    if folderFilter != nil { folderFilter = nil }
+                    if folderFilter != nil {
+                        folderFilter = nil
+                    }
                 }
             } else {
                 logActivity("QuickFilter cleared")
@@ -514,7 +540,9 @@ class FuzzyClient {
         let scopes = Defaults[.searchScopes]
         var result = [(SearchEngine, String, Int)]()
         for scope in scopes {
-            if !proactive, !Self.freeScopes.contains(scope) { continue }
+            if !proactive, !Self.freeScopes.contains(scope) {
+                continue
+            }
             if let eng = scopeEngines[scope] {
                 result.append((eng, scope.label, Self.scopeBiases[scope] ?? 0))
             }
@@ -556,7 +584,9 @@ class FuzzyClient {
                     indexVolume(volumeFilter)
                 }
                 logActivity("Volume filter: \(volumeFilter.name.string)")
-                if folderFilter != nil { folderFilter = nil }
+                if folderFilter != nil {
+                    folderFilter = nil
+                }
             } else {
                 logActivity("Volume filter cleared")
             }
@@ -574,7 +604,9 @@ class FuzzyClient {
             if let folderFilter {
                 logActivity("Folder filter: \(folderFilter.id)")
                 // Deselect volume filter
-                if volumeFilter != nil { volumeFilter = nil }
+                if volumeFilter != nil {
+                    volumeFilter = nil
+                }
                 // Merge folders into active quick filter, keeping non-folder properties
                 if let currentQuick = quickFilter {
                     quickFilter = QuickFilter(
@@ -614,7 +646,9 @@ class FuzzyClient {
     var query = "" {
         didSet {
             guard !showLiveIndex else { return }
-            if suppressNextSearch { suppressNextSearch = false; return }
+            if suppressNextSearch {
+                suppressNextSearch = false; return
+            }
             querySendTask = mainAsyncAfter(ms: 150) { [self] in
                 performSearch()
             }
@@ -658,8 +692,11 @@ class FuzzyClient {
         didSet { oldValue?.cancel() }
     }
 
+    /// A query too short to search counts as no query at all, so the default results stay up rather
+    /// than the list churning through a match on every second file. A folder or Quick Filter narrows
+    /// the search enough on its own, so those keep working from the first character.
     @ObservationIgnored var emptyQuery: Bool {
-        query.isEmpty && folderFilter == nil && quickFilter == nil
+        query.count < Defaults[.minQueryLength] && folderFilter == nil && quickFilter == nil
     }
 
     // MARK: - Query Construction
@@ -670,12 +707,24 @@ class FuzzyClient {
         let s = path.string
         let icloud = home + "/Library/Mobile Documents/com~apple~CloudDocs"
 
-        if s == "/" { return "Root" }
-        if s == home { return "Home" }
-        if s == icloud { return "iCloud" }
-        if s.hasPrefix(icloud + "/") { return "iCloud/\(path.name.string)" }
-        if s == "/System/Applications" { return "System Apps" }
-        if s == "\(home)/Applications" { return "~/Applications" }
+        if s == "/" {
+            return "Root"
+        }
+        if s == home {
+            return "Home"
+        }
+        if s == icloud {
+            return "iCloud"
+        }
+        if s.hasPrefix(icloud + "/") {
+            return "iCloud/\(path.name.string)"
+        }
+        if s == "/System/Applications" {
+            return "System Apps"
+        }
+        if s == "\(home)/Applications" {
+            return "~/Applications"
+        }
         return path.name.string
     }
 
@@ -704,8 +753,12 @@ class FuzzyClient {
         }
 
         // Default: prefer Home (most likely user intent), then Applications
-        if let idx = engines.firstIndex(where: { $0.label == "Home" }) { return idx }
-        if let idx = engines.firstIndex(where: { $0.label == "Applications" }) { return idx }
+        if let idx = engines.firstIndex(where: { $0.label == "Home" }) {
+            return idx
+        }
+        if let idx = engines.firstIndex(where: { $0.label == "Applications" }) {
+            return idx
+        }
         return 0
     }
 
@@ -715,7 +768,9 @@ class FuzzyClient {
         var bestQ = 0
         var i = 0
         while i < results.count {
-            if results[i].quality > bestQ { bestQ = results[i].quality }
+            if results[i].quality > bestQ {
+                bestQ = results[i].quality
+            }
             i &+= 1
         }
         let minQ = bestQ / 3
@@ -733,8 +788,12 @@ class FuzzyClient {
         let tokens = query.split(separator: " ")
         guard !tokens.isEmpty else { return false }
         for t in tokens {
-            if t.hasPrefix("."), t.count > 1 { continue }
-            if t.hasPrefix("*."), t.count > 2 { continue }
+            if t.hasPrefix("."), t.count > 1 {
+                continue
+            }
+            if t.hasPrefix("*."), t.count > 2 {
+                continue
+            }
             return false
         }
         return true
@@ -809,7 +868,9 @@ class FuzzyClient {
         }
         if ongoing, let key = operationKey {
             ongoingOperations[key] = message
-            if let count { ongoingOperationCounts[key] = count }
+            if let count {
+                ongoingOperationCounts[key] = count
+            }
             setOperation(compactOperationSummary())
         } else {
             if let key = operationKey {
@@ -946,7 +1007,9 @@ class FuzzyClient {
                 // "flip the toggle on -> index"; a volume toggled off then on with its engine still loaded
                 // is left alone). indexVolumes already skips volumes that are mid-index.
                 let toIndex = reEnabled.filter { $0.exists && volumeEngines[$0] == nil }
-                if !toIndex.isEmpty { indexVolumes(Array(toIndex)) }
+                if !toIndex.isEmpty {
+                    indexVolumes(Array(toIndex))
+                }
             }.store(in: &observers)
 
         NSWorkspace.shared.notificationCenter
@@ -1171,9 +1234,13 @@ class FuzzyClient {
                 let volume = FilePath("/Volumes/\(volumeName)")
                 // Also try the original dashed name
                 let volumeDashed = FilePath("/Volumes/\(name)")
-                if Defaults[.disabledVolumes].contains(volume) || Defaults[.disabledVolumes].contains(volumeDashed) { return nil }
+                if Defaults[.disabledVolumes].contains(volume) || Defaults[.disabledVolumes].contains(volumeDashed) {
+                    return nil
+                }
                 // Prefer the path that exists, fall back to the spaced version
-                if volumeDashed.exists { return volumeDashed }
+                if volumeDashed.exists {
+                    return volumeDashed
+                }
                 return volume
             }
             if !discoveredVolumePaths.isEmpty {
@@ -1194,7 +1261,9 @@ class FuzzyClient {
             for volume in await MainActor.run(body: { self.enabledVolumes }) {
                 let file = volumeIndexFile(volume)
                 guard file.exists else {
-                    if Defaults[.indexedVolumePaths].contains(volume) { missingIndexVolumes.append(volume) }
+                    if Defaults[.indexedVolumePaths].contains(volume) {
+                        missingIndexVolumes.append(volume)
+                    }
                     continue
                 }
                 let eng = SearchEngine()
@@ -1204,7 +1273,9 @@ class FuzzyClient {
                     if metaCacheFile.exists {
                         let cache = SMBMetadataCache()
                         cache.load(from: metaCacheFile)
-                        if cache.count > 0 { metaCache = cache }
+                        if cache.count > 0 {
+                            metaCache = cache
+                        }
                     }
                     await MainActor.run {
                         releaseInBackground(self.volumeEngines.updateValue(eng, forKey: volume))
@@ -1273,14 +1344,18 @@ class FuzzyClient {
         stopWatchingFiles()
         indexFiles(pauseSearch: pauseSearch, scopes: scopes) { [self] in
             watchFiles()
-            if scopes == nil { indexStaleExternalVolumes() }
+            if scopes == nil {
+                indexStaleExternalVolumes()
+            }
         }
     }
 
     func indexFiles(wait: Bool = false, changedWithin: Date? = nil, pauseSearch: Bool = true, scopes scopeOverride: [SearchScope]? = nil, onFinish: (@MainActor () -> Void)? = nil) {
         _ = invalidReq3(PRODUCTS, nil)
         backgroundIndexing = true
-        if pauseSearch { indexing = true }
+        if pauseSearch {
+            indexing = true
+        }
 
         let scopes = scopeOverride ?? Defaults[.searchScopes]
         guard !scopes.isEmpty else {
@@ -1320,8 +1395,12 @@ class FuzzyClient {
                             // applyBlocklist, so it can descend into a blocked dir that has an allowed
                             // descendant instead of pruning it. skipDir only covers scope/volume excludes.
                             let skipDir: ((String) -> Bool)? = { path in
-                                if excludeSkip?(path) ?? false { return true }
-                                if volumePaths.contains(path) { return true }
+                                if excludeSkip?(path) ?? false {
+                                    return true
+                                }
+                                if volumePaths.contains(path) {
+                                    return true
+                                }
                                 return false
                             }
                             let ignore = scopeIgnoreFile ?? (dir.applyIgnore ? ignoreChecker : nil)
@@ -1410,9 +1489,15 @@ class FuzzyClient {
 
         /// Filesystem-touching predicate; evaluated off the main actor.
         func shouldRemove(_ path: String) -> Bool {
-            if path.isEmpty { return false }
-            if isPathBlocked(path) { return true }
-            if let ignoreFile, path.hasPrefix(homePrefix), path.isIgnored(in: ignoreFile) { return true }
+            if path.isEmpty {
+                return false
+            }
+            if isPathBlocked(path) {
+                return true
+            }
+            if let ignoreFile, path.hasPrefix(homePrefix), path.isIgnored(in: ignoreFile) {
+                return true
+            }
             return volumeFsignores.contains { path.hasPrefix($0.prefix) && path.isIgnored(in: $0.fsignore) }
         }
 
@@ -1427,7 +1512,9 @@ class FuzzyClient {
             if !toRemove.isEmpty {
                 self.logActivity("Cleaned \(toRemove.count) ignored path\(toRemove.count == 1 ? "" : "s") from recents")
                 self.updateIndexedCount()
-                if self.noQuery { self.updateDefaultResults(debounce: true) }
+                if self.noQuery {
+                    self.updateDefaultResults(debounce: true)
+                }
             }
         }
         log.debug("cleanRecentsEngine: removed \(toRemove.count) paths")
@@ -1456,13 +1543,19 @@ class FuzzyClient {
                     else { return }
 
                     let pathStr = path.string
-                    if isPathBlocked(pathStr) { return }
+                    if isPathBlocked(pathStr) {
+                        return
+                    }
                     if path.exists {
                         let isDir = path.isDir
-                        if path.starts(with: HOME), pathStr.isIgnored(in: fsignoreString) { return }
+                        if path.starts(with: HOME), pathStr.isIgnored(in: fsignoreString) {
+                            return
+                        }
                         for volume in enabledVolumes where pathStr.hasPrefix(volume.string + "/") {
                             let vfsignore = volume / ".fsignore"
-                            if vfsignore.exists, pathStr.isIgnored(in: vfsignore.string) { return }
+                            if vfsignore.exists, pathStr.isIgnored(in: vfsignore.string) {
+                                return
+                            }
                             break
                         }
                         // Add to recents engine (never blocks main thread)
@@ -1478,10 +1571,14 @@ class FuzzyClient {
                             self.removedFiles.remove(pathStr)
                             let isNew = !self.seenPaths.contains(pathStr)
                             self.seenPaths.insert(pathStr)
-                            if isNew { self.indexedCount &+= 1 }
+                            if isNew {
+                                self.indexedCount &+= 1
+                            }
                             let kind: IndexChange.Kind = isNew ? .added : .modified
                             self.appendLiveChange(IndexChange(path: pathStr, kind: kind))
-                            if self.noQuery { self.updateDefaultResults(debounce: true) }
+                            if self.noQuery {
+                                self.updateDefaultResults(debounce: true)
+                            }
                         }
                     } else {
                         recentsEngine.removePath(pathStr)
@@ -1489,7 +1586,9 @@ class FuzzyClient {
                             self.removedFiles.insert(pathStr)
                             self.indexedCount = max(0, self.indexedCount &- 1)
                             self.appendLiveChange(IndexChange(path: pathStr, kind: .removed))
-                            if self.noQuery { self.updateDefaultResults(debounce: true) }
+                            if self.noQuery {
+                                self.updateDefaultResults(debounce: true)
+                            }
                             if let index = self.scoredResults.firstIndex(of: path) {
                                 self.scoredResults.remove(at: index)
                                 self.results = self.sortedResults()
@@ -1594,7 +1693,9 @@ class FuzzyClient {
             // Only search engines whose paths could match the volume/folder prefix
             engines = activeEngines.filter { eng in
                 // Recents only participates for mounted volumes (it won't have entries for unmounted ones)
-                if eng.label == "Recents" { return volumeMounted }
+                if eng.label == "Recents" {
+                    return volumeMounted
+                }
                 // Volume engines match if the prefix starts with the volume path
                 if let vol = volumeEngines.first(where: { $0.value === eng.engine })?.key {
                     return vp.hasPrefix(vol.string)
@@ -1607,7 +1708,9 @@ class FuzzyClient {
             }
         } else if let fps = folderPrefixes {
             engines = activeEngines.filter { eng in
-                if eng.label == "Recents" { return true }
+                if eng.label == "Recents" {
+                    return true
+                }
                 if let scope = SearchScope.allCases.first(where: { $0.label == eng.label }) {
                     return fps.contains { scopeCouldContain(scope, prefix: $0) }
                 }
@@ -1817,7 +1920,9 @@ class FuzzyClient {
             // Write HOME-relative paths to fsignore (skip already-present lines)
             let relativePaths = homePaths.map { path -> String in
                 var rel = String(path.string.dropFirst(homeStr.count))
-                if path.isDir { rel += "/" }
+                if path.isDir {
+                    rel += "/"
+                }
                 return rel
             }
             let existingLines = Set((try? String(contentsOfFile: fsignoreString, encoding: .utf8))?.components(separatedBy: .newlines) ?? [])
@@ -1866,7 +1971,9 @@ class FuzzyClient {
                 let volumeStr = volume.string + "/"
                 let relativePaths = paths.map { path -> String in
                     var rel = String(path.string.dropFirst(volumeStr.count))
-                    if path.isDir { rel += "/" }
+                    if path.isDir {
+                        rel += "/"
+                    }
                     return rel
                 }
                 let existingLines = Set((try? String(contentsOfFile: volumeFsignore.string, encoding: .utf8))?.components(separatedBy: .newlines) ?? [])
@@ -1897,7 +2004,9 @@ class FuzzyClient {
                 if !newPaths.isEmpty {
                     let additions = newPaths.joined(separator: "\n")
                     var updated = current
-                    if !updated.hasSuffix("\n") { updated += "\n" }
+                    if !updated.hasSuffix("\n") {
+                        updated += "\n"
+                    }
                     updated += additions
                     Defaults[.blockedContains] = updated
                     PathBlocklist.shared.rebuild()
@@ -2021,7 +2130,9 @@ class FuzzyClient {
             Defaults[.blockedContains] = Self.appendingLines(blockedContainsLines, to: Defaults[.blockedContains])
             blocklistChanged = true
         }
-        if blocklistChanged { PathBlocklist.shared.rebuild() }
+        if blocklistChanged {
+            PathBlocklist.shared.rebuild()
+        }
 
         // Drop the selected paths from the live index immediately for instant feedback.
         excludedPaths.formUnion(paths.map(\.string))
@@ -2116,7 +2227,9 @@ class FuzzyClient {
         for fp in mdQueryRecents where !seen.contains(fp.string) {
             seen.insert(fp.string)
             results.append(fp)
-            if results.count >= maxResults { break }
+            if results.count >= maxResults {
+                break
+            }
         }
 
         return results
@@ -2288,7 +2401,9 @@ class FuzzyClient {
                     maxDepth: maxDepth,
                     literalDefault: literalDefault
                 ).count
-                if total >= cap { break }
+                if total >= cap {
+                    break
+                }
             }
             return min(total, cap)
         }.value
@@ -2330,7 +2445,9 @@ class FuzzyClient {
         let newLines = add.filter { !existing.contains($0.trimmingCharacters(in: .whitespaces)) }
         guard !newLines.isEmpty else { return content }
         var updated = content
-        if !updated.isEmpty, !updated.hasSuffix("\n") { updated += "\n" }
+        if !updated.isEmpty, !updated.hasSuffix("\n") {
+            updated += "\n"
+        }
         updated += newLines.joined(separator: "\n")
         return updated
     }
@@ -2379,7 +2496,9 @@ class FuzzyClient {
         for change in liveIndexChanges.reversed() {
             guard seen.insert(Key(path: change.path, kind: change.kind)).inserted else { continue }
             deduped.append(change)
-            if deduped.count >= liveChangesMax { break } // newest-first, so this drops only the oldest
+            if deduped.count >= liveChangesMax {
+                break
+            } // newest-first, so this drops only the oldest
         }
         deduped.reverse() // restore oldest→newest
         liveIndexChanges = deduped
@@ -2388,7 +2507,9 @@ class FuzzyClient {
     private func compactOperationSummary() -> String {
         let ops = Array(ongoingOperations.values)
         guard let first = ops.last else { return "" }
-        if ops.count == 1 { return first }
+        if ops.count == 1 {
+            return first
+        }
         return "\(first) (+\(ops.count - 1) more)"
     }
 
@@ -2429,7 +2550,9 @@ class FuzzyClient {
     private func scopeCouldContain(_ scope: SearchScope, prefix: String) -> Bool {
         for dir in walkDirs(for: scope) {
             // prefix is inside this scope dir, or scope dir is inside the prefix
-            if prefix.hasPrefix(dir.dir) || dir.dir.hasPrefix(prefix) { return true }
+            if prefix.hasPrefix(dir.dir) || dir.dir.hasPrefix(prefix) {
+                return true
+            }
         }
         return false
     }
@@ -2470,7 +2593,9 @@ func computeShortcuts(for urls: [URL], reserved: Set<Character> = []) -> [URL: C
     for url in urls {
         let name = url.lastPathComponent.ns.deletingPathExtension
         guard let first = name.lowercased().first(where: { $0.isLetter || $0.isNumber }) else { continue }
-        if reserved.contains(first) { continue }
+        if reserved.contains(first) {
+            continue
+        }
         shortcuts[url] = first
     }
     return shortcuts
@@ -2544,7 +2669,9 @@ func commonApplications(for urls: [URL]) -> [URL] {
     openWithCacheLock.lock()
     openWithCache[key] = result
     openWithCacheOrder.append(key)
-    if openWithCacheOrder.count > 64 { openWithCache.removeValue(forKey: openWithCacheOrder.removeFirst()) }
+    if openWithCacheOrder.count > 64 {
+        openWithCache.removeValue(forKey: openWithCacheOrder.removeFirst())
+    }
     openWithCacheLock.unlock()
     return result
 }
