@@ -1978,12 +1978,15 @@ class FilePathBackgroundTasks {
         DispatchQueue.global(qos: .userInitiated).async(execute: fetcher)
     }
 
-    /// Drops a path's icon so the next render fetches it again. Used when a file is renamed or replaced.
+    /// Drops a path's icon and stat so the next render fetches them again. Used when a file is
+    /// renamed or replaced. The stat cache outlives the memo behind the size and date columns, so
+    /// without this a replaced file would keep reporting the size it had before.
     func invalidateIcon(of path: FilePath) {
         iconCache.removeValue(forKey: path)
         knownDirs.removeValue(forKey: path)
         iconFetchers[path]?.cancel()
         iconFetchers[path] = nil
+        statCache.removeValue(forKey: path)
     }
 
     /// The file's icon by type alone, with no disk access: `UTType(filenameExtension:)` is a lookup in
@@ -2011,10 +2014,55 @@ class FilePathBackgroundTasks {
         knownDirs[path] = isDir
     }
 
+    /// Size and modification date from a single `stat`, for a path the caller has established sits
+    /// on the boot volume. That syscall is a few microseconds, so a row can afford it while it
+    /// draws and the columns are filled on first paint instead of a beat later.
+    ///
+    /// Deliberately not `fileSize()`: that one calls `exists` and then wraps `attributesOfItem` in
+    /// a `withTimeout`, so it costs two syscalls, a bridged dictionary, and a dispatch round trip,
+    /// and it blocks the main thread for the full 5s of that timeout on a path that stalls.
+    ///
+    /// The boot volume can stall too, under a FUSE mount or a disk pinned by another process, so
+    /// the first call that overruns a frame gives the fast path up for the rest of the session and
+    /// everything falls back to `fetchAttributes`. One slow row, once, rather than 5s per row
+    /// forever (CLING-18).
+    func inlineAttributes(of path: FilePath) -> (size: Int, date: Date)? {
+        if let cached = statCache[path] {
+            return cached
+        }
+        guard inlineStatAllowed else { return nil }
+
+        // `lstat` rather than `stat`: the bare name `stat` resolves to the struct instead of the
+        // syscall, and not following symlinks is what `attributesOfItem` did here before anyway.
+        let start = DispatchTime.now().uptimeNanoseconds
+        var info = Darwin.stat()
+        let ok = lstat(path.string, &info) == 0
+        let elapsed = DispatchTime.now().uptimeNanoseconds - start
+
+        if elapsed > Self.inlineStatBudget {
+            inlineStatAllowed = false
+            log.error("stat(\(path.string)) took \(elapsed / 1_000_000)ms on the main thread, falling back to background attribute fetches")
+        }
+        guard ok else { return nil }
+
+        let mtime = info.st_mtimespec
+        let attrs = (
+            size: Int(info.st_size),
+            date: Date(timeIntervalSince1970: TimeInterval(mtime.tv_sec) + TimeInterval(mtime.tv_nsec) / 1_000_000_000)
+        )
+        storeStat(attrs, for: path)
+        return attrs
+    }
+
     private static let folderIcon = NSWorkspace.shared.icon(for: .folder)
     private static let genericIcon = NSWorkspace.shared.icon(for: .data)
 
+    private static let inlineStatBudget: UInt64 = 16_000_000 // one 60Hz frame
+
     private var attrFetchers: [FilePath: DispatchWorkItem] = [:]
+    private var inlineStatAllowed = true
+    private var statCache: [FilePath: (size: Int, date: Date)] = [:]
+    private var statOrder: [FilePath] = []
     private var attrCache: [FilePath: [FileAttributeKey: Any]] = [:]
     private var attrOrder: [FilePath] = []
     private var iconFetchers: [FilePath: DispatchWorkItem] = [:]
@@ -2045,6 +2093,17 @@ class FilePathBackgroundTasks {
         refreshTask = mainAsyncAfter(ms: 50) { FUZZY.reloadResults() }
     }
 
+    /// Bounded like `iconCache`. Five getters read the same path, so caching keeps that to one
+    /// `stat` even when the memo behind an individual column has been evicted.
+    private func storeStat(_ attrs: (size: Int, date: Date), for path: FilePath) {
+        if statCache.updateValue(attrs, forKey: path) == nil {
+            statOrder.append(path)
+            if statOrder.count > 2000 {
+                statCache.removeValue(forKey: statOrder.removeFirst())
+            }
+        }
+    }
+
     /// Bounded for the same reason as `iconCache`: every row now goes through the attribute fetch,
     /// so a long session would otherwise keep an entry for every file it has ever drawn.
     private func storeAttrs(_ attrs: [FileAttributeKey: Any], for path: FilePath) {
@@ -2073,18 +2132,30 @@ extension FilePath {
     }
 
     /// Read through `memoz` while SwiftUI builds a row and while the table sorts, so like `icon`
-    /// these must never touch the disk. The `isOnExternalVolume` guard they used to make was not
-    /// enough: it only caught volumes `isLocalVolume` reports as external, and a mount it calls
-    /// local still stalls. `fileSize()` then blocks the main thread for the full 5s of its
-    /// `withTimeout`, once per row, and sorting by size or date reads every result rather than
-    /// only the visible ones (CLING-18). Answer from the memo and let the background fetch
-    /// overwrite it, the same way icons already work.
+    /// these must never block while SwiftUI builds a row or sorts the table.
+    ///
+    /// Nothing under a mounted volume is touched from here. That is stricter than the
+    /// `isOnExternalVolume` guard these used to make, which only caught volumes `isLocalVolume`
+    /// reports as external and so let a USB or SMB mount that calls itself local through to a
+    /// `stat` that stalls, once per row and once per result while sorting (CLING-18).
+    ///
+    /// Everything else is on the boot volume, where a `stat` costs microseconds, so it is read
+    /// inline and the columns are right on first paint. `inlineAttributes` gives that up on its
+    /// own if the syscall ever overruns a frame.
+    private var inlineAttrs: (size: Int, date: Date)? {
+        guard memoz.volume == nil else { return nil }
+        return FilePathBackgroundTasks.shared.inlineAttributes(of: self)
+    }
+
     var date: Date {
         if let meta = smbMeta {
             return meta.modificationDate
         }
         if isOffline {
             return Date()
+        }
+        if let attrs = inlineAttrs {
+            return attrs.date
         }
         FilePathBackgroundTasks.shared.fetchAttributes(of: self)
         return Date()
@@ -2096,6 +2167,9 @@ extension FilePath {
         if isOffline {
             return "—"
         }
+        if let attrs = inlineAttrs {
+            return attrs.date.formatted(dateFormat)
+        }
         FilePathBackgroundTasks.shared.fetchAttributes(of: self)
         return "Fetching..."
     }
@@ -2105,6 +2179,9 @@ extension FilePath {
         }
         if isOffline {
             return "—"
+        }
+        if let attrs = inlineAttrs {
+            return attrs.date.iso8601String
         }
         FilePathBackgroundTasks.shared.fetchAttributes(of: self)
         return "Fetching..."
@@ -2117,6 +2194,9 @@ extension FilePath {
         if isOffline {
             return 0
         }
+        if let attrs = inlineAttrs {
+            return attrs.size
+        }
         FilePathBackgroundTasks.shared.fetchAttributes(of: self)
         return 0
     }
@@ -2127,6 +2207,9 @@ extension FilePath {
         }
         if isOffline {
             return "—"
+        }
+        if let attrs = inlineAttrs {
+            return attrs.size.humanSize
         }
         FilePathBackgroundTasks.shared.fetchAttributes(of: self)
         return "—"
