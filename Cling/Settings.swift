@@ -757,9 +757,10 @@ extension Defaults.Keys {
     static let toolbarShowDividers = Key<Bool>("toolbarShowDividers", default: true)
     static let showActionMenu = Key<Bool>("showActionMenu", default: true)
     static let toolbarRowBackground = Key<Bool>("toolbarRowBackground", default: false)
-    /// Fades the status bar. Its hints are reference material you read once and then stop needing,
-    /// so they can sit further back without losing the counts and toggles that share the row.
-    static let dimStatusBar = Key<Bool>("dimStatusBar", default: false)
+    /// Fades the status bar until the pointer reaches it. Its hints are reference material you read
+    /// once and then stop needing, so they sit back out of the way and come to full strength on
+    /// hover, which is the only time you are looking for them.
+    static let dimStatusBar = Key<Bool>("dimStatusBar", default: true)
     static let barActions = Key<[ActionID]>("barActions", default: ToolbarAction.defaultBar)
     static let hiddenActions = Key<Set<ActionID>>("hiddenActions", default: [])
     static let didMigrateHiddenActions = Key<Bool>("didMigrateHiddenActions", default: false)

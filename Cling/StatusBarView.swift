@@ -119,7 +119,10 @@ struct StatusBarView: View {
         .font(.scaled(10, .chrome))
         .foregroundStyle(.secondary)
         .padding(1)
-        .opacity(dimStatusBar ? 0.45 : 1)
+        // Faded while you're reading results, back to full the moment you go looking for it.
+        .opacity(dimStatusBar && !hoveringStatusBar ? 0.45 : 1)
+        .onHover { hoveringStatusBar = $0 }
+        .animation(.easeOut(duration: 0.12), value: hoveringStatusBar)
 
         if AM.useGlass, #available(macOS 26, *) {
             GlassEffectContainer { bar }
@@ -130,6 +133,8 @@ struct StatusBarView: View {
 
     @State private var fuzzy: FuzzyClient = FUZZY
     @State private var appearance = AM
+
+    @State private var hoveringStatusBar = false
 
     /// Observed so the view redraws when the text size changes; the sizes themselves come
     /// from FontScale.
