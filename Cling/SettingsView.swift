@@ -374,6 +374,7 @@ private struct InterfaceSettingsPane: View {
                 }
 
                 Toggle("Dim status bar", isOn: $dimStatusBar)
+                Toggle("Tint window when a filter is active", isOn: $filterWindowTint)
             }
 
             Section("Rows") {
@@ -528,6 +529,7 @@ private struct InterfaceSettingsPane: View {
     @Default(.toolbarShowDividers) private var toolbarShowDividers
     @Default(.toolbarRowBackground) private var toolbarRowBackground
     @Default(.dimStatusBar) private var dimStatusBar
+    @Default(.filterWindowTint) private var filterWindowTint
     @Default(.defaultLinkExpiration) private var defaultLinkExpiration
 
     // MARK: Part B — placement state

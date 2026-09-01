@@ -786,6 +786,10 @@ extension Defaults.Keys {
     /// once and then stop needing, so they sit back out of the way and come to full strength on
     /// hover, which is the only time you are looking for them.
     static let dimStatusBar = Key<Bool>("dimStatusBar", default: true)
+    /// Washes the window in the active filter's colour. Off leaves the filter's icon coloured as it
+    /// is and only drops the background wash, for anyone who finds a tinted window distracting to
+    /// read results against.
+    static let filterWindowTint = Key<Bool>("filterWindowTint", default: true)
     static let barActions = Key<[ActionID]>("barActions", default: ToolbarAction.defaultBar)
     static let hiddenActions = Key<Set<ActionID>>("hiddenActions", default: [])
     static let didMigrateHiddenActions = Key<Bool>("didMigrateHiddenActions", default: false)
