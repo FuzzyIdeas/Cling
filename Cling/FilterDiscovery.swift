@@ -16,8 +16,8 @@ import SwiftUI
 /// One key drawn as a key, so a hotkey reads as something to press rather than as punctuation.
 struct KeyCap: View {
     let label: String
-    /// Sized by the caller: a cap under a name has to sit below it in the hierarchy, which means
-    /// below it in size too.
+    /// Sized by the caller: a cap marking an icon sits below it in the hierarchy, which means below
+    /// it in size too.
     var size: CGFloat = 9.5
     /// Raised under the pointer, or while the modifier is down. The cap is always legible; this
     /// only decides how much it asks for.
@@ -57,6 +57,8 @@ struct FilterCard: View {
     let icon: String
     let color: FilterColor
     let key: Character?
+    /// Whether the shortcut caps have arrived yet. See `FilterDiscoveryPanel`.
+    let revealed: Bool
     let action: () -> Void
 
     var body: some View {
@@ -74,21 +76,21 @@ struct FilterCard: View {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .strokeBorder(accent.opacity(hovering ? 0.45 : 0), lineWidth: 1)
                     )
-                caption
-                // Held open whether or not this filter has a key, so a row of cards keeps one
-                // baseline instead of stepping up and down.
-                Group {
-                    if let key {
-                        // Last in the reading order and last in the type scale: the shortcut is
-                        // worth learning but it is not what identifies the filter.
-                        KeyCap(
-                            label: "⌥\(String(key).uppercased())",
-                            size: Self.capSize,
-                            prominent: hovering || optionHeld
-                        )
+                    // Hung off the icon's corner rather than sat under the name: the cap marks the
+                    // icon, so it stays out of the name's column and off its baseline.
+                    .overlay(alignment: .topTrailing) {
+                        // Holding Option always shows its own letters, whatever the timer says.
+                        if let key, revealed || optionHeld {
+                            KeyCap(
+                                label: "⌥\(String(key).uppercased())",
+                                size: Self.capSize,
+                                prominent: hovering || optionHeld
+                            )
+                            .offset(x: 9, y: -5)
+                            .transition(.opacity.combined(with: .scale(scale: 0.7, anchor: .topTrailing)))
+                        }
                     }
-                }
-                .frame(height: Self.capSize + 5)
+                caption
             }
             .frame(width: 76)
             .padding(.top, 5)
@@ -137,29 +139,50 @@ struct FilterCard: View {
 
 // MARK: - FilterDiscoveryPanel
 
+/// The shortcut caps are a teaching aid, not chrome. They arrive a few seconds into the first window
+/// of the session, once the eye has settled on the icons, and stay from then on.
+@MainActor private var filterKeysRevealed = false
+
+// MARK: - FilterDiscoveryPanel
+
 /// The two kinds of filter, side by side: a search window is far wider than it is tall here, so
 /// stacking them would push the second kind off the bottom.
 struct FilterDiscoveryPanel: View {
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            // Quick filters take whatever is left over and folder filters are capped, because there
-            // are twice as many quick filters and they are the ones worth scrolling less to reach.
+            // Quick filters take whatever is left over, because there are twice as many of them.
             column(title: "Search only", cards: quickCards)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Divider().frame(maxHeight: 90)
             column(title: "Search inside", cards: folderCards)
-                .frame(maxWidth: Self.folderColumnWidth, alignment: .leading)
+                .frame(maxWidth: folderColumnWidth, alignment: .leading)
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 2)
+        .task {
+            guard !revealed else { return }
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
+            filterKeysRevealed = true
+            withAnimation(.easeOut(duration: 0.16)) { revealed = true }
+        }
     }
-
-    /// Room for about three folder filters before the column scrolls, leaving the rest of the width
-    /// to the quick filters.
-    private static let folderColumnWidth: CGFloat = 265
 
     @State private var defaults = DEFAULTS_CACHE
     @State private var fuzzy: FuzzyClient = FUZZY
+    @State private var wm = WM
+    @State private var revealed = filterKeysRevealed
+
+    @Default(.toolbarRowBackground) private var toolbarRowBackground
+
+    /// Puts the divider on the seam between the results table and the file preview, so the bottom
+    /// row repeats a split the window already draws above it at any size. The subtraction is the
+    /// padding stacked between this HStack and the table's: this panel's own 4, the row background's
+    /// 10 when it is on, the 14 of column spacing, half the divider, and half the table's own gap.
+    private var folderColumnWidth: CGFloat {
+        let inset = 4 + (toolbarRowBackground ? 10.0 : 0) + 14 + 0.5 + 5
+        return max(WindowManager.previewWidth(forWindowWidth: wm.size.width) - inset, 160)
+    }
 
     private var quickCards: some View {
         ForEach(defaults.quickFilters, id: \.uuid) { filter in
@@ -167,7 +190,8 @@ struct FilterDiscoveryPanel: View {
                 name: filter.id,
                 icon: filter.icon ?? "line.3.horizontal.decrease.circle.fill",
                 color: filter.color ?? .forName(filter.id),
-                key: filter.key
+                key: filter.key,
+                revealed: revealed
             ) {
                 fuzzy.quickFilter = filter
             }
@@ -180,7 +204,8 @@ struct FilterDiscoveryPanel: View {
                 name: filter.id,
                 icon: filter.icon ?? "folder.fill",
                 color: filter.color ?? .forName(filter.id),
-                key: filter.key
+                key: filter.key,
+                revealed: revealed
             ) {
                 fuzzy.folderFilter = filter
             }

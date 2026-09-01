@@ -565,7 +565,9 @@ class AppDelegate: LowtechProAppDelegate {
     /// window is behind it, so it counts as not in front.
     private var mainWindowIsFrontmost: Bool {
         guard let mainWindow, mainWindow.isVisible, NSApp.isActive else { return false }
-        if let settings = settingsWindow, settings.isVisible, settings.isKeyWindow { return false }
+        if let settings = settingsWindow, settings.isVisible, settings.isKeyWindow {
+            return false
+        }
         return true
     }
 
@@ -577,7 +579,9 @@ final class MainWindowDelegateProxy: NSObject, NSWindowDelegate {
     weak var original: NSWindowDelegate?
 
     override func responds(to aSelector: Selector!) -> Bool {
-        if super.responds(to: aSelector) { return true }
+        if super.responds(to: aSelector) {
+            return true
+        }
         return original?.responds(to: aSelector) ?? false
     }
 
@@ -614,6 +618,13 @@ class WindowManager {
     /// Bumped when the app comes back after being away long enough for the result selection to
     /// count as stale. Observed by ContentView, which then jumps the selection back to the top.
     var selectionResetToken = 0
+
+    /// Roughly a third of the table's width, clamped so it stays usable. Lives here rather than in
+    /// ContentView because the filter discovery row lines its divider up with the same seam, so the
+    /// window keeps one vertical split at any size.
+    static func previewWidth(forWindowWidth width: CGFloat) -> CGFloat {
+        min(max((width - 32) * 0.26, 300), 520)
+    }
 
     /// The app went to the background or the main window was hidden/closed.
     func noteInactive() {
