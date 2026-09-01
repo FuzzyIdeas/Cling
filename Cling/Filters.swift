@@ -187,7 +187,7 @@ struct FilterPicker: View {
                     // Square frame so the disc is round, and sized to the slot the generic glyph
                     // already occupied so adding it moves nothing else in the toolbar.
                     .frame(width: FilterPicker.iconWidth, height: FilterPicker.iconWidth)
-                    .filterIconBackground(scope.color, dark: dark)
+                    .filterIconBackground(scope.color, dark: dark, glow: true)
             } else {
                 Image(systemName: "line.3.horizontal.decrease.circle")
                     .frame(width: FilterPicker.iconWidth, height: FilterPicker.iconWidth)

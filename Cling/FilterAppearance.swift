@@ -244,8 +244,17 @@ extension View {
     ///
     /// Shared by the editor's icon button and the search window's scope icon so the two cannot
     /// drift apart.
-    func filterIconBackground(_ color: FilterColor, dark: Bool) -> some View {
-        background(Circle().fill(color.accent(dark: dark).opacity(dark ? 0.24 : 0.16)))
+    /// `glow` rings the disc and lifts it off the bar, for the search window's icon while a filter
+    /// is actually on: the colour alone says which scope, the glow says that there is one.
+    func filterIconBackground(_ color: FilterColor, dark: Bool, glow: Bool = false) -> some View {
+        let accent = color.accent(dark: dark)
+        return background(Circle().fill(accent.opacity(dark ? 0.24 : 0.16)))
+            .overlay {
+                if glow {
+                    Circle().strokeBorder(accent.opacity(dark ? 0.85 : 0.7), lineWidth: 1)
+                }
+            }
+            .shadow(color: glow ? accent.opacity(dark ? 0.55 : 0.4) : .clear, radius: glow ? 4 : 0)
     }
 }
 
