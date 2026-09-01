@@ -374,7 +374,22 @@ private struct InterfaceSettingsPane: View {
                 }
 
                 Toggle("Dim status bar", isOn: $dimStatusBar)
-                Toggle("Tint window when a filter is active", isOn: $filterWindowTint)
+                SettingRow(title: "Tint strength when a filter is active") {
+                    HStack(spacing: 8) {
+                        Slider(value: $filterWindowTintStrength, in: 0 ... 1, step: 0.05)
+                            .frame(width: 160)
+                        Text(
+                            filterWindowTintStrength > 0
+                                ? filterWindowTintStrength.formatted(.percent.precision(.fractionLength(0)))
+                                : "Off"
+                        )
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(filterWindowTintStrength > 0 ? Color.accentColor : Color.secondary)
+                        .frame(width: 60, alignment: .trailing)
+                        .contentTransition(.numericText())
+                    }
+                    .animation(.snappy(duration: 0.2), value: filterWindowTintStrength)
+                }
             }
 
             Section("Rows") {
@@ -529,7 +544,7 @@ private struct InterfaceSettingsPane: View {
     @Default(.toolbarShowDividers) private var toolbarShowDividers
     @Default(.toolbarRowBackground) private var toolbarRowBackground
     @Default(.dimStatusBar) private var dimStatusBar
-    @Default(.filterWindowTint) private var filterWindowTint
+    @Default(.filterWindowTintStrength) private var filterWindowTintStrength
     @Default(.defaultLinkExpiration) private var defaultLinkExpiration
 
     // MARK: Part B — placement state

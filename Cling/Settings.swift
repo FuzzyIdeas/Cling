@@ -789,7 +789,7 @@ extension Defaults.Keys {
     /// Washes the window in the active filter's colour. Off leaves the filter's icon coloured as it
     /// is and only drops the background wash, for anyone who finds a tinted window distracting to
     /// read results against.
-    static let filterWindowTint = Key<Bool>("filterWindowTint", default: true)
+    static let filterWindowTintStrength = Key<Double>("filterWindowTintStrength", default: 1.0)
     static let barActions = Key<[ActionID]>("barActions", default: ToolbarAction.defaultBar)
     static let hiddenActions = Key<Set<ActionID>>("hiddenActions", default: [])
     static let didMigrateHiddenActions = Key<Bool>("didMigrateHiddenActions", default: false)

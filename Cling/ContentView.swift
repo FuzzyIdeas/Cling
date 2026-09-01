@@ -262,6 +262,20 @@ struct ContentView: View {
         .padding(.top, 24)
         .padding([.leading, .trailing])
         .padding(.bottom, 4)
+        .onChange(of: optionHeld) { _, held in
+            optionDwell?.cancel()
+            guard held else {
+                if optionDwelled {
+                    withAnimation(.easeOut(duration: 0.12)) { optionDwelled = false }
+                }
+                return
+            }
+            optionDwell = Task {
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeOut(duration: 0.14)) { optionDwelled = true }
+            }
+        }
         .alert("File not found", isPresented: Binding(get: { pathNotFoundMessage != nil }, set: {
             if !$0 {
                 pathNotFoundMessage = nil
@@ -321,6 +335,10 @@ struct ContentView: View {
     @State private var stash: StashManager = STASH
     @ObservedObject private var km = KM
     @State private var sortHintsVisible = false
+    /// Option held past the dwell, which brings the filter cards up over the action rows. A tap
+    /// means nothing, so typing an accent (⌥e) or firing an ⌥ chord doesn't flash the row.
+    @State private var optionDwelled = false
+    @State private var optionDwell: Task<Void, Never>?
     @State private var appearance = AM
     @State private var scriptManager: ScriptManager = SM
     @State private var selectedResults = Set<FilePath>()
@@ -375,7 +393,7 @@ struct ContentView: View {
 
     @Default(.fontScale) private var fontScale
     @Default(.minQueryLength) private var minQueryLength
-    @Default(.filterWindowTint) private var filterWindowTint
+    @Default(.filterWindowTintStrength) private var filterWindowTintStrength
 
     @Default(.showFilePreview) private var showFilePreview
 
@@ -423,10 +441,8 @@ struct ContentView: View {
         return []
     }
 
-    /// Roughly a third of the table's width, clamped so it stays usable.
     private var previewWidth: CGFloat {
-        let available = wm.size.width - 32
-        return min(max(available * 0.26, 300), 520)
+        WindowManager.previewWidth(forWindowWidth: wm.size.width)
     }
 
     private var filterSubtitle: String? {
@@ -592,24 +608,32 @@ struct ContentView: View {
             && fuzzy.folderFilter == nil && fuzzy.quickFilter == nil
     }
 
-    /// The filter cards replace the action rows only on an untouched window: something typed, or a
-    /// row picked, means the person is past discovering and wants the actions back.
+    /// The filter cards replace the action rows on an untouched window, because something typed or a
+    /// row picked means the person is past discovering and wants the actions back. Holding Option
+    /// brings them back at any point: it is the key the cards are labelled with, so the same press
+    /// that shows a filter's letter is the one that fires it.
     private var showFilterDiscovery: Bool {
-        fuzzy.query.isEmpty && selectedResults.isEmpty && fuzzy.folderFilter == nil
-            && fuzzy.quickFilter == nil && !toolbarRowsHidden
+        guard !toolbarRowsHidden else { return false }
+        guard !optionDwelled else { return true }
+        return fuzzy.query.isEmpty && selectedResults.isEmpty && fuzzy.folderFilter == nil
+            && fuzzy.quickFilter == nil
+    }
+
+    private var optionHeld: Bool {
+        km.lalt || km.ralt
     }
 
     /// Nothing at all while searching everything, so the tint itself carries the signal. Two
     /// filters at once give a gradient instead of a flat wash, so the window says both.
     @ViewBuilder private var scopeTint: some View {
-        if filterWindowTint, let wash = fuzzy.scopeWash {
+        if filterWindowTintStrength > 0, let wash = fuzzy.scopeWash {
             let dark = colorScheme == .dark
             LinearGradient(
                 stops: FilterColor.washStops(top: wash.top, bottom: wash.bottom, dark: dark),
                 startPoint: .top,
                 endPoint: .bottom
             )
-            .opacity(FilterColor.tintOpacity(dark: dark))
+            .opacity(FilterColor.tintOpacity(dark: dark) * filterWindowTintStrength)
             .animation(.easeOut(duration: 0.18), value: wash.top)
             .animation(.easeOut(duration: 0.18), value: wash.bottom)
             .ignoresSafeArea()
@@ -851,10 +875,22 @@ struct ContentView: View {
         }
 
         // Nothing typed and nothing selected means the action rows have no subject to act on, so the
-        // space introduces the filters instead of showing buttons that would do nothing.
-        let showing: AnyView = showFilterDiscovery
-            ? AnyView(FilterDiscoveryPanel())
-            : AnyView(rows)
+        // space introduces the filters instead of showing buttons that would do nothing. The rows
+        // stay mounted underneath at zero height: ActionButtons installs the action shortcut monitor
+        // on appear and hosts the copy/move/send sheets, so dropping it while Option is held would
+        // take every action shortcut down with it.
+        let showing = ZStack(alignment: .topLeading) {
+            rows
+                .frame(height: showFilterDiscovery ? 0 : nil)
+                .opacity(showFilterDiscovery ? 0 : 1)
+                .allowsHitTesting(!showFilterDiscovery)
+                .clipped()
+
+            if showFilterDiscovery {
+                FilterDiscoveryPanel()
+                    .transition(.opacity)
+            }
+        }
 
         return Group {
             if toolbarRowBackground, anyToolbarRowVisible {
