@@ -620,7 +620,7 @@ struct ContentView: View {
     }
 
     private var optionHeld: Bool {
-        km.lalt || km.ralt
+        km.optionOnly
     }
 
     /// Nothing at all while searching everything, so the tint itself carries the signal. Two

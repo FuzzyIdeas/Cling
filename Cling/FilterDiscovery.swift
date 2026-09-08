@@ -11,6 +11,14 @@ import Defaults
 import Lowtech
 import SwiftUI
 
+extension KeysManager {
+    /// Option and nothing else. Option paired with another modifier belongs to a different
+    /// shortcut (⌘⌥ opens the Open With row), so the filter surfaces stay out of its way.
+    var optionOnly: Bool {
+        (lalt || ralt) && !lcmd && !rcmd && !lctrl && !rctrl && !lshift && !rshift
+    }
+}
+
 // MARK: - KeyCap
 
 /// One key drawn as a key, so a hotkey reads as something to press rather than as punctuation.
@@ -115,7 +123,7 @@ struct FilterCard: View {
     }
 
     private var optionHeld: Bool {
-        km.lalt || km.ralt
+        km.optionOnly
     }
 
     private var dark: Bool {

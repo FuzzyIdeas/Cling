@@ -49,7 +49,7 @@ struct FilterPicker: View {
                         }
                     }
                 }
-            } else if km.lalt || km.ralt || showFilterEditor {
+            } else if km.optionOnly || showFilterEditor {
                 Button(action: { showFilterEditor = true }) {
                     Image(systemName: "slider.horizontal.3")
                         .frame(width: FilterPicker.iconWidth)
