@@ -1,3 +1,10 @@
+# 2.7.2
+
+**[Download Cling 2.7.2 →](https://files.lowtechguys.com/releases/Cling-2.7.2.dmg)**
+## Fixes
+
+- Holding Option with another modifier no longer brings the filters up over the action rows, so `⌘⌥` stays on *Open With*
+
 # 2.7.1
 
 **[Download Cling 2.7.1 →](https://files.lowtechguys.com/releases/Cling-2.7.1.dmg)**
