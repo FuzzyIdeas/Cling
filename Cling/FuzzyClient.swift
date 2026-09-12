@@ -397,12 +397,21 @@ class FuzzyClient {
         }
     }
 
+    /// An FSEvents change that survived filtering on `fsEventsQueue`, waiting to be applied.
+    struct PendingFSChange {
+        let path: FilePath
+        let exists: Bool
+    }
+
     struct ActivityEntry: Identifiable {
         let id = UUID()
         let message: String
         let date = Date()
         let durationMs: Double?
     }
+
+    /// How long FSEvents changes accumulate before one main-actor flush.
+    nonisolated static let fsFlushInterval: DispatchTimeInterval = .milliseconds(100)
 
     static let initialVolumes = getVolumes()
 
@@ -478,6 +487,11 @@ class FuzzyClient {
 
     @ObservationIgnored var suppressNextSearch = false
     @ObservationIgnored let fsEventsQueue = DispatchQueue(label: "com.lowtechguys.Cling.fsevents")
+
+    /// FSEvents changes filtered on `fsEventsQueue`, waiting for the next main-actor flush.
+    /// Touched only on `fsEventsQueue`.
+    @ObservationIgnored nonisolated(unsafe) var pendingFSChanges: [PendingFSChange] = []
+    @ObservationIgnored nonisolated(unsafe) var fsFlushScheduled = false
 
     @ObservationIgnored var updatingFilters = false
     @ObservationIgnored var defaultResultsDirty = true
@@ -1530,6 +1544,9 @@ class FuzzyClient {
         removedFiles.removeAll()
         seenPaths.removeAll()
         LowtechFSEvents.stopWatching(for: ObjectIdentifier(self))
+        // Changes buffered before the restart describe the index we just cleared, so flushing
+        // them would re-add paths into a fresh seenPaths/removedFiles.
+        fsEventsQueue.async { [self] in pendingFSChanges.removeAll() }
 
         do {
             try LowtechFSEvents.startWatching(
@@ -1560,45 +1577,81 @@ class FuzzyClient {
                         }
                         // Add to recents engine (never blocks main thread)
                         recentsEngine.addPath(pathStr, isDir: isDir)
-                        mainActor {
-                            // A recreate (atomic save via temp+rename, cloud sync, editor
-                            // delete-then-write) fires a remove event before this create.
-                            // removedFiles is only cleared wholesale at watcher startup, so
-                            // without this the reborn path stays hidden from the UI (which
-                            // filters results by removedFiles) even though it's back on disk
-                            // and in the index — the CLI, which applies no such filter, still
-                            // shows it. Un-remove it so the UI and index agree again.
-                            self.removedFiles.remove(pathStr)
-                            let isNew = !self.seenPaths.contains(pathStr)
-                            self.seenPaths.insert(pathStr)
-                            if isNew {
-                                self.indexedCount &+= 1
-                            }
-                            let kind: IndexChange.Kind = isNew ? .added : .modified
-                            self.appendLiveChange(IndexChange(path: pathStr, kind: kind))
-                            if self.noQuery {
-                                self.updateDefaultResults(debounce: true)
-                            }
-                        }
+                        enqueueFSChange(path, exists: true)
                     } else {
                         recentsEngine.removePath(pathStr)
-                        mainActor {
-                            self.removedFiles.insert(pathStr)
-                            self.indexedCount = max(0, self.indexedCount &- 1)
-                            self.appendLiveChange(IndexChange(path: pathStr, kind: .removed))
-                            if self.noQuery {
-                                self.updateDefaultResults(debounce: true)
-                            }
-                            if let index = self.scoredResults.firstIndex(of: path) {
-                                self.scoredResults.remove(at: index)
-                                self.results = self.sortedResults()
-                            }
-                        }
+                        enqueueFSChange(path, exists: false)
                     }
                 }
             }
         } catch {
             log.error("Failed to watch files: \(error.localizedDescription)")
+        }
+    }
+
+    /// Buffer a surviving FSEvents change and make sure a flush is pending.
+    ///
+    /// A build, a checkout or a package install fires thousands of events a second. Hopping to the
+    /// main actor per event meant one SwiftUI transaction per event, and the status bar reads both
+    /// `indexedCount` and `liveIndexChanges`, so every hop re-ran `StatusBarView.body` and a full
+    /// layout pass — 48% of main-thread time in a 2.7.2 sample, but only with the window open.
+    /// A window's worth of events applied in one hop lands in a single transaction, so the view
+    /// updates once per window instead of once per event.
+    ///
+    /// Runs on `fsEventsQueue`.
+    nonisolated func enqueueFSChange(_ path: FilePath, exists: Bool) {
+        pendingFSChanges.append(PendingFSChange(path: path, exists: exists))
+        guard !fsFlushScheduled else { return }
+
+        fsFlushScheduled = true
+        fsEventsQueue.asyncAfter(deadline: .now() + Self.fsFlushInterval) { [self] in
+            fsFlushScheduled = false
+            guard !pendingFSChanges.isEmpty else { return }
+
+            let batch = pendingFSChanges
+            pendingFSChanges.removeAll(keepingCapacity: true)
+            mainActor { self.applyFSChanges(batch) }
+        }
+    }
+
+    /// Apply a batch of FSEvents changes in one main-actor transaction, in arrival order so a
+    /// remove-then-create on the same path still ends up created.
+    func applyFSChanges(_ batch: [PendingFSChange]) {
+        var resultsChanged = false
+
+        for change in batch {
+            let pathStr = change.path.string
+            guard change.exists else {
+                removedFiles.insert(pathStr)
+                indexedCount = max(0, indexedCount &- 1)
+                appendLiveChange(IndexChange(path: pathStr, kind: .removed))
+                if let index = scoredResults.firstIndex(of: change.path) {
+                    scoredResults.remove(at: index)
+                    resultsChanged = true
+                }
+                continue
+            }
+            // A recreate (atomic save via temp+rename, cloud sync, editor
+            // delete-then-write) fires a remove event before this create.
+            // removedFiles is only cleared wholesale at watcher startup, so
+            // without this the reborn path stays hidden from the UI (which
+            // filters results by removedFiles) even though it's back on disk
+            // and in the index — the CLI, which applies no such filter, still
+            // shows it. Un-remove it so the UI and index agree again.
+            removedFiles.remove(pathStr)
+            let isNew = !seenPaths.contains(pathStr)
+            seenPaths.insert(pathStr)
+            if isNew {
+                indexedCount &+= 1
+            }
+            appendLiveChange(IndexChange(path: pathStr, kind: isNew ? .added : .modified))
+        }
+
+        if resultsChanged {
+            results = sortedResults()
+        }
+        if noQuery {
+            updateDefaultResults(debounce: true)
         }
     }
 
