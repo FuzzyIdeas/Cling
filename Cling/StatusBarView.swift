@@ -103,11 +103,11 @@ struct StatusBarView: View {
 
             Spacer()
 
-            if rowsToggleModifier != .disabled {
-                Text("double tap **`\(rowsToggleModifier.symbol)`** to \(toolbarRowsHidden ? "show" : "hide") actions")
+            if let rowsToggleSymbol {
+                Text("double tap **`\(rowsToggleSymbol)`** to \(toolbarRowsHidden ? "show" : "hide") actions")
                 Divider().frame(height: 10)
             }
-            Text("**`\(triggerKeys.shortReadableStr) + \(showAppKey.character)`** to show/hide Cling").padding(.trailing, 2)
+            Text("**`\(showHideShortcut)`** to show/hide Cling").padding(.trailing, 2)
 
             Button {
                 WM.open("settings")
@@ -122,6 +122,13 @@ struct StatusBarView: View {
         // Faded while you're reading results, back to full the moment you go looking for it.
         .opacity(dimStatusBar && !hoveringStatusBar ? 0.45 : 1)
         .onHover { hoveringStatusBar = $0 }
+        .task {
+            for await _ in Defaults.updates([.triggerKeys, .showAppKey, .rowsToggleModifier]) {
+                let modifier = Defaults[.rowsToggleModifier]
+                rowsToggleSymbol = modifier == .disabled ? nil : modifier.symbol
+                showHideShortcut = "\(Defaults[.triggerKeys].shortReadableStr) + \(Defaults[.showAppKey].character)"
+            }
+        }
         .animation(.easeOut(duration: 0.12), value: hoveringStatusBar)
 
         if AM.useGlass, #available(macOS 26, *) {
@@ -136,13 +143,16 @@ struct StatusBarView: View {
 
     @State private var hoveringStatusBar = false
 
+    /// Rendered from triggerKeys/showAppKey/rowsToggleModifier and refreshed when those change.
+    /// Reading them through @Default instead would decode their JSON on every body evaluation,
+    /// which the status bar does a lot of: it also shows indexedCount and the live change count.
+    @State private var showHideShortcut = ""
+    @State private var rowsToggleSymbol: String?
+
     /// Observed so the view redraws when the text size changes; the sizes themselves come
     /// from FontScale.
     @Default(.fontScale) private var fontScale
 
-    @Default(.triggerKeys) private var triggerKeys
-    @Default(.showAppKey) private var showAppKey
-    @Default(.rowsToggleModifier) private var rowsToggleModifier
     @Default(.toolbarRowsHidden) private var toolbarRowsHidden
     @Default(.dimStatusBar) private var dimStatusBar
 
