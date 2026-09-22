@@ -39,18 +39,6 @@
             </sparkle:deltas>
         </item>
         <item>
-            <title>2.7.3b1</title>
-            <pubDate>Sat, 12 Sep 2026 19:03:29 +0300</pubDate>
-            <link>https://lowtechguys.com/cling</link>
-            <sparkle:fullReleaseNotesLink>https://files.lowtechguys.com/cling/changelog.html</sparkle:fullReleaseNotesLink>
-            <sparkle:channel>beta</sparkle:channel>
-            <sparkle:version>2.7.3b1</sparkle:version>
-            <sparkle:shortVersionString>2.7.3b1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:releaseNotesLink>https://files.lowtechguys.com/ReleaseNotes/Cling-2.7.3b1.html</sparkle:releaseNotesLink>
-            <enclosure url="https://files.lowtechguys.com/releases/Cling-2.7.3b1.dmg" length="30542782" type="application/octet-stream" sparkle:edSignature="CgF7UMddN5gBQncuPjwu41vqAH75ZIr92/ODhyKxKv+bWTuPQAqIUNNirCOn5z4saXpkW06ZpoMuz5IuX2lfAg=="/>
-        </item>
-        <item>
             <title>2.7.2</title>
             <pubDate>Wed, 09 Sep 2026 12:46:10 +0300</pubDate>
             <link>https://lowtechguys.com/cling</link>
