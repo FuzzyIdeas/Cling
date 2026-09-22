@@ -186,6 +186,7 @@ struct ContentView: View {
                         return event
                     }
                     installContentShortcutMonitor()
+                    installTableClickMonitor()
                 }
                 .onDisappear {
                     if let cmdDownMonitor {
@@ -193,6 +194,7 @@ struct ContentView: View {
                     }
                     cmdDownMonitor = nil
                     removeContentShortcutMonitor()
+                    removeTableClickMonitor()
                 }
                 .onChange(of: focused) {
                     if !fuzzy.hasFullDiskAccess {
@@ -349,6 +351,7 @@ struct ContentView: View {
 
     @State private var cmdDownMonitor: Any?
     @State private var contentShortcutMonitor: Any?
+    @State private var tableClickMonitor: Any?
 
     @State private var showFullHistory = false
     @State private var showSyntaxHelp = false
@@ -1853,6 +1856,28 @@ struct ContentView: View {
         if let m = contentShortcutMonitor {
             NSEvent.removeMonitor(m)
             contentShortcutMonitor = nil
+        }
+    }
+
+    /// Clicking a row selects it, but the focus state stays wherever it was, so the table keeps
+    /// drawing an inactive (grey) selection and the arrow keys still belong to the search field.
+    /// AppKit's own first-responder change is overruled by `@FocusState`, so move the focus here.
+    private func installTableClickMonitor() {
+        guard tableClickMonitor == nil else { return }
+        tableClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
+            guard event.window === AppDelegate.shared.mainWindow,
+                  let table = TableRegistry.shared.table(atWindowPoint: event.locationInWindow),
+                  focused != table
+            else { return event }
+            focused = table
+            return event
+        }
+    }
+
+    private func removeTableClickMonitor() {
+        if let m = tableClickMonitor {
+            NSEvent.removeMonitor(m)
+            tableClickMonitor = nil
         }
     }
 

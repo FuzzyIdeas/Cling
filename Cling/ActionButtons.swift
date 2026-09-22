@@ -22,7 +22,9 @@ enum HelperApp {
         lock.lock()
         let cached = cache[path]
         lock.unlock()
-        if let cached { return cached }
+        if let cached {
+            return cached
+        }
 
         // Cold cache. Answer truthfully rather than guessing: a wrong "yes" leaves a button that
         // silently does nothing on click, a wrong "no" hides a working one. This is the one stat we
@@ -204,7 +206,11 @@ struct ActionButtons: View {
             "Archive folders before sending?",
             isPresented: Binding(
                 get: { sendManager.pendingFolderConfirm != nil },
-                set: { if !$0 { sendManager.cancelPendingSend() } }
+                set: {
+                    if !$0 {
+                        sendManager.cancelPendingSend()
+                    }
+                }
             ),
             presenting: sendManager.pendingFolderConfirm
         ) { _ in
@@ -296,7 +302,9 @@ struct ActionButtons: View {
             }
         }
         .popover(isPresented: isSend ? $sendManager.showingTransfers : .constant(false), arrowEdge: .bottom) {
-            if isSend { TransfersPanel(selection: selectedResults.map(\.url)) }
+            if isSend {
+                TransfersPanel(selection: selectedResults.map(\.url))
+            }
         }
     }
 
@@ -363,7 +371,9 @@ struct ActionButtons: View {
         copiedClearTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             withAnimation(.easeIn(duration: 0.25)) {
-                if copiedFeedbackAction == id { copiedFeedbackAction = nil }
+                if copiedFeedbackAction == id {
+                    copiedFeedbackAction = nil
+                }
             }
         }
     }
@@ -619,9 +629,15 @@ struct ActionButtons: View {
         shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             // Only act on key events delivered to the main Cling window — never to Settings,
             // Onboarding, the borderless DropZoneOverlay panel, or any sheet on top of those.
-            if NSApp.keyWindow?.attachedSheet != nil { return event }
-            if DropZoneOverlay.shared.isPresenting { return event }
-            if event.window !== AppDelegate.shared.mainWindow { return event }
+            if NSApp.keyWindow?.attachedSheet != nil {
+                return event
+            }
+            if DropZoneOverlay.shared.isPresenting {
+                return event
+            }
+            if event.window !== AppDelegate.shared.mainWindow {
+                return event
+            }
             // Let an active IME (Pinyin etc.) commit/navigate during composition.
             if let responder = event.window?.firstResponder as? NSTextInputClient,
                responder.hasMarkedText()
@@ -642,7 +658,9 @@ struct ActionButtons: View {
             // Only affects the plain-⏎ branches below; the ⌘⇧⏎ variants keep using raw `inTerminal`.
             let enterPastesToTerminal = inTerminal && enterPastesB.wrappedValue
 
-            if sel.isEmpty { return event }
+            if sel.isEmpty {
+                return event
+            }
 
             // While the Send expiration popover is open, ⏎ runs its primary action (copy link
             // & share). The popover doesn't reliably take key focus, so its default-action button
@@ -702,11 +720,16 @@ struct ActionButtons: View {
                     // in the toolbar; hiding Open With from the menu must not also kill ⌘O.
                     for action in ToolbarAction.rebindable {
                         if action.id == .copy || action.id == .trash,
-                           focusBinding.wrappedValue != .list, focusBinding.wrappedValue != .stash { continue }
+                           focusBinding.wrappedValue != .list, focusBinding.wrappedValue != .stash
+                        {
+                            continue
+                        }
                         // togglePreview must work with no selection too, so it's dispatched by
                         // ContentView's monitor (which has no selection guard); skip it here to
                         // avoid toggling twice.
-                        if action.id == .togglePreview { continue }
+                        if action.id == .togglePreview {
+                            continue
+                        }
                         guard let bound = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: action.id)),
                               bound == pressed, isAvailable(action.id) else { continue }
                         execute(action.id)
@@ -714,7 +737,9 @@ struct ActionButtons: View {
                     }
                     return false
                 }
-                if handled { return nil }
+                if handled {
+                    return nil
+                }
             }
 
             // ⌘⌥C Copy to... (non-rebindable ⌥ variant; ⌘C is handled above by the registry)
@@ -768,6 +793,7 @@ struct ActionButtons: View {
     }
 
     private func permanentlyDelete() {
+        let ordered = results
         var removed = Set<FilePath>()
         for path in selectedResults {
             log.info("Permanently deleting \(path.shellString)")
@@ -779,9 +805,7 @@ struct ActionButtons: View {
             }
         }
 
-        selectedResults.subtract(removed)
-        STASH.remove(removed)
-        fuzzy.results = fuzzy.results.filter { !removed.contains($0) && $0.exists }
+        dropFromResults(removed, displayedBefore: ordered)
     }
 
     private func isConfiguredHelperApp(_ url: URL) -> Bool {
@@ -935,6 +959,7 @@ struct ActionButtons: View {
     }
 
     private func moveToTrash() {
+        let ordered = results
         var removed = Set<FilePath>()
         for path in selectedResults {
             log.info("Trashing \(path.shellString)")
@@ -945,10 +970,34 @@ struct ActionButtons: View {
                 log.error("Error trashing \(path.shellString): \(error.localizedDescription)")
             }
         }
+        dropFromResults(removed, displayedBefore: ordered)
+    }
+
+    /// Takes the trashed or deleted files out of the stash and the lists, and lands the selection
+    /// on the row that followed them: `displayedBefore` is the display order captured before the
+    /// removal, so a run of trashes keeps walking down the list instead of bouncing to the top.
+    private func dropFromResults(_ removed: Set<FilePath>, displayedBefore ordered: [FilePath]) {
+        guard !removed.isEmpty else { return }
+
+        let next = rowAfterRemoved(removed, in: ordered)
 
         selectedResults.subtract(removed)
         STASH.remove(removed)
         fuzzy.results = fuzzy.results.filter { !removed.contains($0) && $0.exists }
+        // Recents are a separate list from the search results, so a file trashed while the table
+        // is showing them lingers until the watcher catches up unless it's dropped here too.
+        fuzzy.recents = fuzzy.recents.filter { !removed.contains($0) }
+        fuzzy.sortedRecents = fuzzy.sortedRecents.filter { !removed.contains($0) }
+
+        selectedResultIDs = next.map { [$0.string] } ?? []
+    }
+
+    /// The first survivor below the last removed row, or the nearest one above it when the
+    /// removed files were at the end of the list.
+    private func rowAfterRemoved(_ removed: Set<FilePath>, in ordered: [FilePath]) -> FilePath? {
+        guard let last = ordered.lastIndex(where: { removed.contains($0) }) else { return nil }
+        return ordered[(last + 1)...].first { !removed.contains($0) }
+            ?? ordered[..<last].last { !removed.contains($0) }
     }
 
     private func quicklook() {

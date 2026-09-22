@@ -1,3 +1,18 @@
+# 2.7.4
+
+**[Download Cling 2.7.4 →](https://files.lowtechguys.com/releases/Cling-2.7.4.dmg)**
+## Fixes
+
+- Clicking a file no longer leaves the list unfocused, so the selection stops looking greyed out and the arrow keys walk the results straight away
+- Trashing files leaves the next file selected instead of jumping back to the top of the list
+
+# 2.7.3
+
+**[Download Cling 2.7.3 →](https://files.lowtechguys.com/releases/Cling-2.7.3.dmg)**
+## Improvements
+
+- Much lower CPU use in high volume of file events with the Cling window open
+
 # 2.7.2
 
 **[Download Cling 2.7.2 →](https://files.lowtechguys.com/releases/Cling-2.7.2.dmg)**

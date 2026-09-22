@@ -69,22 +69,32 @@ private struct TextButtonContent<Label: View>: View {
     }
 
     private var fillColor: Color {
-        if active { return activeTint.opacity(0.22) }
+        if active {
+            return activeTint.opacity(0.22)
+        }
 
         if variant == .glass {
             // A contrasting fill against the translucent window: whiter in light, blacker in dark,
             // getting more opaque on hover/press.
             let base = scheme == .dark ? Color.black : Color.white
             guard enabled else { return base.opacity(scheme == .dark ? 0.12 : 0.22) }
-            if isPressed { return base.opacity(scheme == .dark ? 0.5 : 0.72) }
-            if hovering { return base.opacity(scheme == .dark ? 0.4 : 0.6) }
+            if isPressed {
+                return base.opacity(scheme == .dark ? 0.5 : 0.72)
+            }
+            if hovering {
+                return base.opacity(scheme == .dark ? 0.4 : 0.6)
+            }
             return base.opacity(scheme == .dark ? 0.28 : 0.45)
         }
 
         // Bordered variants rely on their stroke at rest, filling in only on hover/press.
         guard enabled else { return .clear }
-        if isPressed { return .primary.opacity(0.18) }
-        if hovering { return .primary.opacity(0.12) }
+        if isPressed {
+            return .primary.opacity(0.18)
+        }
+        if hovering {
+            return .primary.opacity(0.12)
+        }
         return .clear
     }
 
@@ -361,7 +371,9 @@ extension NSView {
     func findViews<T: NSView>(ofType type: T.Type) -> [T] {
         var found = [T]()
         for sub in subviews {
-            if let match = sub as? T { found.append(match) }
+            if let match = sub as? T {
+                found.append(match)
+            }
             found.append(contentsOf: sub.findViews(ofType: type))
         }
         return found
@@ -406,11 +418,32 @@ final class TableRegistry {
     }
 
     func register(_ scrollView: NSScrollView, isStash: Bool) {
-        if isStash { stashScrollView = scrollView } else { resultsScrollView = scrollView }
+        if isStash {
+            stashScrollView = scrollView
+        } else {
+            resultsScrollView = scrollView
+        }
+    }
+
+    /// Which table's rows sit under a point in window coordinates. The clip view, not the scroll
+    /// view, so a click on the column headers sorts without pulling the keyboard out of the field.
+    func table(atWindowPoint point: NSPoint) -> FocusedField? {
+        if rowArea(of: stashScrollView)?.contains(point) == true {
+            return .stash
+        }
+        if rowArea(of: resultsScrollView)?.contains(point) == true {
+            return .list
+        }
+        return nil
     }
 
     private weak var stashScrollView: NSScrollView?
     private weak var resultsScrollView: NSScrollView?
+
+    private func rowArea(of scrollView: NSScrollView?) -> NSRect? {
+        guard let clip = scrollView?.contentView, clip.window != nil else { return nil }
+        return clip.convert(clip.bounds, to: nil)
+    }
 }
 
 extension View {
