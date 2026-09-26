@@ -54,6 +54,7 @@ struct FilterPicker: View {
                     Image(systemName: "slider.horizontal.3")
                         .frame(width: FilterPicker.iconWidth)
                 }
+                .accessibilityLabel("Edit filters")
                 .buttonStyle(.borderlessText)
                 .sheet(isPresented: $showFilterEditor) {
                     FilterEditorSheet()
@@ -754,6 +755,7 @@ private func folderEditor(folders: Binding<[FilePath]>, emptyText: String, onCha
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)
         .help("Add folder")
+        .accessibilityLabel("Add folder")
     }
 }
 
@@ -847,6 +849,7 @@ struct QuickFilterEditor: View {
                         .buttonStyle(.borderless)
                         .foregroundStyle(.red)
                         .help("Delete filter")
+                        .accessibilityLabel("Delete filter")
                 }
             }
         }
@@ -862,13 +865,16 @@ struct QuickFilterEditor: View {
             }
             TextField("Name", text: $draft.name, prompt: Text("Filter name"))
                 .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Name")
                 .onChange(of: draft.name) { onEdit() }
             if fieldsMode {
                 TextField("Extensions", text: $draft.extensions, prompt: Text("e.g.: .png .jpg .pdf"))
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Extensions")
                     .onChange(of: draft.extensions) { onEdit() }
                 TextField("Exclude", text: $draft.exclude, prompt: Text("e.g.: draft .zip node_modules/"))
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Exclude")
                     .onChange(of: draft.exclude) { onEdit() }
                 Picker("Match", selection: $draft.match) {
                     Text("Both").tag(FilterMatch.both)
@@ -879,9 +885,11 @@ struct QuickFilterEditor: View {
                 .onChange(of: draft.match) { onEdit() }
                 TextField("Prepend", text: $draft.prepend, prompt: Text("Added before your search"))
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Prepend")
                     .onChange(of: draft.prepend) { onEdit() }
                 TextField("Append", text: $draft.append, prompt: Text("Added after your search"))
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Append")
                     .onChange(of: draft.append) { onEdit() }
             }
         }
@@ -906,6 +914,8 @@ struct QuickFilterEditor: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                .accessibilityLabel("Max depth")
+                .accessibilityValue(draft.maxDepth < 0 ? "∞" : "\(draft.maxDepth)")
                 .onChange(of: draft.maxDepth) { onEdit() }
                 .help("Limit results to entries at most N folders below the search root. -1 = unlimited.")
                 LabeledContent("Search in") {
@@ -1117,6 +1127,7 @@ struct FolderFilterRow: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(.red)
                 .help("Delete filter")
+                .accessibilityLabel("Delete filter")
             }
         }
         .task { refreshCount() }
@@ -1131,6 +1142,8 @@ struct FolderFilterRow: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .accessibilityLabel("Max depth")
+            .accessibilityValue(maxDepth < 0 ? "∞" : "\(maxDepth)")
             .onChange(of: maxDepth) { save(); refreshCount() }
             .help("Limit results to entries at most N folders below the search root. -1 = unlimited.")
             LabeledContent("Hotkey") {

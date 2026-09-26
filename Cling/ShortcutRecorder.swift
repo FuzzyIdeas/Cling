@@ -8,6 +8,9 @@ import SwiftUI
 /// reliably enter recording mode. Use this instead of the package's `Recorder` everywhere.
 struct ShortcutRecorder: NSViewRepresentable {
     let name: KeyboardShortcuts.Name
+    /// The recorder is an NSSearchField whose placeholder is the only text AX finds on it,
+    /// so the row's title is passed down to name it.
+    var label: String?
     var onChange: ((KeyboardShortcuts.Shortcut?) -> Void)?
 
     func makeNSView(context: Context) -> ClickToRecordRecorder {
@@ -16,6 +19,7 @@ struct ShortcutRecorder: NSViewRepresentable {
 
     func updateNSView(_ nsView: ClickToRecordRecorder, context: Context) {
         nsView.recorder.shortcutName = name
+        nsView.recorder.setAccessibilityLabel(label)
     }
 
     /// Without this, SwiftUI's default representable sizing treats the wrapper (a plain

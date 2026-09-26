@@ -53,6 +53,7 @@ struct StatusBarView: View {
                 }
             }
             .buttonStyle(.text(borderColor: .clear, active: fuzzy.showActivityLog, activeTint: .blue))
+            .accessibilityToggle(isOn: fuzzy.showActivityLog)
             .help("Toggle activity log")
 
             if !fuzzy.liveIndexChanges.isEmpty {
@@ -76,6 +77,7 @@ struct StatusBarView: View {
                     }
                 }
                 .buttonStyle(.text(borderColor: .clear, active: fuzzy.showLiveIndex, activeTint: .green))
+                .accessibilityToggle(isOn: fuzzy.showLiveIndex)
                 .help("Toggle live index view")
             }
 
@@ -98,6 +100,7 @@ struct StatusBarView: View {
                     }
                 }
                 .buttonStyle(.text(borderColor: .clear, active: fuzzy.showRunHistory, activeTint: .orange))
+                .accessibilityToggle(isOn: fuzzy.showRunHistory)
                 .help("Toggle run history")
             }
 
@@ -115,6 +118,7 @@ struct StatusBarView: View {
                 Image(systemName: "gearshape").bold()
             }
             .buttonStyle(.text(borderColor: .clear))
+            .accessibilityLabel("Settings")
         }
         .font(.scaled(10, .chrome))
         .foregroundStyle(.secondary)

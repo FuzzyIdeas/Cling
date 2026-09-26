@@ -278,6 +278,7 @@ struct FilterIconButton: View {
                 .padding(5)
                 .filterIconBackground(color, dark: dark)
         }
+        .accessibilityLabel("Icon")
         .buttonStyle(.plain)
         .sheet(isPresented: $picking) { SymbolPicker(symbol: $icon) }
     }

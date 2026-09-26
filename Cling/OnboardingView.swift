@@ -54,7 +54,7 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Window Style")
                         .heavy(14)
-                    Picker("", selection: $windowAppearance) {
+                    Picker("Window style", selection: $windowAppearance) {
                         ForEach(WindowAppearance.allCases.filter(\.available), id: \.self) { appearance in
                             Text(appearance.rawValue).tag(appearance)
                         }
@@ -69,7 +69,7 @@ struct OnboardingView: View {
                         Text("Global Hotkey")
                             .heavy(14)
                         Spacer()
-                        Toggle("", isOn: $enableGlobalHotkey)
+                        Toggle("Global Hotkey", isOn: $enableGlobalHotkey)
                             .labelsHidden()
                             .toggleStyle(.switch)
                     }
@@ -227,14 +227,18 @@ struct OnboardingView: View {
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private func volumeBinding(_ volume: FilePath) -> Binding<Bool> {
         Binding(
             get: { selectedVolumes.contains(volume) },
             set: { enabled in
-                if enabled { selectedVolumes.insert(volume) }
-                else { selectedVolumes.remove(volume) }
+                if enabled {
+                    selectedVolumes.insert(volume)
+                } else {
+                    selectedVolumes.remove(volume)
+                }
             }
         )
     }

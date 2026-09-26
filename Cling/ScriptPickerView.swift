@@ -55,7 +55,11 @@ struct ScriptPickerView: View {
         }
         .alert(
             "Run \(confirmScript?.lastPathComponent.ns.deletingPathExtension ?? "script")?",
-            isPresented: Binding(get: { confirmScript != nil }, set: { if !$0 { confirmScript = nil } })
+            isPresented: Binding(get: { confirmScript != nil }, set: {
+                if !$0 {
+                    confirmScript = nil
+                }
+            })
         ) {
             Button("Run") {
                 if let script = confirmScript {
@@ -72,7 +76,11 @@ struct ScriptPickerView: View {
         }
         .alert(
             "Delete \(deleteScript?.lastPathComponent.ns.deletingPathExtension ?? "script")?",
-            isPresented: Binding(get: { deleteScript != nil }, set: { if !$0 { deleteScript = nil } })
+            isPresented: Binding(get: { deleteScript != nil }, set: {
+                if !$0 {
+                    deleteScript = nil
+                }
+            })
         ) {
             Button("Delete", role: .destructive) {
                 if let script = deleteScript {
@@ -193,7 +201,11 @@ struct ScriptActionButtons: View {
         .onChange(of: selectedResults) { refreshScripts() }
         .alert(
             "Run \(confirmScript?.lastPathComponent.ns.deletingPathExtension ?? "script")?",
-            isPresented: Binding(get: { confirmScript != nil }, set: { if !$0 { confirmScript = nil } })
+            isPresented: Binding(get: { confirmScript != nil }, set: {
+                if !$0 {
+                    confirmScript = nil
+                }
+            })
         ) {
             Button("Run") {
                 if let script = confirmScript {
@@ -225,6 +237,7 @@ struct ScriptActionButtons: View {
                         .font(.heavy(7))
                         .foregroundColor(.bg.warm)
                 }
+                .accessibilityLabel("Close")
                 .buttonStyle(FlatButton(color: .fg.warm.opacity(0.6), circle: true, horizontalPadding: 5, verticalPadding: 5))
                 .padding(.top, 8).padding(.leading, 8)
                 Spacer()
@@ -642,12 +655,18 @@ struct ScriptEditorSheet: View {
         }
         .alert(
             "Delete \(deleteScript?.lastPathComponent.ns.deletingPathExtension ?? "script")?",
-            isPresented: Binding(get: { deleteScript != nil }, set: { if !$0 { deleteScript = nil } })
+            isPresented: Binding(get: { deleteScript != nil }, set: {
+                if !$0 {
+                    deleteScript = nil
+                }
+            })
         ) {
             Button("Delete", role: .destructive) {
                 if let script = deleteScript {
                     try? FileManager.default.removeItem(at: script)
-                    if selection == script { selection = nil }
+                    if selection == script {
+                        selection = nil
+                    }
                     deleteScript = nil
                     scriptManager.fetchScripts()
                 }
@@ -657,10 +676,14 @@ struct ScriptEditorSheet: View {
             Text("This will permanently delete the script file")
         }
         .onAppear {
-            if selection == nil || !scripts.contains(selection!) { selection = scripts.first }
+            if selection == nil || !scripts.contains(selection!) {
+                selection = scripts.first
+            }
         }
         .onChange(of: scriptManager.scriptURLs) {
-            if let sel = selection, !scriptManager.scriptURLs.contains(sel) { selection = scripts.first }
+            if let sel = selection, !scriptManager.scriptURLs.contains(sel) {
+                selection = scripts.first
+            }
         }
     }
 
@@ -811,10 +834,15 @@ private struct ScriptSourceEditor: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     TextField("Name", text: $name)
+                        .accessibilityLabel("Name")
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 13, weight: .semibold))
                         .frame(maxWidth: 240)
-                        .onSubmit { if canRename { rename() } }
+                        .onSubmit {
+                            if canRename {
+                                rename()
+                            }
+                        }
                     if canRename {
                         Button("Rename", action: rename)
                             .controlSize(.small)
@@ -823,6 +851,7 @@ private struct ScriptSourceEditor: View {
                     }
                 }
                 TextField("Description…", text: descriptionBinding)
+                    .accessibilityLabel("Description")
                     .textFieldStyle(.plain)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
@@ -923,7 +952,7 @@ private struct ScriptCodeEditor: View {
     var language: String?
 
     var body: some View {
-        CodeEditorView(source: $source, language: language, fontSize: 12)
+        CodeEditorView(source: $source, language: language, fontSize: 12, accessibilityName: "Script")
             .frame(height: 300)
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .padding(.horizontal, 12)
@@ -977,27 +1006,37 @@ private struct ScriptParamsForm: View {
     private var eligibilitySection: some View {
         Section {
             Toggle("Show only on specific file types", isOn: enabled(\.extensions, fallback: ""))
+                .accessibilityLabel("Show only on specific file types")
             if params.extensions != nil {
                 TextField("", text: text(\.extensions), prompt: Text("Space-separated dot-less extensions. e.g. jpg png pdf tar.gz"))
+                    .accessibilityLabel("File types")
                     .textFieldStyle(.roundedBorder)
                     .labelsHidden()
             }
 
             Toggle("Minimum selected files", isOn: enabled(\.minFiles, fallback: 1))
+                .accessibilityLabel("Minimum selected files")
             if let n = params.minFiles {
                 Stepper(value: int(\.minFiles), in: 1 ... 999) {
                     Text("At least \(n) file\(n == 1 ? "" : "s")")
                 }
+                .accessibilityLabel("Minimum selected files")
+                .accessibilityValue("\(n)")
             }
 
             Toggle("Maximum selected files", isOn: enabled(\.maxFiles, fallback: 1))
+                .accessibilityLabel("Maximum selected files")
             if let n = params.maxFiles {
                 Stepper(value: int(\.maxFiles), in: 1 ... 999) {
                     Text("At most \(n) file\(n == 1 ? "" : "s")")
                 }
+                .accessibilityLabel("Maximum selected files")
+                .accessibilityValue("\(n)")
             }
             Toggle("Files only (hide when folders are selected)", isOn: $params.filesOnly)
+                .accessibilityLabel("Files only (hide when folders are selected)")
             Toggle("Folders only (hide when files are selected)", isOn: $params.dirsOnly)
+                .accessibilityLabel("Folders only (hide when files are selected)")
         } header: {
             Text("Eligibility")
         } footer: {
@@ -1008,8 +1047,11 @@ private struct ScriptParamsForm: View {
     private var behaviourSection: some View {
         Section("Behaviour") {
             Toggle("Show confirmation before running", isOn: $params.confirm)
+                .accessibilityLabel("Show confirmation before running")
             Toggle("Run once per file (sequential)", isOn: $params.sequential)
+                .accessibilityLabel("Run once per file (sequential)")
             Toggle("Show output when finished", isOn: $params.showOutput)
+                .accessibilityLabel("Show output when finished")
         }
     }
 
@@ -1049,16 +1091,36 @@ struct ScriptParams: Equatable {
 
     func commentLines(prefix c: String) -> [String] {
         var lines: [String] = []
-        if let description, !description.isEmpty { lines.append("\(c) description: \(description)") }
-        if let key, !key.isEmpty { lines.append("\(c) key: \(key)") }
-        if let extensions, !extensions.isEmpty { lines.append("\(c) extensions: \(extensions)") }
-        if let minFiles { lines.append("\(c) minFiles: \(minFiles)") }
-        if let maxFiles { lines.append("\(c) maxFiles: \(maxFiles)") }
-        if filesOnly { lines.append("\(c) filesOnly: true") }
-        if dirsOnly { lines.append("\(c) dirsOnly: true") }
-        if confirm { lines.append("\(c) confirm: true") }
-        if sequential { lines.append("\(c) sequential: true") }
-        if showOutput { lines.append("\(c) showOutput: true") }
+        if let description, !description.isEmpty {
+            lines.append("\(c) description: \(description)")
+        }
+        if let key, !key.isEmpty {
+            lines.append("\(c) key: \(key)")
+        }
+        if let extensions, !extensions.isEmpty {
+            lines.append("\(c) extensions: \(extensions)")
+        }
+        if let minFiles {
+            lines.append("\(c) minFiles: \(minFiles)")
+        }
+        if let maxFiles {
+            lines.append("\(c) maxFiles: \(maxFiles)")
+        }
+        if filesOnly {
+            lines.append("\(c) filesOnly: true")
+        }
+        if dirsOnly {
+            lines.append("\(c) dirsOnly: true")
+        }
+        if confirm {
+            lines.append("\(c) confirm: true")
+        }
+        if sequential {
+            lines.append("\(c) sequential: true")
+        }
+        if showOutput {
+            lines.append("\(c) showOutput: true")
+        }
         return lines
     }
 }
@@ -1084,8 +1146,12 @@ enum ScriptHeaderParser {
         if let m = try? ScriptManager.EXTENSIONS_REGEX.firstMatch(in: content) {
             p.extensions = m.1.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        if let m = try? ScriptManager.MIN_FILES_REGEX.firstMatch(in: content), let n = Int(m.1) { p.minFiles = n }
-        if let m = try? ScriptManager.MAX_FILES_REGEX.firstMatch(in: content), let n = Int(m.1) { p.maxFiles = n }
+        if let m = try? ScriptManager.MIN_FILES_REGEX.firstMatch(in: content), let n = Int(m.1) {
+            p.minFiles = n
+        }
+        if let m = try? ScriptManager.MAX_FILES_REGEX.firstMatch(in: content), let n = Int(m.1) {
+            p.maxFiles = n
+        }
         p.filesOnly = content.contains(ScriptManager.FILES_ONLY_REGEX)
         p.dirsOnly = content.contains(ScriptManager.DIRS_ONLY_REGEX)
         p.confirm = content.contains(ScriptManager.CONFIRM_REGEX)
@@ -1097,12 +1163,16 @@ enum ScriptHeaderParser {
     /// The script with its shebang and managed header lines removed, blank runs collapsed.
     static func body(_ content: String) -> String {
         var lines = content.components(separatedBy: "\n")
-        if let first = lines.first, first.hasPrefix("#!") { lines.removeFirst() }
+        if let first = lines.first, first.hasPrefix("#!") {
+            lines.removeFirst()
+        }
         var result: [String] = []
         var lastBlank = false
         for line in lines where !isManagedLine(line) {
             let blank = line.trimmingCharacters(in: .whitespaces).isEmpty
-            if blank, lastBlank { continue }
+            if blank, lastBlank {
+                continue
+            }
             result.append(line)
             lastBlank = blank
         }
@@ -1142,7 +1212,9 @@ enum ScriptHeaderParser {
     ]
 
     private static func isManagedLine(_ line: String) -> Bool {
-        if (try? paramLineRegex.firstMatch(in: line)) != nil { return true }
+        if (try? paramLineRegex.firstMatch(in: line)) != nil {
+            return true
+        }
         let stripped = line.trimmingCharacters(in: CharacterSet(charactersIn: "#/-").union(.whitespaces))
         return managedHelpPhrases.contains(stripped)
     }

@@ -59,7 +59,9 @@ struct GroupedIgnoreEditor: View {
         .onChange(of: rawText) {
             // Re-sync only when the change came from outside the toggle list (raw edits / resets).
             let parsed = IgnoreDocument.parse(rawText)
-            if parsed.serialize() != doc.serialize() { doc = parsed }
+            if parsed.serialize() != doc.serialize() {
+                doc = parsed
+            }
         }
     }
 
@@ -166,6 +168,7 @@ struct GroupedIgnoreEditor: View {
                         .font(.heavy(7))
                         .foregroundColor(.bg.warm)
                 }
+                .accessibilityLabel("Close")
                 .buttonStyle(FlatButton(color: .fg.warm.opacity(0.6), circle: true, horizontalPadding: 5, verticalPadding: 5))
                 .padding(.top, 8).padding(.leading, 8)
                 Spacer()
@@ -180,14 +183,16 @@ struct GroupedIgnoreEditor: View {
         let isExpanded = expanded.contains(group.id)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Toggle("", isOn: groupBinding(gi))
+                Toggle(group.name, isOn: groupBinding(gi))
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.mini)
                     .disabled(group.ruleCount == 0)
                     .fixedSize()
                 Button {
-                    if group.ruleCount > 0 { toggleExpanded(group.id) }
+                    if group.ruleCount > 0 {
+                        toggleExpanded(group.id)
+                    }
                 } label: {
                     HStack(spacing: 6) {
                         VStack(alignment: .leading, spacing: 1) {
@@ -242,13 +247,23 @@ struct GroupedIgnoreEditor: View {
     }
 
     private func toggleExpanded(_ id: String) {
-        if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
+        if expanded.contains(id) {
+            expanded.remove(id)
+        } else {
+            expanded.insert(id)
+        }
     }
 
     private func statusCaption(_ group: IgnoreDocument.Group) -> String {
-        if group.ruleCount == 0 { return group.isCustom ? "add rules via Edit as text" : "no rules" }
-        if group.allEnabled { return "\(group.ruleCount) rule\(group.ruleCount == 1 ? "" : "s") active" }
-        if group.anyEnabled { return "\(group.enabledCount) of \(group.ruleCount) active" }
+        if group.ruleCount == 0 {
+            return group.isCustom ? "add rules via Edit as text" : "no rules"
+        }
+        if group.allEnabled {
+            return "\(group.ruleCount) rule\(group.ruleCount == 1 ? "" : "s") active"
+        }
+        if group.anyEnabled {
+            return "\(group.enabledCount) of \(group.ruleCount) active"
+        }
         return "off"
     }
 

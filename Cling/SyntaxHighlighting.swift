@@ -156,7 +156,9 @@ struct CodePreviewView: NSViewRepresentable {
                 let data = (try? handle?.read(upToCount: cap)) ?? Data()
                 try? handle?.close()
                 var text = String(decoding: data, as: UTF8.self)
-                if data.count >= cap { text += "\n\n… preview truncated" }
+                if data.count >= cap {
+                    text += "\n\n… preview truncated"
+                }
                 let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
                 SyntaxHighlighter.shared.highlight(text, language: language, font: font, lineNumbers: true) { attributed in
                     guard self.loadedURL == url, let textView = self.textView else { return }
@@ -187,7 +189,9 @@ struct CodePreviewView: NSViewRepresentable {
             let wasAtTop = scroll.contentView.bounds.origin.y <= -scroll.contentInsets.top + 1
             scroll.automaticallyAdjustsContentInsets = false
             scroll.contentInsets = NSEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
-            if wasAtTop { scrollToTop() }
+            if wasAtTop {
+                scrollToTop()
+            }
         }
 
         private var loadedURL: URL?
@@ -280,6 +284,7 @@ struct CodeEditorView: NSViewRepresentable {
 
     var language: String?
     var fontSize: CGFloat = 12
+    var accessibilityName: String?
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -291,6 +296,8 @@ struct CodeEditorView: NSViewRepresentable {
 
         if let textView = scroll.documentView as? NSTextView {
             configureCodeTextView(textView, editable: true)
+            // A SwiftUI accessibilityLabel stops at the scroll view and never reaches the text view.
+            textView.setAccessibilityLabel(accessibilityName)
             textView.delegate = context.coordinator
             textView.string = source
             context.coordinator.textView = textView

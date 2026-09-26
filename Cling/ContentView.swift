@@ -565,6 +565,7 @@ struct ContentView: View {
     private var iconColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
         TableColumn("", value: \.string) { path in
             Image(nsImage: path.memoz.icon).resizable().frame(width: iconSide, height: iconSide)
+                .accessibilityHidden(true)
         }.width(FontScale.length(20))
     }
 
@@ -1043,6 +1044,8 @@ struct ContentView: View {
         .foregroundColor(showSyntaxHelp ? .accentColor : .secondary)
         .focusable(false)
         .help("Search syntax reference (⌘/)")
+        // Without a name the button is announced by its symbol, "Question Mark In A Circle".
+        .accessibilityLabel("Search syntax reference")
         .keyboardShortcut("/", modifiers: .command)
         .popover(isPresented: $showSyntaxHelp, arrowEdge: .bottom) {
             QuerySyntaxCheatsheet()
@@ -1065,6 +1068,8 @@ struct ContentView: View {
             .foregroundColor(showFullHistory ? .accentColor : .secondary)
             .focusable(false)
             .help("Search history")
+            .accessibilityLabel("Search history")
+            .accessibilityToggle(isOn: showFullHistory)
         }
     }
 
@@ -1078,6 +1083,7 @@ struct ContentView: View {
             .foregroundColor(.secondary)
             .focusable(false)
             .help("Save current query as a Quick Filter (⌘S)")
+            .accessibilityLabel("Save current query as a Quick Filter")
         }
     }
 
@@ -1091,6 +1097,8 @@ struct ContentView: View {
                     .id(placeholderHint)
                     .transition(.opacity)
                     .allowsHitTesting(false)
+                    // Drawn over the field as its placeholder; the field itself carries the name.
+                    .accessibilityHidden(true)
             }
             if let suffix = inlineSuffix {
                 // Ghost completion: the typed text is invisible here (the real TextField draws it), so
@@ -1108,9 +1116,11 @@ struct ContentView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
                 .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
             TextField("", text: $fuzzy.query)
                 .textFieldStyle(.plain)
+                .accessibilityLabel("Search")
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
                 .focused($focused, equals: .search)
@@ -1228,6 +1238,7 @@ struct ContentView: View {
                         }
                         .scrollContentBackground(.hidden)
                         .alternatingRowBackgrounds(.disabled)
+                        .accessibilityLabel("Results")
                         // Fixed row height keeps NSTableView from measuring every inserted row
                         // (which would force synchronous per-row stat/icon fetches on a bulk
                         // result update and freeze the app — CLING-B). Rows are uniform single
@@ -1446,6 +1457,7 @@ struct ContentView: View {
         }
         .scrollContentBackground(.hidden)
         .alternatingRowBackgrounds(.disabled)
+        .accessibilityLabel("Stash")
         .fixedTableRowHeight(rowHeight)
         .onKeyPress(.downArrow) {
             // Walk off the end of the stash into the results table.

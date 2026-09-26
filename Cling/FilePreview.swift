@@ -116,12 +116,16 @@ enum TextSniffer {
         // stalled network mount that stat is what hung the main thread. Whether a path holds text rather
         // than binary is stable in practice, so trading mtime precision for zero I/O on a hit is worth it.
         let key = url.path
-        if let cached = cache[key] { return cached }
+        if let cached = cache[key] {
+            return cached
+        }
 
         let result = sniff(url)
         cache[key] = result
         cacheOrder.append(key)
-        if cacheOrder.count > 64 { cache.removeValue(forKey: cacheOrder.removeFirst()) }
+        if cacheOrder.count > 64 {
+            cache.removeValue(forKey: cacheOrder.removeFirst())
+        }
         return result
     }
 
@@ -137,10 +141,16 @@ enum TextSniffer {
         defer { try? handle.close() }
         var data = (try? handle.read(upToCount: 8 * 1024)) ?? Data()
         guard !data.isEmpty else { return false }
-        if data.contains(0) { return false }
+        if data.contains(0) {
+            return false
+        }
         for _ in 0 ..< 4 {
-            if String(data: data, encoding: .utf8) != nil { return true }
-            if data.isEmpty { break }
+            if String(data: data, encoding: .utf8) != nil {
+                return true
+            }
+            if data.isEmpty {
+                break
+            }
             data.removeLast()
         }
         return false
@@ -167,7 +177,9 @@ struct FilePreviewPanel: View {
                     Spacer(minLength: 0)
                     VStack(spacing: 0) {
                         FileInfoBar(path: path, kind: kind)
-                        if showHideHint { hideHint }
+                        if showHideHint {
+                            hideHint
+                        }
                     }
                     .glassBar()
                     .overlay(alignment: .top) { Divider().opacity(0.4) }
@@ -200,7 +212,9 @@ struct FilePreviewPanel: View {
             PreviewPanelState.shared.currentPath = current
             installArrowMonitor()
             // Count this viewing toward retiring the footer hint.
-            if hintSeenCount < Self.hintRetireCount { hintSeenCount += 1 }
+            if hintSeenCount < Self.hintRetireCount {
+                hintSeenCount += 1
+            }
         }
         .onDisappear {
             PreviewPanelState.shared.currentPath = nil
@@ -256,6 +270,7 @@ struct FilePreviewPanel: View {
                 Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Previous file")
             .disabled(index <= 0)
             Text("\(index + 1) of \(paths.count)")
                 .font(.scaled(10, .chrome, design: .monospaced))
@@ -265,6 +280,7 @@ struct FilePreviewPanel: View {
                 Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Next file")
             .disabled(index >= paths.count - 1)
         }
         .help("Step through selected files (← →)")
@@ -781,12 +797,16 @@ struct FolderPreview: View {
             var collected: [DirEntry] = []
             var truncated = false
             for case let childURL as URL in enumerator {
-                if collected.count >= limit { truncated = true; break }
+                if collected.count >= limit {
+                    truncated = true; break
+                }
                 let isDir = (try? childURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
                 collected.append(DirEntry(path: FilePath(childURL.path), isDir: isDir))
             }
             let entries = collected.sorted { a, b in
-                if a.isDir != b.isDir { return a.isDir }
+                if a.isDir != b.isDir {
+                    return a.isDir
+                }
                 return a.path.name.string.localizedCaseInsensitiveCompare(b.path.name.string) == .orderedAscending
             }
             return (entries, truncated)
@@ -914,7 +934,11 @@ enum SevenZip {
                     }
 
                     // Kill the process if it runs too long, even while producing no output.
-                    let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
+                    let watchdog = DispatchWorkItem {
+                        if process.isRunning {
+                            process.terminate()
+                        }
+                    }
                     DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
 
                     let handle = pipe.fileHandleForReading
@@ -922,11 +946,15 @@ enum SevenZip {
                     var flooded = false
                     while true {
                         let chunk = handle.availableData
-                        if chunk.isEmpty { break } // EOF or pipe closed by terminate()
+                        if chunk.isEmpty {
+                            break
+                        } // EOF or pipe closed by terminate()
                         data.append(chunk)
                         if data.count >= maxBytes {
                             flooded = true
-                            if process.isRunning { process.terminate() }
+                            if process.isRunning {
+                                process.terminate()
+                            }
                             break
                         }
                     }
@@ -943,7 +971,9 @@ enum SevenZip {
                 }
             }
         } onCancel: {
-            if process.isRunning { process.terminate() }
+            if process.isRunning {
+                process.terminate()
+            }
         }
     }
 
@@ -951,7 +981,9 @@ enum SevenZip {
     static func cachedList(_ url: URL) -> Task<Listing?, Never> {
         let mtime = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         let key = "\(url.path)|\(mtime)"
-        if let task = listTasks[key] { return task }
+        if let task = listTasks[key] {
+            return task
+        }
         let task = Task { await list(url) }
         listTasks[key] = task
         listTaskOrder.append(key)
@@ -983,7 +1015,9 @@ enum SevenZip {
         var pastHeader = false
         var totalSize: Int64 = 0
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            if entries.count >= maxEntries { capped = true; break }
+            if entries.count >= maxEntries {
+                capped = true; break
+            }
             let line = String(rawLine)
             if line.hasPrefix("Path = ") {
                 path = String(line.dropFirst("Path = ".count))
@@ -1042,7 +1076,9 @@ final class QuickLookSupport {
     func canPreview(_ url: URL) -> Bool {
         guard ready else { return true }
         guard let type = url.fileType else { return false }
-        if supportedUTIs.contains(type.identifier) { return true }
+        if supportedUTIs.contains(type.identifier) {
+            return true
+        }
         return type.supertypes.contains { supportedUTIs.contains($0.identifier) }
     }
 
@@ -1073,10 +1109,14 @@ final class QuickLookSupport {
         var inPlugins = false
         for rawLine in String(decoding: data, as: UTF8.self).split(separator: "\n") {
             let line = String(rawLine)
-            if line.hasPrefix("plugins:") { inPlugins = true; continue }
+            if line.hasPrefix("plugins:") {
+                inPlugins = true; continue
+            }
             guard inPlugins, let arrow = line.range(of: " -> ") else { continue }
             let uti = line[..<arrow.lowerBound].trimmingCharacters(in: .whitespaces)
-            if !uti.isEmpty { set.insert(uti) }
+            if !uti.isEmpty {
+                set.insert(uti)
+            }
         }
         return set
     }

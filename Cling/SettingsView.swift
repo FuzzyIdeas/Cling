@@ -275,6 +275,7 @@ struct SettingsView: View {
                 SidebarIcon(symbol: category.symbol, hue: category.hue)
             }
         }
+        .accessibilityIdentifier("settings.sidebar.\(category.rawValue)")
     }
 
 }
@@ -333,6 +334,9 @@ private struct DescriptiveToggle: View {
             Text(title)
             Text(detail)
         }
+        // A two-line label in a grouped Form reaches AX unnamed.
+        .accessibilityLabel(title)
+        .accessibilityHint(detail)
     }
 }
 
@@ -348,7 +352,7 @@ private struct InterfaceSettingsPane: View {
                     title: "Window style",
                     detail: "Choose the window background appearance."
                 ) {
-                    Picker("", selection: $windowAppearance) {
+                    Picker("Window style", selection: $windowAppearance) {
                         ForEach(WindowAppearance.allCases.filter(\.available), id: \.self) { appearance in
                             Text(appearance.rawValue).tag(appearance)
                         }
@@ -370,13 +374,16 @@ private struct InterfaceSettingsPane: View {
                         Text(fontScale.formatted(.percent.precision(.fractionLength(0))))
                             .monospacedDigit()
                     }
+                    .accessibilityLabel("Text size")
                     .fixedSize()
                 }
 
                 Toggle("Dim status bar", isOn: $dimStatusBar)
+                    .accessibilityLabel("Dim status bar")
                 SettingRow(title: "Tint strength when a filter is active") {
                     HStack(spacing: 8) {
                         Slider(value: $filterWindowTintStrength, in: 0 ... 1, step: 0.05)
+                            .accessibilityLabel("Tint strength when a filter is active")
                             .frame(width: 160)
                         Text(
                             filterWindowTintStrength > 0
@@ -414,7 +421,7 @@ private struct InterfaceSettingsPane: View {
                         ? "Double-tap this modifier key to instantly hide or show all three rows at once."
                         : "Enable at least one row above to use the double-tap toggle."
                 ) {
-                    Picker("", selection: $rowsToggleModifier) {
+                    Picker("Toggle all rows by double-tapping", selection: $rowsToggleModifier) {
                         ForEach(RowToggleModifier.allCases, id: \.self) { modifier in
                             Text(modifier.label).tag(modifier)
                         }
@@ -430,7 +437,7 @@ private struct InterfaceSettingsPane: View {
 
             Section("Action Bar styling") {
                 SettingRow(title: "Labels") {
-                    Picker("", selection: $toolbarLabelStyle) {
+                    Picker("Labels", selection: $toolbarLabelStyle) {
                         Text("Icon + Text").tag(ToolbarLabelStyle.iconAndText)
                         Text("Text only").tag(ToolbarLabelStyle.textOnly)
                         Text("Icon only").tag(ToolbarLabelStyle.iconOnly)
@@ -441,7 +448,7 @@ private struct InterfaceSettingsPane: View {
                 }
 
                 SettingRow(title: "Density") {
-                    Picker("", selection: $toolbarDensity) {
+                    Picker("Density", selection: $toolbarDensity) {
                         Text("Regular").tag(ToolbarDensity.regular)
                         Text("Compact").tag(ToolbarDensity.compact)
                     }
@@ -477,7 +484,7 @@ private struct InterfaceSettingsPane: View {
 
             Section {
                 SettingRow(title: "Default link expiration") {
-                    Picker("", selection: $defaultLinkExpiration) {
+                    Picker("Default link expiration", selection: $defaultLinkExpiration) {
                         ForEach(LINK_EXPIRATION_PRESETS, id: \.self) { e in
                             Text(expirationDurationLabel(e)).tag(e)
                         }
@@ -560,7 +567,7 @@ private struct InterfaceSettingsPane: View {
 
     private func placementRow(_ action: ToolbarAction) -> some View {
         LabeledContent {
-            Picker("", selection: toolbarPlacement(for: action.id)) {
+            Picker(action.title, selection: toolbarPlacement(for: action.id)) {
                 Label("Action Bar", systemImage: "dock.rectangle").tag(ToolbarPlacement.bar)
                 Label("Action Menu", systemImage: "ellipsis").tag(ToolbarPlacement.more)
                 Label("Hidden", systemImage: "eye.slash").tag(ToolbarPlacement.hidden)
@@ -629,6 +636,7 @@ private struct GeneralSettingsPane: View {
         Form {
             Section {
                 LaunchAtLogin.Toggle()
+                    .accessibilityLabel("Launch at login")
             }
 
             Section {
@@ -636,7 +644,7 @@ private struct GeneralSettingsPane: View {
                     title: "Window mode",
                     detail: "Utility: no Dock icon, hides on defocus. Desktop App: regular app window with dock icon."
                 ) {
-                    Picker("", selection: windowMode) {
+                    Picker("Window mode", selection: windowMode) {
                         ForEach(WindowMode.allCases, id: \.self) { mode in
                             Text(mode.rawValue).tag(mode)
                         }
@@ -686,7 +694,7 @@ private struct GeneralSettingsPane: View {
                     title: "Reset selection after",
                     detail: selectionResetDetail(resetSelectionAfter)
                 ) {
-                    Picker("", selection: $resetSelectionAfter) {
+                    Picker("Reset selection after", selection: $resetSelectionAfter) {
                         ForEach(SELECTION_RESET_PRESETS, id: \.self) { t in
                             Text(selectionResetLabel(t)).tag(t)
                         }
@@ -815,6 +823,7 @@ private struct AppsSettingsPane: View {
                     ) {
                         HStack(spacing: 8) {
                             Slider(value: stashAutoClearIndex, in: 0 ... Double(STASH_AUTO_CLEAR_PRESETS.count - 1), step: 1)
+                                .accessibilityLabel("Auto-clear stash")
                                 .frame(width: 160)
                             Text(stashAutoClearLabel(stashAutoClearAfter))
                                 .font(.subheadline.weight(.medium))
@@ -909,7 +918,7 @@ private struct SearchSettingsPane: View {
                     isOn: $literalSearch
                 )
                 SettingRow(title: "Minimum query length") {
-                    Picker("", selection: $minQueryLength) {
+                    Picker("Minimum query length", selection: $minQueryLength) {
                         Text("1").tag(1)
                         Text("2").tag(2)
                         Text("3").tag(3)
@@ -926,7 +935,7 @@ private struct SearchSettingsPane: View {
                     title: "Max results",
                     detail: "Maximum number of results to show in the search results."
                 ) {
-                    Picker("", selection: $maxResultsCount) {
+                    Picker("Max results", selection: $maxResultsCount) {
                         Text("100").tag(100)
                         Text("500").tag(500)
                         if proactive {
@@ -952,7 +961,7 @@ private struct SearchSettingsPane: View {
                             }
                             .controlSize(.small)
                         }
-                        Picker("", selection: $defaultResultsMode) {
+                        Picker("Default results", selection: $defaultResultsMode) {
                             ForEach(DefaultResultsMode.allCases, id: \.self) { mode in
                                 Text(mode.rawValue).tag(mode)
                             }
@@ -1046,6 +1055,7 @@ private struct SearchSettingsPane: View {
                     Text(detail).font(.callout).foregroundColor(.secondary)
                 }
             }
+            .accessibilityLabel(label)
             Spacer()
             reindexButton(for: scope)
         }
@@ -1059,6 +1069,7 @@ private struct SearchSettingsPane: View {
                     Text(detail).font(.callout).foregroundColor(.secondary)
                 }
             }
+            .accessibilityLabel(label)
             .disabled(!proactive)
             Spacer()
             reindexButton(for: scope)
@@ -1211,6 +1222,7 @@ private struct ExclusionsSettingsPane: View {
                         .foregroundStyle(.secondary)
                     }
                 }
+                .accessibilityLabel("Respect each project's .gitignore")
                 .toggleStyle(.switch)
                 .onChange(of: honorGitignore) {
                     FUZZY.refresh(pauseSearch: false, scopes: [.home])
@@ -1765,6 +1777,7 @@ struct ReindexTimeIntervalSlider: View {
                 Text(interval.humanizedInterval).mono(11)
                     .frame(width: 150, alignment: .trailing)
             }
+            .accessibilityLabel("Reindex interval")
         }
     }
 

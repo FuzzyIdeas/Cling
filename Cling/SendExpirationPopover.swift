@@ -34,6 +34,7 @@ struct SendExpirationPopover: View {
                         .contentTransition(.numericText())
                 }
                 Slider(value: index, in: 0 ... Double(LINK_EXPIRATION_PRESETS.count - 1), step: 1)
+                    .accessibilityLabel("Link expiration")
                     .animation(.snappy(duration: 0.2), value: expiration)
                 HStack {
                     Text(expirationShortLabel(LINK_EXPIRATION_PRESETS[0]))

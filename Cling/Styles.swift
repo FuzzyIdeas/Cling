@@ -646,6 +646,7 @@ private struct ScoreHeaderCell: View {
             }
             .buttonStyle(.borderless)
             .help("Sort by score (\(KeyboardShortcuts.getShortcut(for: .clSortByScore)?.description ?? "⌃0"))")
+            .accessibilityLabel("Sort by score (\(KeyboardShortcuts.getShortcut(for: .clSortByScore)?.description ?? "⌃0"))")
         }
     }
 
@@ -688,6 +689,7 @@ private struct StashClearHeaderCell: View {
             }
             .buttonStyle(.borderless)
             .help("Remove all files from the stash (\(KeyboardShortcuts.getShortcut(for: .clStashClear)?.description ?? "⇧⌘S"))")
+            .accessibilityLabel("Remove all files from the stash (\(KeyboardShortcuts.getShortcut(for: .clStashClear)?.description ?? "⇧⌘S"))")
         }
     }
 }

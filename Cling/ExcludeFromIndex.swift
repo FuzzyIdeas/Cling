@@ -40,7 +40,9 @@ struct ExcludeRule: Hashable {
     var blocklistPrefix = false // for .blocklist: prefix match vs contains match
 
     var storeLabel: String {
-        if mechanism == .blocklist { return blocklistPrefix ? "blocklist (prefix)" : "blocklist (contains)" }
+        if mechanism == .blocklist {
+            return blocklistPrefix ? "blocklist (prefix)" : "blocklist (contains)"
+        }
         return mechanism.fileLabel
     }
 }
@@ -299,7 +301,9 @@ enum ExcludeAnalyzer {
     static func commonExtension(_ infos: [ExcludePathInfo]) -> String? {
         guard infos.allSatisfy({ !$0.isDir }) else { return nil }
         let exts = Set(infos.map(\.ext))
-        if exts.count == 1, let e = exts.first ?? nil { return e }
+        if exts.count == 1, let e = exts.first ?? nil {
+            return e
+        }
         return nil
     }
 
@@ -356,7 +360,9 @@ enum ExcludeAnalyzer {
         }
         // fsignore pattern (rel-based)
         var core = line
-        if core.hasSuffix("/") { core.removeLast() }
+        if core.hasSuffix("/") {
+            core.removeLast()
+        }
         let anchored = core.hasPrefix("/")
         let body = anchored ? String(core.dropFirst()) : core // pattern without the anchor slash
         if anchored || body.contains("/") {
@@ -376,7 +382,9 @@ enum ExcludeAnalyzer {
         }
         for name in Set(infos.map(\.leaf)) {
             let dirs = infos.filter { $0.leaf == name }
-            if let r = nameRule(name: name, isDir: dirs.allSatisfy(\.isDir), mechanism: mechanism) { candidates.append(r) }
+            if let r = nameRule(name: name, isDir: dirs.allSatisfy(\.isDir), mechanism: mechanism) {
+                candidates.append(r)
+            }
         }
         for parent in Set(infos.map(\.parentPattern)) where !parent.isEmpty {
             candidates.append(folderRule(parent, mechanism: mechanism))
@@ -423,7 +431,9 @@ struct ExcludeFromIndexSheet: View {
             if let segments = result.options.compactMap(\.folderSegments).first {
                 folderSegmentIndex = segments.count - 1 // default to the deepest folder
             }
-            if let first = result.options.first { reseed(first) }
+            if let first = result.options.first {
+                reseed(first)
+            }
         }
     }
 
@@ -513,7 +523,9 @@ struct ExcludeFromIndexSheet: View {
         return VStack(alignment: .leading, spacing: 6) {
             Button(action: {
                 selectedID = option.id
-                if let segments = option.folderSegments { folderSegmentIndex = segments.count - 1 }
+                if let segments = option.folderSegments {
+                    folderSegmentIndex = segments.count - 1
+                }
                 reseed(option)
             }) {
                 HStack(alignment: .top, spacing: 8) {
@@ -582,12 +594,16 @@ struct ExcludeFromIndexSheet: View {
                     if idx > 0 {
                         Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
                     }
-                    Button(seg.name) { folderSegmentIndex = idx; if let o = analysis?.options.first(where: { $0.id == selectedID }) { reseed(o) } }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 10, weight: idx == selected ? .semibold : .regular, design: .monospaced))
-                        .foregroundStyle(idx > selected ? Color.secondary.opacity(0.4) : .primary)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(idx == selected ? Color.accentColor.opacity(0.25) : .clear, in: Capsule())
+                    Button(seg.name) {
+                        folderSegmentIndex = idx; if let o = analysis?.options.first(where: { $0.id == selectedID }) {
+                            reseed(o)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: idx == selected ? .semibold : .regular, design: .monospaced))
+                    .foregroundStyle(idx > selected ? Color.secondary.opacity(0.4) : .primary)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(idx == selected ? Color.accentColor.opacity(0.25) : .clear, in: Capsule())
                 }
             }
             .padding(.vertical, 2)
@@ -629,7 +645,9 @@ struct ExcludeFromIndexSheet: View {
                 }
                 HStack(spacing: 10) {
                     Button(rawMode ? "Done editing text" : "Edit as text") {
-                        if rawMode { self.edit?.commitRaw() }
+                        if rawMode {
+                            self.edit?.commitRaw()
+                        }
                         rawMode.toggle()
                         recomputeSignals(option)
                     }
@@ -654,6 +672,8 @@ struct ExcludeFromIndexSheet: View {
         }
         .buttonStyle(.plain)
         .help(on ? "Disable this rule" : "Enable this rule")
+        .accessibilityLabel(on ? "Disable this rule" : "Enable this rule")
+        .accessibilityToggle(isOn: on)
     }
 
     private func chipLine(_ i: Int, line: ExcludeRuleLine, columns: Set<Int>, storeLabel: String, enabled: Bool) -> some View {
@@ -663,9 +683,13 @@ struct ExcludeFromIndexSheet: View {
         return HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.red)
             HStack(spacing: 2) {
-                if line.anchored { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
+                if line.anchored {
+                    Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
+                }
                 ForEach(Array(line.tokens.enumerated()), id: \.offset) { c, token in
-                    if c > 0 { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
+                    if c > 0 {
+                        Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
+                    }
                     if token.isLiteral, columns.contains(c), enabled {
                         Button(action: { edit?.cycle(column: c); recomputeSignalsForSelected() }) {
                             tokenChip(fitted[c], tint: chipTint(token), interactive: true)
@@ -675,7 +699,9 @@ struct ExcludeFromIndexSheet: View {
                         tokenChip(fitted[c], tint: .secondary, interactive: false)
                     }
                 }
-                if line.dirSlash { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
+                if line.dirSlash {
+                    Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
+                }
             }
             Text("Add to \(storeLabel)").font(.system(size: 9)).foregroundStyle(.tertiary)
             Spacer(minLength: 0)
@@ -811,13 +837,23 @@ struct ExcludeFromIndexSheet: View {
         var tmp: String?
         if !content.isEmpty {
             let path = NSTemporaryDirectory() + "cling-exclude-probe-" + UUID().uuidString + ".fsignore"
-            if (try? content.write(toFile: path, atomically: true, encoding: .utf8)) != nil { tmp = path }
+            if (try? content.write(toFile: path, atomically: true, encoding: .utf8)) != nil {
+                tmp = path
+            }
         }
-        defer { if let tmp { try? FileManager.default.removeItem(atPath: tmp) } }
+        defer {
+            if let tmp {
+                try? FileManager.default.removeItem(atPath: tmp)
+            }
+        }
         bust_gitignore_cache()
         return infos.allSatisfy { info in
-            if blockRules.contains(where: { ExcludeAnalyzer.matches($0, info) }) { return true }
-            if let tmp, let root = info.root { return info.abs.isIgnored(in: tmp, root: root) }
+            if blockRules.contains(where: { ExcludeAnalyzer.matches($0, info) }) {
+                return true
+            }
+            if let tmp, let root = info.root {
+                return info.abs.isIgnored(in: tmp, root: root)
+            }
             return false
         }
     }
@@ -835,12 +871,18 @@ struct ExcludeFromIndexSheet: View {
         countTask = Task {
             var total = 0, capped = false
             for q in queries {
-                if Task.isCancelled { return }
+                if Task.isCancelled {
+                    return
+                }
                 let c = await FUZZY.matchCount(query: q.query, dirsOnly: q.dirsOnly, folders: q.folders.map { FilePath($0) }, maxDepth: nil, cap: 5000)
                 total += c
-                if c >= 5000 { capped = true }
+                if c >= 5000 {
+                    capped = true
+                }
             }
-            if Task.isCancelled { return }
+            if Task.isCancelled {
+                return
+            }
             await MainActor.run { affectedCount = total; countCapped = capped }
         }
     }
@@ -865,7 +907,9 @@ struct ExcludeFromIndexSheet: View {
     private func chipHelp(_ token: RuleToken) -> String {
         switch token.state {
         case .literal:
-            if let ext = token.ext { return "\(token.original). Click to exclude any .\(ext) file here." }
+            if let ext = token.ext {
+                return "\(token.original). Click to exclude any .\(ext) file here."
+            }
             return "\(token.original). Click to exclude any name here."
         case .extWildcard: return "Excludes any .\(token.ext ?? "") file here. Click to exclude any name."
         case .fullWildcard: return "Excludes any name here. Click to use the literal name again."

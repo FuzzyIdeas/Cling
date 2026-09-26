@@ -98,7 +98,9 @@ struct RootContext: Equatable {
     let rel: String
 
     var isHome: Bool {
-        if case .home = kind { return true }; return false
+        if case .home = kind {
+            return true
+        }; return false
     }
 
     /// Where `!` re-include lines for this context's ignore file should be written.
@@ -188,7 +190,9 @@ struct PathDiagnosis {
     let options: [InclusionOption]
 
     var hits: [IgnoreHit] {
-        if case let .excluded(hits) = status { return hits }
+        if case let .excluded(hits) = status {
+            return hits
+        }
         return []
     }
 
@@ -281,7 +285,11 @@ enum IndexInclusionAnalyzer {
 
         let root = rootContext(for: path, snapshot: snapshot)
         let scopes = scopesForPath(path, home: snapshot.home)
-        let onVolume: FilePath? = { if case let .volume(v) = root?.kind { return v }; return nil }()
+        let onVolume: FilePath? = {
+            if case let .volume(v) = root?.kind {
+                return v
+            }; return nil
+        }()
         let reindex: ReindexTarget = onVolume.map { .volume($0) } ?? (scopes.isEmpty ? .full : .scopes(scopes))
 
         // 1. Blocklist hits (byte matching, no root needed). `!`-prefixed lines are exceptions: if one
@@ -350,13 +358,24 @@ enum IndexInclusionAnalyzer {
     /// Which enabled scope(s) would index `path` (used to scope the reindex after applying a plan).
     nonisolated static func scopesForPath(_ path: String, home: String) -> [SearchScope] {
         let lib = home + "/Library"
-        if path == lib || path.hasPrefix(lib + "/") { return [.library] }
-        if path == home || path.hasPrefix(home + "/") { return [.home] }
+        if path == lib || path.hasPrefix(lib + "/") {
+            return [.library]
+        }
+        if path == home || path.hasPrefix(home + "/") {
+            return [.home]
+        }
         if path == "/Applications" || path.hasPrefix("/Applications/")
-            || path == "/System/Applications" || path.hasPrefix("/System/Applications/") { return [.applications] }
-        if path == "/System" || (path.hasPrefix("/System/") && !path.hasPrefix("/System/Volumes/")) { return [.system] }
+            || path == "/System/Applications" || path.hasPrefix("/System/Applications/")
+        {
+            return [.applications]
+        }
+        if path == "/System" || (path.hasPrefix("/System/") && !path.hasPrefix("/System/Volumes/")) {
+            return [.system]
+        }
         for r in ["/usr", "/bin", "/sbin", "/opt", "/etc", "/Library", "/var", "/private"] {
-            if path == r || path.hasPrefix(r + "/") { return [.root] }
+            if path == r || path.hasPrefix(r + "/") {
+                return [.root]
+            }
         }
         return []
     }
@@ -369,7 +388,9 @@ enum IndexInclusionAnalyzer {
         p = (p as NSString).expandingTildeInPath
         // Clean ./.. without resolving symlinks (the index stores raw paths).
         p = URL(fileURLWithPath: p).standardizedFileURL.path
-        if p.count > 1, p.hasSuffix("/") { p.removeLast() }
+        if p.count > 1, p.hasSuffix("/") {
+            p.removeLast()
+        }
         return p
     }
 
@@ -401,21 +422,31 @@ enum IndexInclusionAnalyzer {
     // MARK: Blocklist matching (mirrors isPathBlocked)
 
     nonisolated static func prefixMatches(path: String, prefix: String) -> Bool {
-        if path.hasPrefix(prefix) { return true }
+        if path.hasPrefix(prefix) {
+            return true
+        }
         // Mirror the /private auto-expansion done by PathBlocklist.rebuild()
         for (a, b) in [("/tmp/", "/private/tmp/"), ("/var/", "/private/var/"), ("/etc/", "/private/etc/")] {
-            if prefix.hasPrefix(a), path.hasPrefix("/private" + prefix) { return true }
-            if prefix.hasPrefix(b), path.hasPrefix(String(prefix.dropFirst("/private".count))) { return true }
+            if prefix.hasPrefix(a), path.hasPrefix("/private" + prefix) {
+                return true
+            }
+            if prefix.hasPrefix(b), path.hasPrefix(String(prefix.dropFirst("/private".count))) {
+                return true
+            }
         }
         return false
     }
 
     nonisolated static func containsMatches(path: String, component: String) -> Bool {
-        if path.contains(component) { return true }
+        if path.contains(component) {
+            return true
+        }
         // fts paths omit the trailing slash, so "/build/" should also match a path ending in "/build"
         if component.hasSuffix("/"), component.count >= 2 {
             let trimmed = String(component.dropLast())
-            if path.hasSuffix(trimmed) { return true }
+            if path.hasSuffix(trimmed) {
+                return true
+            }
         }
         return false
     }
@@ -576,8 +607,12 @@ enum IndexInclusionAnalyzer {
     /// - bundle dir: `!rel` plus `rel/**` re-exclusion (whitelisting a dir otherwise drags in every internal file)
     /// - plain dir: `!rel` and `!rel/**` (include the whole subtree)
     nonisolated static func targetLines(rel: String, isDir: Bool, isBundle: Bool) -> (reExclude: [String], reInclude: [String]) {
-        if !isDir { return ([], ["!\(rel)"]) }
-        if isBundle { return (["\(rel)/**"], ["!\(rel)"]) }
+        if !isDir {
+            return ([], ["!\(rel)"])
+        }
+        if isBundle {
+            return (["\(rel)/**"], ["!\(rel)"])
+        }
         return ([], ["!\(rel)", "!\(rel)/**"])
     }
 
@@ -596,8 +631,12 @@ enum IndexInclusionAnalyzer {
     }
 
     nonisolated static func targetSummary(isDir: Bool, isBundle: Bool, lead: String = "Adds a `!` rule so only") -> String {
-        if isBundle { return "\(lead) this bundle is indexed (its internal files stay out)." }
-        if isDir { return "\(lead) this folder and its contents are indexed." }
+        if isBundle {
+            return "\(lead) this bundle is indexed (its internal files stay out)."
+        }
+        if isDir {
+            return "\(lead) this folder and its contents are indexed."
+        }
         return "\(lead) this file is indexed."
     }
 }
@@ -918,7 +957,13 @@ struct MissingPathSheet: View {
             ForEach(option.removeBlocklist) { hit in
                 let on = !disabledRemovals.contains(hit.id)
                 HStack(spacing: 6) {
-                    enableToggle(on) { if on { disabledRemovals.insert(hit.id) } else { disabledRemovals.remove(hit.id) } }
+                    enableToggle(on) {
+                        if on {
+                            disabledRemovals.insert(hit.id)
+                        } else {
+                            disabledRemovals.remove(hit.id)
+                        }
+                    }
                     changeLine(sign: "−", color: .red, label: "Remove from blocklist", value: hit.rule)
                         .opacity(on ? 1 : 0.4)
                 }
@@ -952,7 +997,9 @@ struct MissingPathSheet: View {
 
                 HStack(spacing: 10) {
                     Button(rawMode ? "Done editing text" : "Edit as text") {
-                        if rawMode { self.edit?.commitRaw() }
+                        if rawMode {
+                            self.edit?.commitRaw()
+                        }
                         rawMode.toggle()
                         recomputeCoverage(d)
                     }
@@ -977,6 +1024,8 @@ struct MissingPathSheet: View {
         }
         .buttonStyle(.plain)
         .help(on ? "Disable this rule" : "Enable this rule")
+        .accessibilityLabel(on ? "Disable this rule" : "Enable this rule")
+        .accessibilityToggle(isOn: on)
     }
 
     @ViewBuilder
@@ -988,9 +1037,13 @@ struct MissingPathSheet: View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text("+").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(signColor)
             HStack(spacing: 2) {
-                if line.hasBang { tokenChip("!", tint: .secondary, interactive: false) }
+                if line.hasBang {
+                    tokenChip("!", tint: .secondary, interactive: false)
+                }
                 ForEach(Array(line.tokens.enumerated()), id: \.offset) { c, token in
-                    if c > 0 { Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }
+                    if c > 0 {
+                        Text("/").font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
+                    }
                     if token.isLiteral, columns.contains(c), enabled {
                         Button(action: {
                             edit?.cycle(column: c)
@@ -1116,7 +1169,9 @@ struct MissingPathSheet: View {
     private func chipHelp(_ token: RuleToken) -> String {
         switch token.state {
         case .literal:
-            if let ext = token.ext { return "\(token.original). Click to match any .\(ext) file here." }
+            if let ext = token.ext {
+                return "\(token.original). Click to match any .\(ext) file here."
+            }
             return "\(token.original). Click to match any name here."
         case .extWildcard:
             return "Matches any .\(token.ext ?? "") file here. Click to match any name."

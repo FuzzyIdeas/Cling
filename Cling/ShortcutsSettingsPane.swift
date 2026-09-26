@@ -12,7 +12,7 @@ struct ShortcutsSettingsPane: View {
                     Section(segment.title) {
                         ForEach(items) { action in
                             LabeledContent {
-                                ShortcutRecorder(name: ClingShortcuts.name(for: action.id)) { _ in
+                                ShortcutRecorder(name: ClingShortcuts.name(for: action.id), label: action.title) { _ in
                                     validate(action.id)
                                 }
                             } label: {
@@ -25,7 +25,7 @@ struct ShortcutsSettingsPane: View {
             Section("Sorting") {
                 ForEach(ClingShortcuts.sortShortcuts) { sort in
                     LabeledContent {
-                        ShortcutRecorder(name: sort.name) { _ in
+                        ShortcutRecorder(name: sort.name, label: sort.title) { _ in
                             validate(name: sort.name, title: sort.title)
                         }
                     } label: {
@@ -36,7 +36,7 @@ struct ShortcutsSettingsPane: View {
             Section("Stash") {
                 ForEach(ClingShortcuts.utilityShortcuts) { utility in
                     LabeledContent {
-                        ShortcutRecorder(name: utility.name) { _ in
+                        ShortcutRecorder(name: utility.name, label: utility.title) { _ in
                             validate(name: utility.name, title: utility.title)
                         }
                     } label: {
