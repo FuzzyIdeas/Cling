@@ -475,7 +475,7 @@ class FuzzyClient {
     var volumesIndexing: Set<FilePath> = []
     /// Scopes currently part of the active `indexFiles` batch (either running or queued inside it).
     var scopesIndexing: Set<SearchScope> = []
-    @ObservationIgnored var cliMachPortThread: Thread?
+    @ObservationIgnored var cliMachPort: CFMessagePort?
 
     // MARK: - Search Engines (per-scope + recents)
 

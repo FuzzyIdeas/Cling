@@ -115,7 +115,9 @@ final class SearchCoordinator: @unchecked Sendable {
         var bestQuality = 0
         var i = 0
         while i < n {
-            if let first = resultStore[i].first, first.quality > bestQuality { bestQuality = first.quality }
+            if let first = resultStore[i].first, first.quality > bestQuality {
+                bestQuality = first.quality
+            }
             i &+= 1
         }
         let minQuality = bestQuality / 3
@@ -126,7 +128,9 @@ final class SearchCoordinator: @unchecked Sendable {
             var ri = 0
             while ri < resultStore[i].count {
                 let r = resultStore[i][ri]
-                if r.quality >= minQuality || r.hasBase { allResults.append(r) }
+                if r.quality >= minQuality || r.hasBase {
+                    allResults.append(r)
+                }
                 ri &+= 1
             }
             i &+= 1
@@ -195,13 +199,25 @@ final class SearchCoordinator: @unchecked Sendable {
     private func guessScope(for path: String) -> String? {
         let home = NSHomeDirectory()
         let libraryPrefix = home + "/Library"
-        if path.hasPrefix(libraryPrefix + "/") || path == libraryPrefix { return "library" }
-        if path.hasPrefix(home + "/") || path == home { return "home" }
+        if path.hasPrefix(libraryPrefix + "/") || path == libraryPrefix {
+            return "library"
+        }
+        if path.hasPrefix(home + "/") || path == home {
+            return "home"
+        }
         if path.hasPrefix("/Applications/") || path == "/Applications"
-            || path.hasPrefix("/System/Applications/") { return "applications" }
-        if path.hasPrefix("/System/") || path == "/System" { return "system" }
+            || path.hasPrefix("/System/Applications/")
+        {
+            return "applications"
+        }
+        if path.hasPrefix("/System/") || path == "/System" {
+            return "system"
+        }
         if path.hasPrefix("/usr/") || path.hasPrefix("/bin/") || path.hasPrefix("/sbin/")
-            || path.hasPrefix("/etc/") || path.hasPrefix("/var/") || path.hasPrefix("/opt/") { return "root" }
+            || path.hasPrefix("/etc/") || path.hasPrefix("/var/") || path.hasPrefix("/opt/")
+        {
+            return "root"
+        }
         return nil
     }
 
@@ -212,7 +228,9 @@ final class SearchCoordinator: @unchecked Sendable {
         let scopesByRawValue = Dictionary(uniqueKeysWithValues: SearchScope.allCases.map { ($0.rawValue.lowercased(), $0.label) })
         let resolved = lowered.flatMap { raw -> [String] in
             var matches = [raw]
-            if let displayLabel = scopesByRawValue[raw] { matches.append(displayLabel.lowercased()) }
+            if let displayLabel = scopesByRawValue[raw] {
+                matches.append(displayLabel.lowercased())
+            }
             return matches
         }
         let matchSet = Set(resolved)
@@ -237,7 +255,20 @@ private extension Decodable {
     }
 }
 
-// MARK: - Mach Port Listener
+// MARK: - CLICalls
+
+private enum CLICalls {
+    /// Threads answering calls at once, each serving the port from its own run loop. One used to
+    /// answer every call in turn, so a reindex waiting on the main thread held every search behind
+    /// it. Past this many, calls wait in the port's queue and their sender gives up after its send
+    /// timeout, as they did with one thread.
+    static let listenerThreads = 8
+
+    /// CLI searches still run one at a time. Each one already searches every engine in parallel
+    /// and waits on their locks, so two side by side finish no sooner, and each holds a thread
+    /// per engine while it waits.
+    static let searchLock = NSLock()
+}
 
 @MainActor
 extension FuzzyClient {
@@ -246,33 +277,35 @@ extension FuzzyClient {
     }
 
     private func startMachPortListener() {
-        nonisolated(unsafe) let portName = CLING_PORT_ID
-        let coord = searchCoordinator
-
-        cliMachPortThread = Thread {
-            let coordPtr = Unmanaged.passUnretained(coord).toOpaque()
-            var context = CFMessagePortContext(version: 0, info: coordPtr, retain: nil, release: nil, copyDescription: nil)
-            guard let port = CFMessagePortCreateLocal(nil, portName, { _, _, data, info -> Unmanaged<CFData>? in
-                guard let info else { return nil }
-                let coord = Unmanaged<SearchCoordinator>.fromOpaque(info).takeUnretainedValue()
-                guard let data = data as Data?,
-                      let request = try? JSONDecoder().decode(ClingRequest.self, from: data)
-                else { return nil }
-                let response = FuzzyClient.handleCLIRequest(request, coordinator: coord)
-                let responseData = try! JSONEncoder().encode(response)
-                return Unmanaged.passRetained(responseData as CFData)
-            }, &context, nil) else {
-                cliLog.error("Failed to create Mach port for \(CLING_PORT_ID)")
-                return
-            }
-
-            let source = CFMessagePortCreateRunLoopSource(nil, port, 0)
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .defaultMode)
-            cliLog.info("Mach port listener started on \(CLING_PORT_ID)")
-            CFRunLoopRun()
+        guard cliMachPort == nil else { return }
+        let coordPtr = Unmanaged.passUnretained(searchCoordinator).toOpaque()
+        var context = CFMessagePortContext(version: 0, info: coordPtr, retain: nil, release: nil, copyDescription: nil)
+        guard let port = CFMessagePortCreateLocal(nil, CLING_PORT_ID, { _, _, data, info -> Unmanaged<CFData>? in
+            guard let info else { return nil }
+            let coord = Unmanaged<SearchCoordinator>.fromOpaque(info).takeUnretainedValue()
+            guard let data = data as Data?,
+                  let request = try? JSONDecoder().decode(ClingRequest.self, from: data)
+            else { return nil }
+            let response = FuzzyClient.handleCLIRequest(request, coordinator: coord)
+            let responseData = try! JSONEncoder().encode(response)
+            return Unmanaged.passRetained(responseData as CFData)
+        }, &context, nil) else {
+            cliLog.error("Failed to create Mach port for \(CLING_PORT_ID)")
+            return
         }
-        cliMachPortThread?.name = "ClingMachPort"
-        cliMachPortThread?.start()
+
+        // One source on several run loops: whichever thread is free takes the next call.
+        let source = CFMessagePortCreateRunLoopSource(nil, port, 0)
+        for index in 1 ... CLICalls.listenerThreads {
+            let thread = Thread {
+                CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .defaultMode)
+                CFRunLoopRun()
+            }
+            thread.name = "ClingMachPort \(index)"
+            thread.start()
+        }
+        cliMachPort = port
+        cliLog.info("Mach port listener started on \(CLING_PORT_ID)")
     }
 
     // MARK: - Request Handler
@@ -284,14 +317,16 @@ extension FuzzyClient {
             let maxResults = request.maxResults ?? 30
 
             let t0 = CFAbsoluteTimeGetCurrent()
-            let results = coord.search(
-                query: query,
-                maxResults: maxResults,
-                folderPrefixes: request.folderPrefixes,
-                suffixPattern: request.suffixPattern,
-                dirsOnly: request.dirsOnly ?? false,
-                scopeLabels: request.scopes
-            )
+            let results = CLICalls.searchLock.withLock {
+                coord.search(
+                    query: query,
+                    maxResults: maxResults,
+                    folderPrefixes: request.folderPrefixes,
+                    suffixPattern: request.suffixPattern,
+                    dirsOnly: request.dirsOnly ?? false,
+                    scopeLabels: request.scopes
+                )
+            }
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
 
             cliLog.debug("CLI search: q=\"\(query)\" \(results.count) results in \(ms, format: .fixed(precision: 1))ms")
@@ -347,8 +382,12 @@ extension FuzzyClient {
 
                     if !conflictingScopes.isEmpty || !conflictingVolumes.isEmpty {
                         var parts = [String]()
-                        if !conflictingScopes.isEmpty { parts.append(conflictingScopes.map(\.label).joined(separator: ", ")) }
-                        if !conflictingVolumes.isEmpty { parts.append(conflictingVolumes.map(\.name.string).joined(separator: ", ")) }
+                        if !conflictingScopes.isEmpty {
+                            parts.append(conflictingScopes.map(\.label).joined(separator: ", "))
+                        }
+                        if !conflictingVolumes.isEmpty {
+                            parts.append(conflictingVolumes.map(\.name.string).joined(separator: ", "))
+                        }
                         decisionKind = 2
                         decisionMessage = "cannot start reindex for \(parts.joined(separator: ", ")): another indexing operation is in progress; wait for it to finish or cancel it first"
                         return
@@ -519,7 +558,9 @@ extension FuzzyClient {
                 for _ in 0 ..< 6 {
                     Thread.sleep(forTimeInterval: 0.5)
                     recents = coord.getRecents(maxResults: maxResults)
-                    if !recents.isEmpty { break }
+                    if !recents.isEmpty {
+                        break
+                    }
                 }
             }
             return ClingResponse(
