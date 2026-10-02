@@ -678,6 +678,19 @@ private struct GeneralSettingsPane: View {
             }
 
             Section("Window") {
+                SettingRow(title: "Show window on") {
+                    Picker("Show window on", selection: $windowDisplay) {
+                        ForEach(WindowDisplay.allCases, id: \.self) { display in
+                            Text(display.label).tag(display)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                if windowDisplay == .cursor {
+                    Toggle("Open at the cursor", isOn: $windowAtCursor)
+                }
+
                 DescriptiveToggle(
                     title: "Show window at launch",
                     detail: "Show the main window when Cling is first launched.",
@@ -741,6 +754,8 @@ private struct GeneralSettingsPane: View {
     @Default(.showMenuBarIcon) private var showMenuBarIcon
     @Default(.keepWindowOpenWhenDefocused) private var keepWindowOpenWhenDefocused
     @Default(.instantMode) private var instantMode
+    @Default(.windowDisplay) private var windowDisplay
+    @Default(.windowAtCursor) private var windowAtCursor
     @Default(.resetSelectionAfter) private var resetSelectionAfter
     @Default(.enableGlobalHotkey) private var enableGlobalHotkey
     @Default(.showAppKey) private var showAppKey

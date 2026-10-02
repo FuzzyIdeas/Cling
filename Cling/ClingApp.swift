@@ -82,7 +82,15 @@ var PRODUCTS: [Any] {
 class AppDelegate: LowtechProAppDelegate {
     static var shared: AppDelegate!
 
+    /// Room kept between the search window and the edges of the usable area, when the window is small enough
+    /// to leave it.
+    static let screenPadding: CGFloat = 20
+
     var keepSettingsFrontUntil: Date?
+
+    /// Picked when a summon starts and the window is still to be created: by the time it exists Cling has
+    /// activated, and the frontmost app's focused window would be Cling's own.
+    var pendingDisplay: NSScreen?
 
     var mainWindow: NSWindow? {
         NSApp.windows.first { $0.identifier?.rawValue == "main" }
@@ -215,6 +223,7 @@ class AppDelegate: LowtechProAppDelegate {
         } else {
             NSApp.setActivationPolicy(Defaults[.showDockIcon] ? .regular : .accessory)
             if Defaults[.showWindowAtLaunch], !skipWindow {
+                pendingDisplay = displayForMainWindow()
                 WM.open("main")
                 mainWindow?.becomeMain()
                 mainWindow?.becomeKey()
@@ -278,6 +287,8 @@ class AppDelegate: LowtechProAppDelegate {
     }
 
     func hideOrCloseMainWindow(_ window: NSWindow) {
+        // Measured while the table is still laid out: outside instant mode the next window starts without one.
+        _ = cursorAnchor(in: window)
         WM.noteInactive()
         FUZZY.cancelPendingSearch()
         if Defaults[.instantMode] {
@@ -337,6 +348,7 @@ class AppDelegate: LowtechProAppDelegate {
         } else if Defaults[.instantMode], mainWindow != nil {
             focusWindow()
         } else {
+            pendingDisplay = displayForMainWindow()
             WM.open("main")
             focusWindow()
             focus()
@@ -387,6 +399,10 @@ class AppDelegate: LowtechProAppDelegate {
     func focusWindow() {
         DropZoneOverlay.shared.dismissIfPresenting()
         guard let window = mainWindow else { return }
+        if !window.isVisible || window.alphaValue == 0 {
+            placeMainWindow(window, on: pendingDisplay ?? displayForMainWindow())
+        }
+        pendingDisplay = nil
         window.collectionBehavior.insert(.moveToActiveSpace)
         if Defaults[.instantMode] {
             window.animationBehavior = .none
@@ -399,6 +415,53 @@ class AppDelegate: LowtechProAppDelegate {
             window.makeKeyAndOrderFront(nil)
             window.orderFrontRegardless()
         }
+    }
+
+    /// The display the search window should come up on, per Settings > General. Read before Cling activates.
+    func displayForMainWindow() -> NSScreen? {
+        let mouse = NSEvent.mouseLocation
+        let underCursor = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+        switch Defaults[.windowDisplay] {
+        case .cursor: return underCursor
+        case .main: return NSScreen.screens.first
+        case .focusedWindow: return focusedWindowScreen() ?? underCursor
+        }
+    }
+
+    /// Moves a hidden search window onto `screen`. With *Open at the cursor* it comes up with the pointer over
+    /// the first row's name, every time. Otherwise it takes the spot of the usable area it had on its previous
+    /// display, and a window already on that display keeps the frame it was given there. Either way it stays
+    /// inside the usable area (no menu bar or Dock), with `screenPadding` to spare where it fits and the whole
+    /// span where it doesn't.
+    func placeMainWindow(_ window: NSWindow, on screen: NSScreen?) {
+        guard let screen else { return }
+        let area = screen.visibleFrame
+        let size = window.frame.size
+        if Defaults[.windowDisplay] == .cursor, Defaults[.windowAtCursor] {
+            let mouse = NSEvent.mouseLocation
+            let anchor = cursorAnchor(in: window)
+            let origin = CGPoint(x: mouse.x - anchor.x, y: mouse.y - anchor.y)
+            window.setFrame(Self.frame(size, origin: origin, in: area), display: false)
+            return
+        }
+
+        let current = Self.screen(containing: window.frame)
+        guard current?.frame != screen.frame else { return }
+        // Where the window's centre sat, as a fraction of the old display's usable area.
+        var center = CGPoint(x: area.midX, y: area.midY)
+        if let from = current?.visibleFrame, from.width > 0, from.height > 0 {
+            center.x = area.minX + (window.frame.midX - from.minX) / from.width * area.width
+            center.y = area.minY + (window.frame.midY - from.minY) / from.height * area.height
+        }
+        let origin = CGPoint(x: center.x - size.width / 2, y: center.y - size.height / 2)
+        window.setFrame(Self.frame(size, origin: origin, in: area), display: false)
+    }
+
+    /// A freshly created search window, moved to the display picked when the summon started.
+    func placeNewMainWindow() {
+        guard let display = pendingDisplay, let window = mainWindow else { return }
+        pendingDisplay = nil
+        placeMainWindow(window, on: display)
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -427,6 +490,7 @@ class AppDelegate: LowtechProAppDelegate {
             mainWindow.becomeKey()
             focus()
         } else {
+            pendingDisplay = displayForMainWindow()
             WM.open("main")
         }
         return true
@@ -468,6 +532,9 @@ class AppDelegate: LowtechProAppDelegate {
     }
     @objc func windowDidBecomeMain(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
+        if window.identifier?.rawValue == "main" {
+            placeNewMainWindow()
+        }
 
         if let paddleController = window.windowController as? PADActivateWindowController,
            let email = paddleController.emailTxt, let licenseCode = paddleController.licenseTxt
@@ -549,6 +616,10 @@ class AppDelegate: LowtechProAppDelegate {
     /// the user coming back to Cling and wanting it summoned.
     private static let menuBarClickGrace: TimeInterval = 0.35
 
+    /// Last measured spot of the first row's name, from the window's bottom-left corner. A window created a
+    /// moment ago has no table laid out yet, so it borrows the previous window's.
+    private var lastCursorAnchor: CGPoint?
+
     private var menuBarItem: NSStatusItem?
     /// When the search window last stopped being the front window because the app went to the
     /// background. Read by the menu bar click to tell "dismiss this" from "summon this".
@@ -569,6 +640,74 @@ class AppDelegate: LowtechProAppDelegate {
             return false
         }
         return true
+    }
+
+    private static func frame(_ size: CGSize, origin: CGPoint, in area: NSRect) -> NSRect {
+        let x = fit(size.width, origin: origin.x, from: area.minX, to: area.maxX)
+        let y = fit(size.height, origin: origin.y, from: area.minY, to: area.maxY)
+        return NSRect(x: x.origin, y: y.origin, width: x.length, height: y.length)
+    }
+
+    /// One axis of a placement: `length` starting at `origin`, pushed back inside `lo...hi` with up to
+    /// `screenPadding` left at each end. Padding shrinks evenly when the window nearly fills the span, and a
+    /// window that needs more than the span gets exactly the span.
+    private static func fit(_ length: CGFloat, origin: CGFloat, from lo: CGFloat, to hi: CGFloat) -> (origin: CGFloat, length: CGFloat) {
+        let span = hi - lo
+        guard length < span else { return (lo, span) }
+        let pad = min(screenPadding, (span - length) / 2)
+        return (min(max(origin, lo + pad), hi - pad - length), length)
+    }
+
+    private static func screen(containing rect: NSRect) -> NSScreen? {
+        func overlap(_ s: NSScreen) -> CGFloat {
+            let r = s.frame.intersection(rect)
+            return r.isNull ? 0 : r.width * r.height
+        }
+        guard let best = NSScreen.screens.max(by: { overlap($0) < overlap($1) }), overlap(best) > 0 else { return nil }
+        return best
+    }
+
+    /// Where the pointer should land in the search window: a little into the name of the topmost visible row,
+    /// stash or results, measured from the live table so toolbar rows, the stash and text size all count.
+    private func cursorAnchor(in window: NSWindow) -> CGPoint {
+        let registry = TableRegistry.shared
+        if let table = registry.stashTableView ?? registry.headerTableView, table.window === window,
+           table.numberOfColumns > 0
+        {
+            let column = table.tableColumns.firstIndex { $0.title == "Name" } ?? min(1, table.numberOfColumns - 1)
+            let row = max(table.rows(in: table.visibleRect).location, 0)
+            let rowRect = table.rect(ofRow: row).isEmpty
+                ? NSRect(x: 0, y: table.visibleRect.minY, width: table.bounds.width, height: table.rowHeight)
+                : table.rect(ofRow: row)
+            let columnRect = table.rect(ofColumn: column)
+            let point = NSPoint(x: columnRect.minX + min(48, columnRect.width / 3), y: rowRect.midY)
+            let anchor = table.convert(point, to: nil)
+            lastCursorAnchor = anchor
+            return anchor
+        }
+        // First summon of a new window: roughly the first row's name below the search bar.
+        return lastCursorAnchor ?? CGPoint(x: 150, y: window.frame.height - 150)
+    }
+
+    /// The display holding most of the frontmost app's front window. The window server gives out window
+    /// bounds without any permission (only titles need Screen Recording).
+    private func focusedWindowScreen() -> NSScreen? {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        if app.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+            // Cling itself is in front, Settings for one: its key window decides, unless that is the hidden search window.
+            guard let key = NSApp.keyWindow, key !== mainWindow else { return nil }
+            return Self.screen(containing: key.frame)
+        }
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        guard let front = windows.first(where: {
+            ($0[kCGWindowOwnerPID as String] as? pid_t) == app.processIdentifier && ($0[kCGWindowLayer as String] as? Int) == 0
+        }),
+            let bounds = front[kCGWindowBounds as String] as? NSDictionary,
+            let rect = CGRect(dictionaryRepresentation: bounds)
+        else { return nil }
+        // Window server rects are flipped, with the origin at the top left of the main display.
+        let mainHeight = NSScreen.screens.first?.frame.height ?? 0
+        return Self.screen(containing: NSRect(x: rect.minX, y: mainHeight - rect.maxY, width: rect.width, height: rect.height))
     }
 
 }
@@ -753,6 +892,9 @@ struct ClingApp: App {
             }
 
             openWindow(id: window)
+            if window == "main" {
+                AppDelegate.shared?.placeNewMainWindow()
+            }
             focus()
             if window == "settings" {
                 AppDelegate.shared?.settingsWindow?.makeKeyAndOrderFront(nil)

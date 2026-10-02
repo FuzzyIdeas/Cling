@@ -552,6 +552,23 @@ enum SearchScope: String, CaseIterable, Defaults.Serializable {
     }
 }
 
+// MARK: - WindowDisplay
+
+/// Which display the search window comes up on when it is summoned.
+enum WindowDisplay: String, CaseIterable, Defaults.Serializable {
+    case cursor
+    case focusedWindow
+    case main
+
+    var label: String {
+        switch self {
+        case .cursor: "Display with the cursor"
+        case .focusedWindow: "Display with the focused window"
+        case .main: "Main display"
+        }
+    }
+}
+
 // MARK: - WindowAppearance
 
 enum WindowAppearance: String, CaseIterable, Defaults.Serializable {
@@ -656,6 +673,10 @@ extension Defaults.Keys {
     static let showMenuBarIcon = Key<Bool>("showMenuBarIcon", default: false)
     static let keepWindowOpenWhenDefocused = Key<Bool>("keepWindowOpenWhenDefocused", default: false)
     static let instantMode = Key<Bool>("instantMode", default: true)
+    static let windowDisplay = Key<WindowDisplay>("windowDisplay", default: .cursor)
+    /// With `windowDisplay == .cursor`: bring the window up with the pointer over the first row's name,
+    /// instead of where it last sat on that display.
+    static let windowAtCursor = Key<Bool>("windowAtCursor", default: true)
     /// Seconds away (app in the background or window hidden) after which the result selection is
     /// considered stale and jumps back to the first row. 0 = keep the selection forever.
     static let resetSelectionAfter = Key<TimeInterval>("resetSelectionAfter", default: 300)
