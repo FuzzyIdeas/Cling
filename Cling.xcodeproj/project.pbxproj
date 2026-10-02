@@ -170,6 +170,7 @@
 				C76172102D50E43600D78B4F /* Frameworks */,
 				C76172112D50E43600D78B4F /* Resources */,
 				C7605CC72F77D86C0087B195 /* Copy CLI */,
+				C7D0E6B12FB0000000DB6107 /* Persist debug logs */,
 			);
 			buildRules = (
 			);
@@ -253,6 +254,30 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		C7D0E6B12FB0000000DB6107 /* Persist debug logs */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Persist debug logs";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Debug builds keep debug-level logs in the system log store, so `log show --debug` can look\n# back at something that happened before anyone started streaming. Release builds are untouched.\n[ \"$CONFIGURATION\" = \"Debug\" ] || exit 0\n\nplist=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\nkey=\":OSLogPreferences:$PRODUCT_BUNDLE_IDENTIFIER:DEFAULT-OPTIONS:Level\"\n/usr/libexec/PlistBuddy -c \"Delete $key\" \"$plist\" 2>/dev/null\n/usr/libexec/PlistBuddy -c \"Add $key dict\" -c \"Add $key:Enable string Debug\" -c \"Add $key:Persist string Debug\" \"$plist\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		C7605CBC2F77D81A0087B195 /* Sources */ = {

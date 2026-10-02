@@ -45,9 +45,75 @@ struct ClingCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "cling",
         abstract: "Cling: fast fuzzy file search from the command line",
-        subcommands: [Search.self, Reindex.self, Status.self, Recents.self, Index.self, Explain.self],
+        subcommands: [Search.self, Reindex.self, Status.self, Recents.self, Index.self, Explain.self, Logs.self],
         defaultSubcommand: Search.self
     )
+}
+
+// MARK: - Logs
+
+struct Logs: ParsableCommand {
+    static let configuration = CommandConfiguration(subcommands: [Persist.self])
+}
+
+// MARK: Logs.Persist
+
+extension Logs {
+    /// Debug builds keep debug logs through their Info.plist; a release build needs the system's logging config
+    /// changed, which only root can do, so this runs `log config` under sudo and lets it ask in the terminal.
+    struct Persist: ParsableCommand {
+        enum Action: String, ExpressibleByArgument, CaseIterable {
+            case on
+            case off
+            case status
+        }
+
+        static let configuration = CommandConfiguration(
+            abstract: "Keep Cling's debug logs on disk so `log show` can read them later",
+            discussion: "macOS keeps debug and info messages only in memory, so they are gone before anyone looks. Changing this needs an administrator password."
+        )
+
+        /// Everything Cling logs goes under its bundle identifier; the CLI itself doesn't log.
+        static let subsystems = ["com.lowtechguys.Cling"]
+
+        @Argument(help: "on, off or status")
+        var action: Action
+
+        mutating func run() throws {
+            for subsystem in Self.subsystems {
+                let arguments = switch action {
+                case .on: ["config", "--subsystem", subsystem, "--mode", "level:debug,persist:debug"]
+                case .off: ["config", "--subsystem", subsystem, "--reset"]
+                case .status: ["config", "--status", "--subsystem", subsystem]
+                }
+                // stdin and stdout stay the terminal's, so sudo can ask for the password there.
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+                process.arguments = ["/usr/bin/log"] + arguments
+                do {
+                    try process.run()
+                } catch {
+                    fputs("Could not change the log settings: \(error.localizedDescription)\n", stderr)
+                    throw ExitCode.failure
+                }
+                process.waitUntilExit()
+                guard process.terminationStatus == 0 else {
+                    fputs("Could not change the log settings: exit status \(process.terminationStatus)\n", stderr)
+                    throw ExitCode.failure
+                }
+            }
+
+            switch action {
+            case .on:
+                print("Debug logs for Cling are kept now. Read them with:")
+                print("    log show --debug --info --last 1h --predicate 'subsystem BEGINSWITH \"com.lowtechguys.Cling\"'")
+            case .off:
+                print("Debug logs for Cling are back to the macOS default")
+            case .status:
+                break
+            }
+        }
+    }
 }
 
 // MARK: - Explain
