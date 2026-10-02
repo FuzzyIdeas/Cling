@@ -438,6 +438,11 @@ class FuzzyClient {
     /// still go there.
     nonisolated static let recentsRoots = ["/Users/", "/usr/local/", "/opt/", "/Applications/", "/private/tmp/", "/tmp/"]
 
+    /// How far behind a saved scope may be and still catch up by replaying. On a busy development Mac about one event
+    /// id in twenty reaches the watcher, and replaying 2.6M changes cost ~80s of CPU (two thirds of it in fseventsd)
+    /// against ~45s for walking every scope, so past ~25M ids (~1.1M changes, a day or two of use) a walk is cheaper.
+    static let maxReplayGap: UInt64 = 25_000_000
+
     @ObservationIgnored var searchTask: Task<Void, Never>?
     /// Thread-safe coordinator for CLI and multi-engine search
     @ObservationIgnored let searchCoordinator = SearchCoordinator()
@@ -516,6 +521,8 @@ class FuzzyClient {
     /// The FSEvents position each scope engine in memory reflects. A scope missing here has no position to replay
     /// from and is walked again.
     @ObservationIgnored var liveBase: [SearchScope: UInt64] = [:]
+    /// The rules each scope engine in memory was walked by (see `rulesFingerprint`).
+    @ObservationIgnored var liveRules: [SearchScope: String] = [:]
     @ObservationIgnored var liveUpdater: LiveIndexUpdater?
     @ObservationIgnored var lastLiveSave = Date()
     @ObservationIgnored var lastHistoryLossWalk: Date?
@@ -1128,9 +1135,15 @@ class FuzzyClient {
             loadPersistedIndex { [self] in
                 // Each saved scope catches up by replaying what changed since it was written. One without a saved
                 // position (first launch of this version, another macOS build, a reset FSEvents history) is walked.
-                let saved = ScopeIndexState.read()?.replayable ?? [:]
-                for (scope, id) in saved where scopeEngines[scope] != nil && liveBase[scope] == nil {
+                // It is walked too when its rules changed while Cling was closed, or when it is so far behind that
+                // replaying would cost more than walking.
+                let state = ScopeIndexState.read()
+                let now = FSEventsGetCurrentEventId()
+                for (scope, id) in state?.replayable ?? [:] where scopeEngines[scope] != nil && liveBase[scope] == nil {
+                    let fingerprint = rulesFingerprint(scope)
+                    guard state?.rules[scope.rawValue] == fingerprint, now - id <= Self.maxReplayGap else { continue }
                     liveBase[scope] = id
+                    liveRules[scope] = fingerprint
                 }
                 let missing = Defaults[.searchScopes].filter { liveBase[$0] == nil }
                 if missing.isEmpty || batteryLevel() <= 0.3 {
@@ -1427,6 +1440,7 @@ class FuzzyClient {
         let volumePaths = Set(enabledVolumes.map(\.string))
         // Whatever changes from here on is replayed onto the walked engines once the watcher restarts.
         let walkStartID = FSEventsGetCurrentEventId()
+        let fingerprints = Dictionary(uniqueKeysWithValues: scopes.map { ($0, rulesFingerprint($0)) })
 
         scopeIndexTask?.cancel()
         scopeIndexTask = Task.detached(priority: .userInitiated) {
@@ -1490,10 +1504,11 @@ class FuzzyClient {
                     // an empty one and showing the scope as having no files.
                     let reloadedEngine = SearchEngine()
                     let engineToStore = reloadedEngine.loadBinaryIndex(from: file.url) ? reloadedEngine : scopeEngine
-                    ScopeIndexState.save([scope: walkStartID])
+                    ScopeIndexState.save([scope: walkStartID], rules: fingerprints)
 
                     await MainActor.run {
                         self.liveBase[scope] = walkStartID
+                        self.liveRules[scope] = fingerprints[scope]
                         releaseInBackground(self.scopeEngines.updateValue(engineToStore, forKey: scope))
                         self.scopesIndexing.remove(scope)
                         self.updateIndexedCount()
@@ -1598,6 +1613,29 @@ class FuzzyClient {
         }
     }
 
+    /// Everything a scope's walk is decided by: its folders, its ignore file, the blocklist and the `.gitignore` setting.
+    /// A stable FNV-1a hash, so it can be compared across launches.
+    func rulesFingerprint(_ scope: SearchScope) -> String {
+        let scopeIgnoreFile = ScopeIgnore.rootedScopes.contains(scope) ? ScopeIgnore.activeFile(for: scope) : nil
+        let homeIgnore: String? = fsignore.exists ? fsignoreString : nil
+        var parts = [scope.rawValue]
+        for dir in walkDirs(for: scope) {
+            parts.append("\(dir.dir)|\(dir.excludePrefix ?? "")")
+            if let file = scopeIgnoreFile ?? (dir.applyIgnore ? homeIgnore : nil) {
+                parts.append((try? String(contentsOfFile: file, encoding: .utf8)) ?? "")
+            }
+        }
+        parts.append(Defaults[.blockedPrefixes])
+        parts.append(Defaults[.blockedContains])
+        parts.append(scope == .home && Defaults[.honorGitignore] ? "gitignore" : "")
+
+        var hash: UInt64 = 0xCBF2_9CE4_8422_2325
+        for byte in parts.joined(separator: "\u{0}").utf8 {
+            hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01B3
+        }
+        return String(hash, radix: 16)
+    }
+
     /// The folders each enabled scope walks, with the same rules `indexFiles` walks them by.
     func liveRoutes() -> [LiveRoute] {
         let ignoreChecker: String? = fsignore.exists ? fsignoreString : nil
@@ -1644,6 +1682,7 @@ class FuzzyClient {
 
         let updater = LiveIndexUpdater(
             routes: liveRoutes(),
+            replaying: since != nil,
             applied: { [weak self] changes in
                 Task { @MainActor in self?.liveIndexApplied(changes) }
             },
@@ -2109,6 +2148,7 @@ class FuzzyClient {
             // Taken before writing: the engines hold at least every change applied so far.
             self.advanceLiveBase()
             let positions = self.liveBase.filter { scopes.keys.contains($0.key) }
+            let rules = self.liveRules
             _ = self.liveUpdater?.takeChanges()
             self.lastLiveSave = Date()
             await Task.detached {
@@ -2116,7 +2156,7 @@ class FuzzyClient {
                     let file = scopeIndexFile(scope)
                     eng.saveBinaryIndex(to: file.url)
                 }
-                ScopeIndexState.save(positions)
+                ScopeIndexState.save(positions, rules: rules)
                 for (volume, eng) in volumes {
                     let file = volumeIndexFile(volume)
                     eng.saveBinaryIndex(to: file.url)

@@ -707,13 +707,13 @@ struct WalkRules: @unchecked Sendable {
     /// The walk's folder checks, in its order, starting from the verdict for the folder above. The root itself is
     /// never checked or indexed by a walk, only gone into.
     func folder(_ dir: String, cache: inout [String: Folder]) -> Folder {
-        if dir == walkRoot || dir.count < walkRoot.count {
+        if dir.utf8.count <= walkRoot.utf8.count {
             return Folder(descended: dir == walkRoot, added: false, gitignores: [])
         }
         if let known = cache[dir] {
             return known
         }
-        let above = folder((dir as NSString).deletingLastPathComponent, cache: &cache)
+        let above = folder(dir.parentPath, cache: &cache)
         let verdict = check(dir, above: above)
         cache[dir] = verdict
         return verdict
@@ -723,7 +723,7 @@ struct WalkRules: @unchecked Sendable {
         let skipped = Folder(descended: false, added: false, gitignores: above.gitignores)
         guard above.descended else { return skipped }
 
-        if (dir as NSString).lastPathComponent == ".git" {
+        if dir.lastPathComponentNative == ".git" {
             return skipped
         }
         if let ignoreCheck, ignoreCheck(dir) {
@@ -748,6 +748,22 @@ struct WalkRules: @unchecked Sendable {
             }
         }
         return Folder(descended: true, added: true, gitignores: gitignores)
+    }
+}
+
+// MARK: - Path components
+
+extension String {
+    /// The folder above, split on bytes: going through NSString hands back a bridged string, and every hash and
+    /// compare on one of those (millions of them in a replay of file changes) takes the slow path.
+    var parentPath: String {
+        guard let slash = utf8.lastIndex(of: UInt8(ascii: "/")) else { return "" }
+        return slash == utf8.startIndex ? "/" : String(self[..<slash])
+    }
+
+    var lastPathComponentNative: Substring {
+        guard let slash = utf8.lastIndex(of: UInt8(ascii: "/")) else { return self[...] }
+        return self[index(after: slash)...]
     }
 }
 
@@ -821,18 +837,17 @@ final class SearchEngine: @unchecked Sendable {
     /// `folders` caches each folder's verdict and the `.gitignore` files in force below it, across a batch of paths.
     static func walkAdmits(_ path: String, isDir: Bool, rules: WalkRules, folders: inout [String: WalkRules.Folder]) -> Bool {
         let root = rules.walkRoot
-        guard path.count > root.count, path.hasPrefix(root), path.utf8[path.utf8.index(path.utf8.startIndex, offsetBy: root.utf8.count)] == UInt8(ascii: "/") || root == "/" else {
+        guard path.utf8.count > root.utf8.count, path.hasPrefix(root), path.utf8[path.utf8.index(path.utf8.startIndex, offsetBy: root.utf8.count)] == UInt8(ascii: "/") || root == "/" else {
             return false
         }
-        let parent = (path as NSString).deletingLastPathComponent
-        let above = rules.folder(parent, cache: &folders)
+        let above = rules.folder(path.parentPath, cache: &folders)
         guard above.descended else { return false }
 
         if isDir {
             return rules.folder(path, cache: &folders).added
         }
 
-        let name = (path as NSString).lastPathComponent
+        let name = path.lastPathComponentNative
         if name == ".DS_Store" || name == ".localized" || name == "Icon\r" {
             return false
         }

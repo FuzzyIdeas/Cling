@@ -578,6 +578,13 @@ extension FuzzyClient {
                 }
 
                 lines.append("")
+                if let replay = FUZZY.liveUpdater?.replay {
+                    lines.append(replay.caughtUp
+                        ? "live: following changes (caught up after \(replay.events.formatted()) events in \(String(format: "%.1f", replay.seconds))s)"
+                        : "live: replaying changes, \(replay.events.formatted()) events so far")
+                } else {
+                    lines.append("live: off")
+                }
                 everythingState = EVERYTHING.state
                 everythingCount = EVERYTHING.count
                 switch EVERYTHING.state {

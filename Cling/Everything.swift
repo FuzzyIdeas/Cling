@@ -534,10 +534,16 @@ final class EverythingUpdater: @unchecked Sendable {
         for (path, flags) in flagsByPath {
             var st = stat()
             guard lstat(path, &st) == 0 else {
-                gone.append(path)
+                if FSEventsHistory.isGone(errno) {
+                    gone.append(path)
+                }
                 continue
             }
             guard !flags.isDisjoint(with: structural) else { continue }
+            if flags.contains(.itemRenamed), FSEventsHistory.isStaleCase(path, mode: st.st_mode) {
+                gone.append(path)
+                continue
+            }
             let isDir = (st.st_mode & S_IFMT) == S_IFDIR
             gone.append(path)
             added.append((path, isDir))
