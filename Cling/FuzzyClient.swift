@@ -442,6 +442,8 @@ class FuzzyClient {
     /// id in twenty reaches the watcher, and replaying ~1M changes (20M ids, a day or so of use) cost ~28s of CPU, two
     /// thirds of it in fseventsd reading its history, the same as walking every scope; further back a walk is cheaper.
     static let maxReplayGap: UInt64 = 20_000_000
+    /// Past this many changed paths noted while hidden, they are shown anyway rather than held without bound.
+    nonisolated static let hiddenChangesMax = 20000
 
     @ObservationIgnored var searchTask: Task<Void, Never>?
     /// Thread-safe coordinator for CLI and multi-engine search
@@ -508,7 +510,7 @@ class FuzzyClient {
     @ObservationIgnored var recentsEngine = SearchEngine()
 
     @ObservationIgnored var suppressNextSearch = false
-    @ObservationIgnored let fsEventsQueue = DispatchQueue(label: "com.lowtechguys.Cling.fsevents")
+    @ObservationIgnored let fsEventsQueue = DispatchQueue(label: "com.lowtechguys.Cling.fsevents", qos: .utility)
 
     /// FSEvents changes filtered on `fsEventsQueue`, waiting for the next main-actor flush.
     /// Touched only on `fsEventsQueue`.
@@ -517,6 +519,16 @@ class FuzzyClient {
     /// The watcher is replaying changes made since the indexes were saved; those reach the indexes but are not
     /// shown as live changes. Touched only on `fsEventsQueue`.
     @ObservationIgnored nonisolated(unsafe) var replayingHistory = false
+    /// Changes inside the scopes that arrived while no Cling window was on screen, path to the order they last
+    /// happened in, shown once a window is (see `followChanges`). Touched only on `fsEventsQueue`.
+    @ObservationIgnored nonisolated(unsafe) var hiddenChanges: [String: Int] = [:]
+    @ObservationIgnored nonisolated(unsafe) var hiddenChangeOrder = 0
+    /// The main or Settings window is on screen. Read on the stream's and the live updater's queues.
+    @ObservationIgnored let windowOnScreen = SharedFlag(false)
+    /// The indexes changed while no window was on screen, so search caches and pools are refreshed once one is.
+    @ObservationIgnored let indexChangedOffScreen = SharedFlag(false)
+    @ObservationIgnored var liveStream: FSChangeStream?
+    @ObservationIgnored var windowObservers: [NSObjectProtocol] = []
 
     /// The FSEvents position each scope engine in memory reflects. A scope missing here has no position to replay
     /// from and is walked again.
@@ -1104,7 +1116,8 @@ class FuzzyClient {
     }
 
     func cleanup() {
-        LowtechFSEvents.stopWatching(for: ObjectIdentifier(self))
+        liveStream?.stop()
+        liveStream = nil
         searchTask?.cancel()
         for source in fsignoreWatchSources {
             source.cancel()
@@ -1116,6 +1129,7 @@ class FuzzyClient {
     // MARK: - Indexing
 
     func startIndex() {
+        watchWindowVisibility()
         // Record volumes present at launch (and, in opt-in mode, leave never-indexed ones disabled)
         // before any indexStaleExternalVolumes() runs.
         registerNewVolumes()
@@ -1600,7 +1614,8 @@ class FuzzyClient {
 
     func stopWatchingFiles() {
         advanceLiveBase()
-        LowtechFSEvents.stopWatching(for: ObjectIdentifier(self))
+        liveStream?.stop()
+        liveStream = nil
         liveUpdater = nil
     }
 
@@ -1677,6 +1692,7 @@ class FuzzyClient {
         // them would re-add paths into a fresh seenPaths/removedFiles.
         fsEventsQueue.async { [self] in
             pendingFSChanges.removeAll()
+            hiddenChanges.removeAll()
             replayingHistory = since != nil
         }
 
@@ -1684,7 +1700,12 @@ class FuzzyClient {
             routes: liveRoutes(),
             replaying: since != nil,
             applied: { [weak self] changes in
-                Task { @MainActor in self?.liveIndexApplied(changes) }
+                guard let self else { return }
+                guard windowOnScreen.value else {
+                    indexChangedOffScreen.value = true
+                    return
+                }
+                Task { @MainActor in self.liveIndexApplied(changes) }
             },
             historyLost: { [weak self] in
                 Task { @MainActor in self?.liveHistoryLost() }
@@ -1692,57 +1713,111 @@ class FuzzyClient {
         )
         liveUpdater = updater
 
-        do {
-            try LowtechFSEvents.startWatching(
-                paths: ["/"], for: ObjectIdentifier(self),
-                sinceWhen: since.map { EonilFSEventsEventID(rawValue: $0) } ?? .now, latency: 1
-            ) { event in
-                updater.enqueue(event)
-                self.fsEventsQueue.async { [self] in
-                    guard let flags = event.flag else { return }
-                    if flags.contains(.historyDone) {
-                        replayingHistory = false
-                        return
-                    }
-                    guard !replayingHistory,
-                          flags.hasElements(from: [.itemCreated, .itemRemoved, .itemRenamed, .itemModified]),
-                          let pathStr = FSEventsHistory.normalized(event.path),
-                          let path = pathStr.filePath
-                    else { return }
+        liveStream = FSChangeStream(paths: ["/"], since: since, latency: 1, queue: fsEventsQueue) { [self] events in
+            updater.enqueue(events)
+            followChanges(events, updater: updater)
+        }
+        if liveStream == nil {
+            log.error("Failed to watch files")
+        }
+    }
 
-                    // The scope indexes take changes inside them directly; the live index only keeps the rest.
-                    let inScope = updater.route(for: pathStr) != nil
-                    guard inScope || Self.recentsRoots.contains(where: { pathStr.hasPrefix($0) }) else { return }
-                    if isPathBlocked(pathStr) {
-                        return
-                    }
-                    if path.exists {
-                        let isDir = path.isDir
-                        if path.starts(with: HOME), pathStr.isIgnored(in: fsignoreString, isDir: isDir) {
-                            return
-                        }
-                        for volume in enabledVolumes where pathStr.hasPrefix(volume.string + "/") {
-                            let vfsignore = volume / ".fsignore"
-                            if vfsignore.exists, pathStr.isIgnored(in: vfsignore.string, isDir: isDir) {
-                                return
-                            }
-                            break
-                        }
-                        if !inScope {
-                            // Add to recents engine (never blocks main thread)
-                            recentsEngine.addPath(pathStr, isDir: isDir)
-                        }
-                        enqueueFSChange(path, exists: true)
-                    } else {
-                        if !inScope {
-                            recentsEngine.removePath(pathStr)
-                        }
-                        enqueueFSChange(path, exists: false)
-                    }
-                }
+    /// Shows file changes as they happen: in the live changes list, by taking deleted files out of the results, and
+    /// in the count. With no Cling window on screen, changes inside the scopes are only noted and worked out once one
+    /// is: a hidden SwiftUI window still lays itself out again after every batch. Runs on `fsEventsQueue`.
+    func followChanges(_ events: [FSChange], updater: LiveIndexUpdater) {
+        for event in events {
+            if event.flags.contains(.historyDone) {
+                replayingHistory = false
+                continue
             }
-        } catch {
-            log.error("Failed to watch files: \(error.localizedDescription)")
+            guard !replayingHistory,
+                  event.flags.hasElements(from: [.itemCreated, .itemRemoved, .itemRenamed, .itemModified]),
+                  let pathStr = FSEventsHistory.normalized(event.path)
+            else { continue }
+
+            // The scope indexes take changes inside them directly; the live index only keeps the rest.
+            let inScope = updater.route(for: pathStr) != nil
+            guard inScope || Self.recentsRoots.contains(where: { pathStr.hasPrefix($0) }) else { continue }
+            if inScope, !windowOnScreen.value {
+                hiddenChangeOrder += 1
+                hiddenChanges[pathStr] = hiddenChangeOrder
+                if hiddenChanges.count >= Self.hiddenChangesMax {
+                    showHiddenChanges()
+                }
+                continue
+            }
+            showChange(pathStr, inScope: inScope)
+        }
+    }
+
+    /// Runs on `fsEventsQueue`.
+    func showChange(_ pathStr: String, inScope: Bool) {
+        guard !isPathBlocked(pathStr), let path = pathStr.filePath else { return }
+        if path.exists {
+            let isDir = path.isDir
+            if path.starts(with: HOME), pathStr.isIgnored(in: fsignoreString, isDir: isDir) {
+                return
+            }
+            for volume in enabledVolumes where pathStr.hasPrefix(volume.string + "/") {
+                let vfsignore = volume / ".fsignore"
+                if vfsignore.exists, pathStr.isIgnored(in: vfsignore.string, isDir: isDir) {
+                    return
+                }
+                break
+            }
+            if !inScope {
+                // Add to recents engine (never blocks main thread)
+                recentsEngine.addPath(pathStr, isDir: isDir)
+            }
+            enqueueFSChange(path, exists: true)
+        } else {
+            if !inScope {
+                recentsEngine.removePath(pathStr)
+            }
+            enqueueFSChange(path, exists: false)
+        }
+    }
+
+    /// A window came on screen, or too many changes piled up: shows what the noted changes left on disk, in the order
+    /// they last happened. Runs on `fsEventsQueue`.
+    func showHiddenChanges() {
+        guard !hiddenChanges.isEmpty else { return }
+        let paths = hiddenChanges.sorted { $0.value < $1.value }.map(\.key)
+        hiddenChanges = [:]
+        for path in paths {
+            showChange(path, inScope: true)
+        }
+    }
+
+    /// Follows whether the main or Settings window is on screen, from the windows' own occlusion changes, which
+    /// arrive however a window was shown, hidden, closed or covered.
+    func watchWindowVisibility() {
+        guard windowObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.willCloseNotification] {
+            // A closing window is still on screen when the notification arrives, so look after it has gone.
+            windowObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.updateWindowOnScreen() }
+            })
+        }
+        updateWindowOnScreen()
+    }
+
+    func updateWindowOnScreen() {
+        let onScreen = NSApp.windows.contains { window in
+            ["main", "settings"].contains(window.identifier?.rawValue ?? "") && window.isVisible && window.alphaValue > 0
+                && window.occlusionState.contains(.visible)
+        }
+        guard onScreen != windowOnScreen.value else { return }
+        windowOnScreen.value = onScreen
+        log.debug("Cling window on screen: \(onScreen)")
+        guard onScreen else { return }
+
+        liveStream?.flush()
+        fsEventsQueue.async { [self] in showHiddenChanges() }
+        if indexChangedOffScreen.take() {
+            liveIndexApplied(0)
         }
     }
 

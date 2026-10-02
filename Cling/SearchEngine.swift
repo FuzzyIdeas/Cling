@@ -749,7 +749,10 @@ struct WalkRules: @unchecked Sendable {
                 gitignores.append((file, dir))
             }
         }
-        return Folder(descended: true, added: true, gitignores: gitignores)
+        // A folder others may open things in by name but not list (`--x`, all over /private/var/db and in
+        // /Library/Caches) is indexed by a walk with nothing inside it. FSEvents names what changes in there and
+        // lstat finds it, so without this a replay kept adding files that the next walk dropped again.
+        return Folder(descended: access(dir, R_OK | X_OK) == 0, added: true, gitignores: gitignores)
     }
 }
 

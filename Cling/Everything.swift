@@ -159,6 +159,8 @@ final class EverythingIndex {
 
     @ObservationIgnored private var unloadTask: Task<Void, Never>?
     @ObservationIgnored private var updater: EverythingUpdater?
+    @ObservationIgnored private var stream: FSChangeStream?
+    @ObservationIgnored private let streamQueue = DispatchQueue(label: "com.lowtechguys.Cling.everythingStream", qos: .utility)
     @ObservationIgnored private var lastBuildSearch: CFAbsoluteTime = 0
     @ObservationIgnored private var volumeObservers: [NSObjectProtocol] = []
     /// What the loaded engine reflects, and how many paths changed since it was last written to disk.
@@ -298,7 +300,10 @@ final class EverythingIndex {
 
     private func load() {
         guard !loading, !walking else { return }
-        guard everythingIndexFile.exists, let saved = EverythingSnapshot.read(), saved.replayable else {
+        // Days behind, a replay would read millions of changes back out of FSEvents, which costs more than walking.
+        guard everythingIndexFile.exists, let saved = EverythingSnapshot.read(), saved.replayable,
+              FSEventsGetCurrentEventId() - saved.eventID <= FuzzyClient.maxReplayGap
+        else {
             walk(priority: .userInitiated)
             return
         }
@@ -405,22 +410,19 @@ final class EverythingIndex {
         guard let engine else { return }
         let updater = EverythingUpdater(engine: engine)
         self.updater = updater
-        do {
-            // No `noDefer`: changes arrive a few seconds late, in fewer and larger batches.
-            try LowtechFSEvents.startWatching(
-                paths: ["/"], for: ObjectIdentifier(self), sinceWhen: EonilFSEventsEventID(rawValue: since),
-                latency: 3, flags: [.fileEvents]
-            ) { event in
-                updater.enqueue(event)
-            }
-        } catch {
-            log.error("Everything watcher failed: \(error.localizedDescription)")
+        // Changes arrive a few seconds late, in fewer and larger batches.
+        stream = FSChangeStream(paths: ["/"], since: since, latency: 3, queue: streamQueue) { events in
+            updater.enqueue(events)
+        }
+        if stream == nil {
+            log.error("Everything watcher failed to start")
         }
         watchVolumes(updater)
     }
 
     private func stopWatching() {
-        LowtechFSEvents.stopWatching(for: ObjectIdentifier(self))
+        stream?.stop()
+        stream = nil
         updater = nil
         for observer in volumeObservers {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
@@ -460,10 +462,10 @@ final class EverythingUpdater: @unchecked Sendable {
         volumes = Set(EverythingIndex.localVolumes())
     }
 
-    /// Delivered by the stream one event at a time, so it only hands the event over.
-    func enqueue(_ event: EonilFSEventsEvent) {
+    /// Takes a delivery from the stream; changes are applied half a second after the first of a batch arrives.
+    func enqueue(_ events: [FSChange]) {
         queue.async { [self] in
-            pending.append(event)
+            pending.append(contentsOf: events)
             guard !flushScheduled else { return }
             flushScheduled = true
             queue.asyncAfter(deadline: .now() + 0.5) { [self] in
@@ -495,7 +497,7 @@ final class EverythingUpdater: @unchecked Sendable {
 
     private let engine: SearchEngine
     private let queue = DispatchQueue(label: "com.lowtechguys.Cling.everything", qos: .utility)
-    private var pending: [EonilFSEventsEvent] = []
+    private var pending: [FSChange] = []
     private var flushScheduled = false
     /// The local disks under /Volumes being followed; events from anything else mounted there are ignored.
     private var volumes: Set<String>
@@ -507,13 +509,13 @@ final class EverythingUpdater: @unchecked Sendable {
 
     /// One pass over the engine per batch whatever its size: every path that went away or came back is removed
     /// in a single sweep, then whatever exists now is added. A file only modified is already in the index.
-    private func apply(_ events: [EonilFSEventsEvent]) {
+    private func apply(_ events: [FSChange]) {
         let t0 = CFAbsoluteTimeGetCurrent()
         var flagsByPath: [String: EonilFSEventsEventFlags] = [:]
         var maxEventID: UInt64 = 0
         for event in events {
-            maxEventID = max(maxEventID, event.ID?.rawValue ?? 0)
-            let flags = event.flag ?? []
+            maxEventID = max(maxEventID, event.id)
+            let flags = event.flags
             if FSEventsHistory.lost(flags, path: event.path) {
                 let engine = engine
                 Task { @MainActor in EVERYTHING.historyLost(in: engine) }

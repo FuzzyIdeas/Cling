@@ -38,8 +38,8 @@ enum FSEventsHistory {
     /// The data volume's own mount path maps back onto /, and the system's helper volumes and /dev are left out.
     static func normalized(_ raw: String) -> String? {
         var path = raw
-        // FSEvents hands paths over bridged from NSString; native storage keeps the hashing, comparing and prefix
-        // checks that follow off the slow path.
+        // A path bridged from NSString is copied to native storage once here, which keeps the hashing, comparing and
+        // prefix checks that follow off the slow path. FSChangeStream's paths are native already.
         path.makeContiguousUTF8()
         if path.utf8.count > 1, path.hasSuffix("/") {
             path.removeLast()
@@ -158,6 +158,127 @@ struct LiveRoute: @unchecked Sendable {
     }
 }
 
+// MARK: - FSChange
+
+/// One file change as FSEvents reports it.
+struct FSChange {
+    let path: String
+    let flags: EonilFSEventsEventFlags
+    let id: UInt64
+}
+
+// MARK: - FSChangeStream
+
+/// A file-level FSEvents stream that hands each delivery over as one batch, on a serial queue of the caller's choosing.
+/// Lowtech's stream calls back on the main thread once per event: a launch replay of a million changes kept the main
+/// thread busy, and every change cost its own dispatch to each queue that wanted it.
+///
+/// No `noDefer`: a change waits up to `latency` and arrives with whatever else happened meanwhile, rather than waking
+/// the process on its own after every quiet spell. `flush()` asks for what is waiting when someone is looking.
+final class FSChangeStream {
+    init?(paths: [String], since: UInt64?, latency: CFTimeInterval, queue: DispatchQueue, handler: @escaping ([FSChange]) -> Void) {
+        self.queue = queue
+        let box = Unmanaged.passRetained(Handler(handler))
+        var context = FSEventStreamContext(
+            version: 0, info: box.toOpaque(),
+            // The stream holds the handler for as long as it exists, so a delivery already queued when it stops
+            // still finds it.
+            retain: { info in
+                guard let info else { return nil }
+                return UnsafeRawPointer(Unmanaged<Handler>.fromOpaque(info).retain().toOpaque())
+            },
+            release: { info in
+                guard let info else { return }
+                Unmanaged<Handler>.fromOpaque(info).release()
+            },
+            copyDescription: nil
+        )
+        let callback: FSEventStreamCallback = { _, info, count, paths, flags, ids in
+            guard let info else { return }
+            let handler = Unmanaged<Handler>.fromOpaque(info).takeUnretainedValue()
+            let cPaths = paths.assumingMemoryBound(to: UnsafePointer<CChar>.self)
+            var batch: [FSChange] = []
+            batch.reserveCapacity(count)
+            for i in 0 ..< count {
+                batch.append(FSChange(path: String(cString: cPaths[i]), flags: EonilFSEventsEventFlags(rawValue: flags[i]), id: ids[i]))
+            }
+            handler.call(batch)
+        }
+        let created = FSEventStreamCreate(
+            nil, callback, &context, paths as CFArray,
+            since ?? FSEventStreamEventId(kFSEventStreamEventIdSinceNow), latency,
+            FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
+        )
+        // The stream took its own reference through `retain`.
+        box.release()
+        guard let created else { return nil }
+        FSEventStreamSetDispatchQueue(created, queue)
+        guard FSEventStreamStart(created) else {
+            FSEventStreamInvalidate(created)
+            FSEventStreamRelease(created)
+            return nil
+        }
+        stream = created
+    }
+
+    deinit {
+        stop()
+    }
+
+    /// Delivers what is waiting out its latency now.
+    func flush() {
+        guard let stream else { return }
+        FSEventStreamFlushAsync(stream)
+    }
+
+    func stop() {
+        guard let stream else { return }
+        self.stream = nil
+        // On the stream's own queue, so it can't be torn down in the middle of a delivery.
+        queue.async {
+            FSEventStreamStop(stream)
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+        }
+    }
+
+    private final class Handler {
+        init(_ call: @escaping ([FSChange]) -> Void) {
+            self.call = call
+        }
+
+        let call: ([FSChange]) -> Void
+    }
+
+    private var stream: FSEventStreamRef?
+    private let queue: DispatchQueue
+}
+
+// MARK: - SharedFlag
+
+/// A flag set on the main thread and read from background queues.
+final class SharedFlag: @unchecked Sendable {
+    init(_ value: Bool) {
+        _value = value
+    }
+
+    var value: Bool {
+        get { lock.withLock { _value } }
+        set { lock.withLock { _value = newValue } }
+    }
+
+    /// Clears the flag and says whether it was set.
+    func take() -> Bool {
+        lock.withLock {
+            defer { _value = false }
+            return _value
+        }
+    }
+
+    private let lock = NSLock()
+    private var _value: Bool
+}
+
 // MARK: - LiveIndexUpdater
 
 /// Applies file changes to the scope indexes as a walk would have found them, in batches on its own queue, so they
@@ -203,13 +324,18 @@ final class LiveIndexUpdater: @unchecked Sendable {
 
     /// The scope route a path belongs to, the deepest root first.
     func route(for path: String) -> LiveRoute? {
-        lock.withLock { _routes }.filter { $0.contains(path) }.max { $0.root.utf8.count < $1.root.utf8.count }
+        let routes = lock.withLock { _routes }
+        var best: LiveRoute?
+        for route in routes where route.contains(path) && route.root.utf8.count > best?.root.utf8.count ?? -1 {
+            best = route
+        }
+        return best
     }
 
-    /// Delivered by the stream one event at a time, so it only hands the event over.
-    func enqueue(_ event: EonilFSEventsEvent) {
+    /// Takes a delivery from the stream; changes are applied half a second after the first of a batch arrives.
+    func enqueue(_ events: [FSChange]) {
         queue.async { [self] in
-            pending.append(event)
+            pending.append(contentsOf: events)
             guard !flushScheduled else { return }
             flushScheduled = true
             queue.asyncAfter(deadline: .now() + 0.5) { [self] in
@@ -229,7 +355,7 @@ final class LiveIndexUpdater: @unchecked Sendable {
     private let applied: @Sendable (Int) -> Void
     private let historyLost: @Sendable () -> Void
     private let queue = DispatchQueue(label: "com.lowtechguys.Cling.liveIndex", qos: .utility)
-    private var pending: [EonilFSEventsEvent] = []
+    private var pending: [FSChange] = []
     private var flushScheduled = false
     private var lost = false
     private let started = CFAbsoluteTimeGetCurrent()
@@ -245,14 +371,14 @@ final class LiveIndexUpdater: @unchecked Sendable {
     /// What went away is removed through each engine's path index, so only an indexed folder costs a pass over the
     /// entries, then whatever a walk would index is added, skipping what is already there. A file only modified is
     /// already in the index.
-    private func apply(_ events: [EonilFSEventsEvent]) {
+    private func apply(_ events: [FSChange]) {
         guard !lost else { return }
         let t0 = CFAbsoluteTimeGetCurrent()
         var flagsByPath: [String: EonilFSEventsEventFlags] = [:]
         var maxEventID: UInt64 = 0
         for event in events {
-            maxEventID = max(maxEventID, event.ID?.rawValue ?? 0)
-            let flags = event.flag ?? []
+            maxEventID = max(maxEventID, event.id)
+            let flags = event.flags
             if !lock.withLock({ _caughtUp }) {
                 let replayed = lock.withLock {
                     _replayed += 1
