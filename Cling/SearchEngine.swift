@@ -647,6 +647,110 @@ struct SearchResult: Comparable {
     }
 }
 
+// MARK: - WalkRules
+
+/// The rules a walk applies below its root, set up once so a walk and a single-path check after it agree.
+struct WalkRules: @unchecked Sendable {
+    init(walkRoot: String, ignoreFile: String?, ignoreRoot: String?, skipDir: ((String) -> Bool)?, applyBlocklist: Bool, discoverGitignore: Bool) {
+        self.walkRoot = walkRoot
+        self.ignoreFile = ignoreFile
+        self.ignoreRoot = ignoreRoot
+        self.skipDir = skipDir
+        self.applyBlocklist = applyBlocklist
+        self.discoverGitignore = discoverGitignore
+
+        // Pre-extract extension patterns from ignore file content for fast file-level filtering
+        let ignoreContent: String? = ignoreFile.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+        ignoredExtensions = ignoreContent.map { SearchEngine.extractExtensionPatterns(from: $0) } ?? []
+        hasNegationPatterns = ignoreContent?.contains("\n!") == true || ignoreContent?.hasPrefix("!") == true
+        // Per-file blocklist checks are only needed when there are `!` exceptions (then we descend into blocked
+        // dirs and must filter their files). With no exceptions, directory pruning alone is exact, so skip it.
+        blocklistAllows = applyBlocklist && PathBlocklist.shared.hasAllows
+
+        // The gitignore (swift-ignore / Rust `ignore` crate) panics if queried with a path that is not a
+        // descendant of the matcher's root. Two modes:
+        //  - rooted (ignoreRoot != nil): patterns anchor to `ignoreRoot` (== the walked dir) while the file
+        //    lives elsewhere (e.g. a scope ignore for /Applications stored in our cache dir).
+        //  - file-rooted (default): patterns anchor to the ignore file's own parent directory.
+        ignoreCheck = {
+            guard let ignoreFile else { return nil }
+            if let ignoreRoot {
+                return { $0.isIgnored(in: ignoreFile, root: ignoreRoot) }
+            }
+            let parent = (ignoreFile as NSString).deletingLastPathComponent
+            guard !parent.isEmpty else { return nil }
+            let prefix = parent.hasSuffix("/") ? parent : parent + "/"
+            guard walkRoot == parent || walkRoot.hasPrefix(prefix) else { return nil }
+            return { $0.isIgnored(in: ignoreFile) }
+        }()
+    }
+
+    /// What a walk does with a folder: whether it goes inside, whether it indexes the folder itself, and which
+    /// `.gitignore` files apply to what is inside it.
+    struct Folder {
+        var descended: Bool
+        var added: Bool
+        var gitignores: [(file: String, ownerDir: String)]
+    }
+
+    let walkRoot: String
+    let ignoreFile: String?
+    let ignoreRoot: String?
+    let skipDir: ((String) -> Bool)?
+    let applyBlocklist: Bool
+    let discoverGitignore: Bool
+    let ignoredExtensions: Set<String>
+    let hasNegationPatterns: Bool
+    let blocklistAllows: Bool
+    let ignoreCheck: ((String) -> Bool)?
+
+    /// The walk's folder checks, in its order, starting from the verdict for the folder above. The root itself is
+    /// never checked or indexed by a walk, only gone into.
+    func folder(_ dir: String, cache: inout [String: Folder]) -> Folder {
+        if dir == walkRoot || dir.count < walkRoot.count {
+            return Folder(descended: dir == walkRoot, added: false, gitignores: [])
+        }
+        if let known = cache[dir] {
+            return known
+        }
+        let above = folder((dir as NSString).deletingLastPathComponent, cache: &cache)
+        let verdict = check(dir, above: above)
+        cache[dir] = verdict
+        return verdict
+    }
+
+    private func check(_ dir: String, above: Folder) -> Folder {
+        let skipped = Folder(descended: false, added: false, gitignores: above.gitignores)
+        guard above.descended else { return skipped }
+
+        if (dir as NSString).lastPathComponent == ".git" {
+            return skipped
+        }
+        if let ignoreCheck, ignoreCheck(dir) {
+            // When negation patterns exist (e.g. `*` + `!some/path/`), the walk still goes inside ignored
+            // folders so that un-ignored descendants can be visited.
+            return Folder(descended: hasNegationPatterns, added: false, gitignores: above.gitignores)
+        }
+        if applyBlocklist, pathBlockMatch(dir), isPathBlocked(dir) {
+            // Blocked, but an allow-exception may live below: the walk goes inside without indexing it.
+            return Folder(descended: blocklistDirHasAllowedDescendant(dir), added: false, gitignores: above.gitignores)
+        }
+        if let skipDir, skipDir(dir) {
+            return skipped
+        }
+        var gitignores = above.gitignores
+        if discoverGitignore {
+            if gitignores.contains(where: { dir.isIgnored(in: $0.file, root: $0.ownerDir) }) {
+                return skipped
+            }
+            if let file = SearchEngine.gitignoreFile(in: dir) {
+                gitignores.append((file, dir))
+            }
+        }
+        return Folder(descended: true, added: true, gitignores: gitignores)
+    }
+}
+
 // MARK: - CloudDownloads
 
 /// Listing a folder that iCloud Drive, Dropbox or another file provider keeps only in the cloud makes macOS download
@@ -710,6 +814,45 @@ final class SearchEngine: @unchecked Sendable {
     }
 
     /// Path of a directory's own `.gitignore` (or `.ignore`) if present, for per-directory ignore discovery.
+    /// Whether a walk of `rules.walkRoot` would add `path`, for a single change reported after the walk. Every folder
+    /// between the root and the path gets the checks the walk gives a folder before descending into it, then the path
+    /// gets the ones for what it is, in the walk's order. Keep in step with `walkDirectory`.
+    ///
+    /// `folders` caches each folder's verdict and the `.gitignore` files in force below it, across a batch of paths.
+    static func walkAdmits(_ path: String, isDir: Bool, rules: WalkRules, folders: inout [String: WalkRules.Folder]) -> Bool {
+        let root = rules.walkRoot
+        guard path.count > root.count, path.hasPrefix(root), path.utf8[path.utf8.index(path.utf8.startIndex, offsetBy: root.utf8.count)] == UInt8(ascii: "/") || root == "/" else {
+            return false
+        }
+        let parent = (path as NSString).deletingLastPathComponent
+        let above = rules.folder(parent, cache: &folders)
+        guard above.descended else { return false }
+
+        if isDir {
+            return rules.folder(path, cache: &folders).added
+        }
+
+        let name = (path as NSString).lastPathComponent
+        if name == ".DS_Store" || name == ".localized" || name == "Icon\r" {
+            return false
+        }
+        if !rules.ignoredExtensions.isEmpty, let dot = name.lastIndex(of: "."), name.distance(from: dot, to: name.endIndex) <= 20,
+           rules.ignoredExtensions.contains(String(name[dot...]))
+        {
+            return false
+        }
+        if let ignoreCheck = rules.ignoreCheck, ignoreCheck(path) {
+            return false
+        }
+        if rules.blocklistAllows, isPathBlocked(path) {
+            return false
+        }
+        if rules.discoverGitignore, above.gitignores.contains(where: { path.isIgnored(in: $0.file, root: $0.ownerDir) }) {
+            return false
+        }
+        return true
+    }
+
     static func gitignoreFile(in dir: String) -> String? {
         for name in [".gitignore", ".ignore"] {
             let p = dir + "/" + name
@@ -833,6 +976,35 @@ final class SearchEngine: @unchecked Sendable {
     @discardableResult
     func removeSubtree(_ dir: String) -> Int {
         removeSubtrees([dir])
+    }
+
+    /// Removes these paths and, for the folders among them, everything below them. Each one is looked up in the path
+    /// index, so a path that isn't indexed costs a lookup and a file costs nothing more; only a folder that is
+    /// indexed costs a pass over the entries.
+    @discardableResult
+    func removeIndexed(_ paths: [String]) -> Int {
+        guard !paths.isEmpty else { return 0 }
+        var dirs: [String] = []
+        var removed = 0
+        lock.withLock {
+            ensurePathIndex()
+            for path in paths {
+                guard let id = pathToID[path] else { continue }
+                if entries[id].isDir {
+                    dirs.append(path)
+                } else {
+                    _removeID(id)
+                    removed += 1
+                }
+            }
+            if removed > 0 {
+                sortedByPath = nil
+            }
+        }
+        if !dirs.isEmpty {
+            removed += removeSubtrees(dirs)
+        }
+        return removed
     }
 
     /// Remove each of `dirs` and everything below them in a single pass, however many there are, returning how
@@ -1549,6 +1721,7 @@ final class SearchEngine: @unchecked Sendable {
         skipDir: ((String) -> Bool)? = nil,
         applyBlocklist: Bool = false,
         discoverGitignore: Bool = false,
+        inheritedGitignores: [(file: String, ownerDir: String)] = [],
         skipGitDirs: Bool = true,
         skipJunkFiles: Bool = true,
         dedupe: Bool = true,
@@ -1571,35 +1744,19 @@ final class SearchEngine: @unchecked Sendable {
         }
         defer { fts_close(ftsp) }
 
-        // Pre-extract extension patterns from ignore file content for fast file-level filtering
-        let ignoreContent: String? = ignoreFile.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
-        let ignoredExtensions: Set<String> = ignoreContent.map { Self.extractExtensionPatterns(from: $0) } ?? []
-        let hasNegationPatterns: Bool = ignoreContent?.contains("\n!") == true || ignoreContent?.hasPrefix("!") == true
-        // Per-file blocklist checks are only needed when there are `!` exceptions (then we descend into blocked
-        // dirs and must filter their files). With no exceptions, directory pruning alone is exact, so skip it.
-        let blocklistAllows = applyBlocklist && PathBlocklist.shared.hasAllows
-
-        // The gitignore (swift-ignore / Rust `ignore` crate) panics if queried with a path that is not a
-        // descendant of the matcher's root. Two modes:
-        //  - rooted (ignoreRoot != nil): patterns anchor to `ignoreRoot` (== the walked dir) while the file
-        //    lives elsewhere (e.g. a scope ignore for /Applications stored in our cache dir).
-        //  - file-rooted (default): patterns anchor to the ignore file's own parent directory.
-        let ignoreCheck: ((String) -> Bool)? = {
-            guard let ignoreFile else { return nil }
-            if let ignoreRoot {
-                return { $0.isIgnored(in: ignoreFile, root: ignoreRoot) }
-            }
-            let parent = (ignoreFile as NSString).deletingLastPathComponent
-            guard !parent.isEmpty else { return nil }
-            let prefix = parent.hasSuffix("/") ? parent : parent + "/"
-            guard dir == parent || dir.hasPrefix(prefix) else { return nil }
-            return { $0.isIgnored(in: ignoreFile) }
-        }()
+        let rules = WalkRules(
+            walkRoot: dir, ignoreFile: ignoreFile, ignoreRoot: ignoreRoot, skipDir: skipDir,
+            applyBlocklist: applyBlocklist, discoverGitignore: discoverGitignore
+        )
+        let ignoredExtensions = rules.ignoredExtensions
+        let hasNegationPatterns = rules.hasNegationPatterns
+        let blocklistAllows = rules.blocklistAllows
+        let ignoreCheck = rules.ignoreCheck
 
         // Per-directory .gitignore/.ignore matchers, discovered as we descend (deepest last). A path is
         // ignored if any active matcher reports it ignored (checked deepest-first, short-circuit). We pop by
         // ancestor-prefix at point of use rather than on FTS_DP, because FTS_SKIP'd dirs emit no FTS_DP.
-        var gitignoreStack: [(file: String, ownerDir: String)] = []
+        var gitignoreStack: [(file: String, ownerDir: String)] = inheritedGitignores
         func gitignored(_ path: String) -> Bool {
             while let top = gitignoreStack.last, path != top.ownerDir, !path.hasPrefix(top.ownerDir + "/") {
                 gitignoreStack.removeLast()

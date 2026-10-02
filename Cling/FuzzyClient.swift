@@ -434,6 +434,10 @@ class FuzzyClient {
     /// costly as its scope, and whatever the walk reached stays searchable until the reindex lands.
     static let pathFirstWalkBudget: CFAbsoluteTime = 3
 
+    /// Where the old watcher fed the live index before scopes were kept current; paths here outside every scope
+    /// still go there.
+    nonisolated static let recentsRoots = ["/Users/", "/usr/local/", "/opt/", "/Applications/", "/private/tmp/", "/tmp/"]
+
     @ObservationIgnored var searchTask: Task<Void, Never>?
     /// Thread-safe coordinator for CLI and multi-engine search
     @ObservationIgnored let searchCoordinator = SearchCoordinator()
@@ -505,7 +509,16 @@ class FuzzyClient {
     /// Touched only on `fsEventsQueue`.
     @ObservationIgnored nonisolated(unsafe) var pendingFSChanges: [PendingFSChange] = []
     @ObservationIgnored nonisolated(unsafe) var fsFlushScheduled = false
+    /// The watcher is replaying changes made since the indexes were saved; those reach the indexes but are not
+    /// shown as live changes. Touched only on `fsEventsQueue`.
+    @ObservationIgnored nonisolated(unsafe) var replayingHistory = false
 
+    /// The FSEvents position each scope engine in memory reflects. A scope missing here has no position to replay
+    /// from and is walked again.
+    @ObservationIgnored var liveBase: [SearchScope: UInt64] = [:]
+    @ObservationIgnored var liveUpdater: LiveIndexUpdater?
+    @ObservationIgnored var lastLiveSave = Date()
+    @ObservationIgnored var lastHistoryLossWalk: Date?
     @ObservationIgnored var updatingFilters = false
     @ObservationIgnored var defaultResultsDirty = true
 
@@ -518,6 +531,10 @@ class FuzzyClient {
     @ObservationIgnored var ongoingOperations: [String: String] = [:]
     @ObservationIgnored var ongoingOperationCounts: [String: Int] = [:]
     var ongoingOperationsList: [(key: String, message: String)] = []
+
+    @ObservationIgnored var livePoolRefresh: DispatchWorkItem? {
+        didSet { oldValue?.cancel() }
+    }
 
     @ObservationIgnored var appDiscoveryQuery: MetaQuery? {
         didSet { _ = oldValue }
@@ -707,13 +724,6 @@ class FuzzyClient {
 
     var indexExists: Bool {
         scopeIndexesExist
-    }
-    var indexIsStale: Bool {
-        let scopes = Defaults[.searchScopes]
-        return scopes.contains { scope in
-            let f = scopeIndexFile(scope)
-            return !f.exists || (f.timestamp ?? 0) < Date().addingTimeInterval(-3600 * 72).timeIntervalSince1970
-        }
     }
 
     @ObservationIgnored var computeOpenWithTask: DispatchWorkItem? {
@@ -1114,22 +1124,38 @@ class FuzzyClient {
                 watchFiles()
                 indexStaleExternalVolumes()
             }
-        } else if indexIsStale, batteryLevel() > 0.3 {
-            loadPersistedIndex { [self] in
-                indexFiles(pauseSearch: false) { [self] in
-                    watchFiles()
-                }
-            }
         } else {
             loadPersistedIndex { [self] in
-                watchFiles()
-                indexStaleExternalVolumes()
+                // Each saved scope catches up by replaying what changed since it was written. One without a saved
+                // position (first launch of this version, another macOS build, a reset FSEvents history) is walked.
+                let saved = ScopeIndexState.read()?.replayable ?? [:]
+                for (scope, id) in saved where scopeEngines[scope] != nil && liveBase[scope] == nil {
+                    liveBase[scope] = id
+                }
+                let missing = Defaults[.searchScopes].filter { liveBase[$0] == nil }
+                if missing.isEmpty || batteryLevel() <= 0.3 {
+                    watchFiles()
+                    indexStaleExternalVolumes()
+                } else {
+                    indexFiles(pauseSearch: false, scopes: missing) { [self] in
+                        watchFiles()
+                        indexStaleExternalVolumes()
+                    }
+                }
             }
         }
 
+        // The indexes follow file changes as they happen, so nothing is walked on a timer; this only writes them
+        // to disk now and then, and walks what has no position to replay from.
         indexChecker = Repeater(every: 60 * 60, name: "Index Checker", tolerance: 60 * 60) { [self] in
+            saveLiveIndexIfWorthIt()
             guard batteryLevel() > 0.3 else { return }
-            refresh(pauseSearch: false)
+            let missing = Defaults[.searchScopes].filter { liveBase[$0] == nil }
+            if !missing.isEmpty {
+                refresh(pauseSearch: false, scopes: missing)
+            } else {
+                indexStaleExternalVolumes()
+            }
         }
 
         watchIgnoreFiles()
@@ -1399,6 +1425,8 @@ class FuzzyClient {
         scopesIndexing.formUnion(scopes)
         let ignoreChecker: String? = fsignore.exists ? fsignoreString : nil
         let volumePaths = Set(enabledVolumes.map(\.string))
+        // Whatever changes from here on is replayed onto the walked engines once the watcher restarts.
+        let walkStartID = FSEventsGetCurrentEventId()
 
         scopeIndexTask?.cancel()
         scopeIndexTask = Task.detached(priority: .userInitiated) {
@@ -1462,8 +1490,10 @@ class FuzzyClient {
                     // an empty one and showing the scope as having no files.
                     let reloadedEngine = SearchEngine()
                     let engineToStore = reloadedEngine.loadBinaryIndex(from: file.url) ? reloadedEngine : scopeEngine
+                    ScopeIndexState.save([scope: walkStartID])
 
                     await MainActor.run {
+                        self.liveBase[scope] = walkStartID
                         releaseInBackground(self.scopeEngines.updateValue(engineToStore, forKey: scope))
                         self.scopesIndexing.remove(scope)
                         self.updateIndexedCount()
@@ -1554,29 +1584,96 @@ class FuzzyClient {
     // MARK: - File Watching (FSEvents)
 
     func stopWatchingFiles() {
+        advanceLiveBase()
         LowtechFSEvents.stopWatching(for: ObjectIdentifier(self))
+        liveUpdater = nil
+    }
+
+    /// The engines hold every change the updater has applied, so their positions move up to it. A scope with no
+    /// position stays without one: it was never caught up from a known point.
+    func advanceLiveBase() {
+        guard let applied = liveUpdater?.lastAppliedEventID, applied > 0 else { return }
+        for (scope, id) in liveBase where id < applied {
+            liveBase[scope] = applied
+        }
+    }
+
+    /// The folders each enabled scope walks, with the same rules `indexFiles` walks them by.
+    func liveRoutes() -> [LiveRoute] {
+        let ignoreChecker: String? = fsignore.exists ? fsignoreString : nil
+        let volumePaths = Set(enabledVolumes.map(\.string))
+        var routes: [LiveRoute] = []
+        for scope in Defaults[.searchScopes] {
+            guard let engine = scopeEngines[scope] else { continue }
+            let scopeIgnoreFile = ScopeIgnore.rootedScopes.contains(scope) ? ScopeIgnore.activeFile(for: scope) : nil
+            let honorGitignore = scope == .home && Defaults[.honorGitignore]
+            for dir in walkDirs(for: scope) {
+                let excl = dir.excludePrefix
+                let rules = WalkRules(
+                    walkRoot: dir.dir,
+                    ignoreFile: scopeIgnoreFile ?? (dir.applyIgnore ? ignoreChecker : nil),
+                    ignoreRoot: scopeIgnoreFile != nil ? dir.dir : nil,
+                    skipDir: { path in (excl.map { path.hasPrefix($0) } ?? false) || volumePaths.contains(path) },
+                    applyBlocklist: true,
+                    discoverGitignore: honorGitignore
+                )
+                routes.append(LiveRoute(scope: scope, root: dir.dir, excludePrefix: excl, engine: engine, rules: rules))
+            }
+        }
+        return routes
+    }
+
+    /// Rules changed without a walk (an exclusion or a re-add): the live updates follow the new ones.
+    func refreshLiveRoutes() {
+        liveUpdater?.setRoutes(liveRoutes())
     }
 
     func watchFiles() {
         removedFiles.removeAll()
         seenPaths.removeAll()
-        LowtechFSEvents.stopWatching(for: ObjectIdentifier(self))
+        stopWatchingFiles()
+
+        // Replay from the oldest position among the engines; changes they already hold apply again harmlessly.
+        let since = Defaults[.searchScopes].compactMap { scopeEngines[$0] != nil ? liveBase[$0] : nil }.min()
         // Changes buffered before the restart describe the index we just cleared, so flushing
         // them would re-add paths into a fresh seenPaths/removedFiles.
-        fsEventsQueue.async { [self] in pendingFSChanges.removeAll() }
+        fsEventsQueue.async { [self] in
+            pendingFSChanges.removeAll()
+            replayingHistory = since != nil
+        }
+
+        let updater = LiveIndexUpdater(
+            routes: liveRoutes(),
+            applied: { [weak self] changes in
+                Task { @MainActor in self?.liveIndexApplied(changes) }
+            },
+            historyLost: { [weak self] in
+                Task { @MainActor in self?.liveHistoryLost() }
+            }
+        )
+        liveUpdater = updater
 
         do {
             try LowtechFSEvents.startWatching(
-                paths: ["/Users", "/usr/local", "/opt", "/Applications", "/tmp"],
-                for: ObjectIdentifier(self), latency: 1
+                paths: ["/"], for: ObjectIdentifier(self),
+                sinceWhen: since.map { EonilFSEventsEventID(rawValue: $0) } ?? .now, latency: 1
             ) { event in
+                updater.enqueue(event)
                 self.fsEventsQueue.async { [self] in
-                    guard let flags = event.flag,
+                    guard let flags = event.flag else { return }
+                    if flags.contains(.historyDone) {
+                        replayingHistory = false
+                        return
+                    }
+                    guard !replayingHistory,
                           flags.hasElements(from: [.itemCreated, .itemRemoved, .itemRenamed, .itemModified]),
-                          let path = event.path.filePath
+                          let pathStr = FSEventsHistory.normalized(event.path),
+                          let path = pathStr.filePath
                     else { return }
 
-                    let pathStr = path.string
+                    // The scope indexes take changes inside them directly; the live index only keeps the rest.
+                    let inScope = updater.route(for: pathStr) != nil
+                    guard inScope || Self.recentsRoots.contains(where: { pathStr.hasPrefix($0) }) else { return }
                     if isPathBlocked(pathStr) {
                         return
                     }
@@ -1592,11 +1689,15 @@ class FuzzyClient {
                             }
                             break
                         }
-                        // Add to recents engine (never blocks main thread)
-                        recentsEngine.addPath(pathStr, isDir: isDir)
+                        if !inScope {
+                            // Add to recents engine (never blocks main thread)
+                            recentsEngine.addPath(pathStr, isDir: isDir)
+                        }
                         enqueueFSChange(path, exists: true)
                     } else {
-                        recentsEngine.removePath(pathStr)
+                        if !inScope {
+                            recentsEngine.removePath(pathStr)
+                        }
                         enqueueFSChange(path, exists: false)
                     }
                 }
@@ -1604,6 +1705,41 @@ class FuzzyClient {
         } catch {
             log.error("Failed to watch files: \(error.localizedDescription)")
         }
+    }
+
+    /// A batch of file changes reached the scope indexes. The count on screen already moved with each change as it
+    /// was shown, so it isn't recounted here: that would redraw the status bar once more per batch.
+    func liveIndexApplied(_ changes: Int) {
+        invalidateSearch()
+        // QuickFilter pools hold entry positions, and removals free those up for reuse by new paths.
+        if let qf = quickFilter, qf.poolExtensions != nil || qf.searchDirsOnly {
+            let refresh = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated { _ = self?.refreshPoolsAfterReindex() }
+            }
+            livePoolRefresh = refresh
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: refresh)
+        }
+    }
+
+    /// Writing every scope costs a few hundred MB of disk writes, while replaying changes on launch is cheap, so the
+    /// indexes are only written once enough has changed or the replay would reach back several hours.
+    func saveLiveIndexIfWorthIt() {
+        guard let changes = liveUpdater?.changes, changes > 0,
+              changes >= 20000 || Date().timeIntervalSince(lastLiveSave) > 6 * 60 * 60
+        else { return }
+        scheduleSaveIndexes()
+    }
+
+    /// FSEvents dropped changes or lost its history, so the indexes may have missed some: walk them again, at most
+    /// once an hour in case it keeps happening.
+    func liveHistoryLost() {
+        if let last = lastHistoryLossWalk, Date().timeIntervalSince(last) < 60 * 60 {
+            return
+        }
+        lastHistoryLossWalk = Date()
+        log.info("Live index: change history lost, reindexing")
+        liveBase.removeAll()
+        refresh(pauseSearch: false)
     }
 
     /// Buffer a surviving FSEvents change and make sure a flush is pending.
@@ -1970,11 +2106,17 @@ class FuzzyClient {
             self.logActivity("Saving index to disk")
             let scopes = self.scopeEngines
             let volumes = self.volumeEngines
+            // Taken before writing: the engines hold at least every change applied so far.
+            self.advanceLiveBase()
+            let positions = self.liveBase.filter { scopes.keys.contains($0.key) }
+            _ = self.liveUpdater?.takeChanges()
+            self.lastLiveSave = Date()
             await Task.detached {
                 for (scope, eng) in scopes {
                     let file = scopeIndexFile(scope)
                     eng.saveBinaryIndex(to: file.url)
                 }
+                ScopeIndexState.save(positions)
                 for (volume, eng) in volumes {
                     let file = volumeIndexFile(volume)
                     eng.saveBinaryIndex(to: file.url)
@@ -2316,6 +2458,7 @@ class FuzzyClient {
         if blocklistChanged {
             PathBlocklist.shared.rebuild()
         }
+        refreshLiveRoutes()
     }
 
     /// Take back rules written by `writeExcludeRules`, line for line.
@@ -2341,6 +2484,7 @@ class FuzzyClient {
         if blocklistChanged {
             PathBlocklist.shared.rebuild()
         }
+        refreshLiveRoutes()
     }
 
     /// Exclude `path` with the same exact rule the Exclude sheet recommends, and drop it with everything below it

@@ -18,19 +18,7 @@ private let everythingStateFile = everythingFolder / "everything.json"
 /// macOS build or a reset FSEvents database means the replay can't be trusted and the index is walked again.
 struct EverythingSnapshot: Codable {
     static var current: Self {
-        Self(eventID: FSEventsGetCurrentEventId(), system: systemBuild, fseventsUUID: fseventsUUID, volumes: EverythingIndex.localVolumes())
-    }
-
-    /// The sealed system volume only changes in a macOS update, and FSEvents doesn't report those.
-    static var systemBuild: String {
-        ProcessInfo.processInfo.operatingSystemVersionString
-    }
-
-    /// Identifies the data volume's FSEvents history; it changes when that history is thrown away.
-    static var fseventsUUID: String {
-        var st = stat()
-        guard lstat("/Users", &st) == 0, let uuid = FSEventsCopyUUIDForDevice(st.st_dev) else { return "" }
-        return CFUUIDCreateString(nil, uuid) as String? ?? ""
+        Self(eventID: FSEventsGetCurrentEventId(), system: FSEventsHistory.systemBuild, fseventsUUID: FSEventsHistory.fseventsUUID, volumes: EverythingIndex.localVolumes())
     }
 
     var eventID: UInt64
@@ -40,7 +28,7 @@ struct EverythingSnapshot: Codable {
 
     /// Whether the changes since `eventID` can still be replayed onto the saved index.
     var replayable: Bool {
-        eventID > 0 && eventID <= FSEventsGetCurrentEventId() && system == Self.systemBuild && fseventsUUID == Self.fseventsUUID
+        FSEventsHistory.replayable(eventID: eventID, system: system, fseventsUUID: fseventsUUID)
     }
 
     static func read() -> Self? {
@@ -512,22 +500,6 @@ final class EverythingUpdater: @unchecked Sendable {
     /// The local disks under /Volumes being followed; events from anything else mounted there are ignored.
     private var volumes: Set<String>
 
-    private static func isRoot(_ path: String) -> Bool {
-        path == "/" || path == "/System/Volumes/Data" || path == "/System/Volumes/Data/"
-    }
-
-    /// Folders not inside another folder of the list.
-    private static func outermost(_ dirs: [String]) -> [String] {
-        var result: [String] = []
-        for dir in dirs.sorted() {
-            if let last = result.last, dir.hasPrefix(last + "/") {
-                continue
-            }
-            result.append(dir)
-        }
-        return result
-    }
-
     private func notify(eventID: UInt64, changes: Int) {
         let engine = engine
         Task { @MainActor in EVERYTHING.applied(to: engine, eventID: eventID, changes: changes) }
@@ -537,13 +509,12 @@ final class EverythingUpdater: @unchecked Sendable {
     /// in a single sweep, then whatever exists now is added. A file only modified is already in the index.
     private func apply(_ events: [EonilFSEventsEvent]) {
         let t0 = CFAbsoluteTimeGetCurrent()
-        let lost: EonilFSEventsEventFlags = [.userDropped, .kernelDropped, .idsWrapped]
         var flagsByPath: [String: EonilFSEventsEventFlags] = [:]
         var maxEventID: UInt64 = 0
         for event in events {
             maxEventID = max(maxEventID, event.ID?.rawValue ?? 0)
             let flags = event.flag ?? []
-            if !flags.isDisjoint(with: lost) || (flags.contains(.mustScanSubDirs) && Self.isRoot(event.path)) {
+            if FSEventsHistory.lost(flags, path: event.path) {
                 let engine = engine
                 Task { @MainActor in EVERYTHING.historyLost(in: engine) }
                 return
@@ -577,7 +548,7 @@ final class EverythingUpdater: @unchecked Sendable {
         }
 
         // Walk only the outermost folders, and leave out what those walks add anyway.
-        rescan = Self.outermost(rescan)
+        rescan = FSEventsHistory.outermost(rescan)
         if !rescan.isEmpty {
             let prefixes = rescan.map { $0 + "/" }
             added.removeAll { path, _ in prefixes.contains { path.hasPrefix($0) } }
@@ -594,17 +565,9 @@ final class EverythingUpdater: @unchecked Sendable {
         notify(eventID: maxEventID, changes: flagsByPath.count)
     }
 
-    /// The data volume's own mount path maps back onto /, and the system's helper volumes, /dev and anything
-    /// mounted under /Volumes that isn't a local disk being followed are left out.
+    /// Anything mounted under /Volumes that isn't a local disk being followed is left out too.
     private func normalized(_ raw: String) -> String? {
-        var path = raw
-        if path.count > 1, path.hasSuffix("/") {
-            path.removeLast()
-        }
-        if path.hasPrefix("/System/Volumes/Data/") {
-            return String(path.dropFirst("/System/Volumes/Data".count))
-        }
-        guard !path.isEmpty, path != "/", !path.hasPrefix("/System/Volumes/"), !path.hasPrefix("/dev/") else { return nil }
+        guard let path = FSEventsHistory.normalized(raw) else { return nil }
         if path.hasPrefix("/Volumes/") {
             let volume = "/Volumes/" + (path.dropFirst("/Volumes/".count).split(separator: "/", maxSplits: 1).first ?? "")
             guard volumes.contains(volume) else { return nil }
