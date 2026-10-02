@@ -62,11 +62,14 @@ final class SearchCoordinator: @unchecked Sendable {
         suffixPattern: String? = nil,
         dirsOnly: Bool = false,
         scopeLabels: [String]? = nil,
+        only: EngineEntry? = nil,
         cancelled: (() -> Bool)? = nil
     ) -> [SearchResult] {
         let allEngines = lock.withLock { _engines }
         let engines: [EngineEntry]
-        if let labels = scopeLabels, !labels.isEmpty {
+        if let only {
+            engines = [only]
+        } else if let labels = scopeLabels, !labels.isEmpty {
             let lowered = Set(labels.map { $0.lowercased() })
             // Match scope labels against both raw values (e.g. "root") and display labels (e.g. "Root (/usr, ...)")
             let scopesByRawValue = Dictionary(uniqueKeysWithValues: SearchScope.allCases.map { ($0.rawValue.lowercased(), $0.label) })
@@ -310,9 +313,49 @@ extension FuzzyClient {
 
     // MARK: - Request Handler
 
+    /// Loads the Everything index when needed (waiting up to two minutes), then searches it alone. While its first
+    /// build is still running, what is indexed so far is searched and the response says so.
+    nonisolated static func searchEverything(_ request: ClingRequest, coordinator coord: SearchCoordinator) -> ClingResponse {
+        let deadline = CFAbsoluteTimeGetCurrent() + 120
+        var access = EverythingIndex.CLIAccess.loading
+        while true {
+            access = DispatchQueue.main.sync { MainActor.assumeIsolated { EVERYTHING.cliAccess() } }
+            guard case .loading = access, CFAbsoluteTimeGetCurrent() < deadline else { break }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        switch access {
+        case .needsPro:
+            return ClingResponse(error: "Everything needs Cling Pro")
+        case .loading:
+            return ClingResponse(error: "the Everything index is still loading")
+        case let .ready(engine, building):
+            let t0 = CFAbsoluteTimeGetCurrent()
+            let results = CLICalls.searchLock.withLock {
+                coord.search(
+                    query: request.query ?? "",
+                    maxResults: request.maxResults ?? 30,
+                    folderPrefixes: request.folderPrefixes,
+                    suffixPattern: request.suffixPattern,
+                    dirsOnly: request.dirsOnly ?? false,
+                    only: .init(engine: engine, label: "Everything", scoreBias: 0)
+                )
+            }
+            let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            return ClingResponse(
+                results: results.map { ClingSearchResult(path: $0.path, isDir: $0.isDir, score: $0.score, quality: $0.quality) },
+                status: building ? "Everything is still being indexed, \(engine.count.formatted()) files so far" : nil,
+                indexCount: engine.count,
+                searchMs: ms
+            )
+        }
+    }
+
     nonisolated static func handleCLIRequest(_ request: ClingRequest, coordinator coord: SearchCoordinator) -> ClingResponse {
         switch request.command {
         case .search:
+            if request.everything == true {
+                return searchEverything(request, coordinator: coord)
+            }
             let query = request.query ?? ""
             let maxResults = request.maxResults ?? 30
 
@@ -336,6 +379,13 @@ extension FuzzyClient {
                 indexCount: coord.count,
                 searchMs: ms
             )
+
+        case .index where request.everything == true, .reindex where request.everything == true:
+            let started = DispatchQueue.main.sync { MainActor.assumeIsolated { EVERYTHING.rebuild() } }
+            guard started else {
+                return ClingResponse(error: "Everything needs Cling Pro")
+            }
+            return ClingResponse(status: "indexing everything")
 
         case .index, .reindex:
             let scopes = request.scopes?.compactMap { SearchScope(rawValue: $0) }
@@ -452,6 +502,8 @@ extension FuzzyClient {
             var operationOut: String?
             var scopeStatuses: [ClingScopeStatus] = []
             var volumeStatuses: [ClingVolumeStatus] = []
+            var everythingState: String?
+            var everythingCount: Int?
             let sem = DispatchSemaphore(value: 0)
             DispatchQueue.main.async {
                 defer { sem.signal() }
@@ -525,6 +577,18 @@ extension FuzzyClient {
                     }
                 }
 
+                lines.append("")
+                everythingState = EVERYTHING.state
+                everythingCount = EVERYTHING.count
+                switch EVERYTHING.state {
+                case "unloaded":
+                    lines.append("everything: unloaded")
+                case "loading":
+                    lines.append("everything: loading")
+                default:
+                    lines.append("everything: \(EVERYTHING.state), \(EVERYTHING.count.formatted()) entries")
+                }
+
                 // Current operation
                 if !FUZZY.operation.isEmpty {
                     lines.append("")
@@ -547,7 +611,9 @@ extension FuzzyClient {
                 state: stateOut,
                 operation: operationOut,
                 scopes: scopeStatuses,
-                volumes: volumeStatuses
+                volumes: volumeStatuses,
+                everything: everythingState,
+                everythingCount: everythingCount
             )
 
         case .recents:

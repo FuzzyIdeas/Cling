@@ -4,10 +4,18 @@ import KeyboardShortcuts
 
 func carbonModifiers(from flags: NSEvent.ModifierFlags) -> Int {
     var carbon = 0
-    if flags.contains(.command) { carbon |= cmdKey }
-    if flags.contains(.option) { carbon |= optionKey }
-    if flags.contains(.control) { carbon |= controlKey }
-    if flags.contains(.shift) { carbon |= shiftKey }
+    if flags.contains(.command) {
+        carbon |= cmdKey
+    }
+    if flags.contains(.option) {
+        carbon |= optionKey
+    }
+    if flags.contains(.control) {
+        carbon |= controlKey
+    }
+    if flags.contains(.shift) {
+        carbon |= shiftKey
+    }
     return carbon
 }
 
@@ -50,6 +58,7 @@ extension KeyboardShortcuts.Name {
     /// Stash. Dispatched window-locally by ContentView's key monitor (works with no selection
     /// and while the search field has focus). ⇧ variant of the ⌘S stash toggle.
     static let clStashClear = Self("cl_stashClear", initial: sc(kVK_ANSI_S, [.command, .shift]))
+    static let clToggleEverything = Self("cl_toggleEverything", initial: sc(kVK_ANSI_E, [.command, .shift]))
 }
 
 // MARK: - ClingShortcuts
@@ -116,6 +125,7 @@ enum ClingShortcuts {
 
     static let utilityShortcuts: [UtilityShortcut] = [
         .init(name: .clStashClear, title: "Clear Stash", systemImage: "tray.slash"),
+        .init(name: .clToggleEverything, title: "Toggle Everything", systemImage: "asterisk"),
     ]
 
     /// Every name we own, for "Reset all" and to keep them disabled at the package's global layer
@@ -144,10 +154,14 @@ enum ClingShortcuts {
             }
         }
         for sort in sortShortcuts where sort.name != name {
-            if KeyboardShortcuts.getShortcut(for: sort.name) == shortcut { return sort.title }
+            if KeyboardShortcuts.getShortcut(for: sort.name) == shortcut {
+                return sort.title
+            }
         }
         for utility in utilityShortcuts where utility.name != name {
-            if KeyboardShortcuts.getShortcut(for: utility.name) == shortcut { return utility.title }
+            if KeyboardShortcuts.getShortcut(for: utility.name) == shortcut {
+                return utility.title
+            }
         }
         return nil
     }

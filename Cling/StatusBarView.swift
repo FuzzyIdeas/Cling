@@ -38,7 +38,9 @@ struct StatusBarView: View {
                     fuzzy.savedQuery = nil
                 }
             }) {
-                if !fuzzy.operation.isEmpty {
+                if everything.enabled {
+                    everythingStatus
+                } else if !fuzzy.operation.isEmpty {
                     HStack(spacing: 4) {
                         ProgressView()
                             .progressViewStyle(CircularProgressViewStyle())
@@ -166,8 +168,9 @@ struct StatusBarView: View {
     }
 
     @State private var fuzzy: FuzzyClient = FUZZY
-    @State private var appearance = AM
+    @State private var everything = EVERYTHING
 
+    @State private var appearance = AM
     @State private var hoveringStatusBar = false
 
     /// Rendered from triggerKeys/showAppKey/rowsToggleModifier and refreshed when those change.
@@ -182,5 +185,18 @@ struct StatusBarView: View {
 
     @Default(.toolbarRowsHidden) private var toolbarRowsHidden
     @Default(.dimStatusBar) private var dimStatusBar
+
+    @ViewBuilder private var everythingStatus: some View {
+        if everything.loading || everything.building {
+            HStack(spacing: 4) {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle())
+                    .controlSize(.mini)
+                Text(everything.loading ? "Loading Everything…" : "Indexing everything: \(everything.count.formatted()) files")
+            }
+        } else {
+            Text("\(everything.count.formatted()) files in Everything")
+        }
+    }
 
 }

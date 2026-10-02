@@ -121,6 +121,9 @@ struct Search: ParsableCommand {
     @Option(name: .long, parsing: .upToNextOption, help: "Search only in specific scopes (home, library, applications, system, root)")
     var scope: [String] = []
 
+    @Flag(name: .shortAndLong, help: "Search the Everything index: every file on the local disks, with no ignore rules (Pro). Loads it first when needed, and builds it on first use")
+    var everything = false
+
     mutating func run() throws {
         if socket {
             try runSocket()
@@ -133,11 +136,12 @@ struct Search: ParsableCommand {
         let request = ClingRequest(
             command: .search, query: query, maxResults: count, verbose: verbose,
             suffixPattern: suffix, folderPrefixes: folders?.components(separatedBy: ","),
-            dirsOnly: dirsOnly ? true : nil, scopes: scope.isEmpty ? nil : scope
+            dirsOnly: dirsOnly ? true : nil, scopes: scope.isEmpty ? nil : scope, everything: everything ? true : nil
         )
 
         let t0 = CFAbsoluteTimeGetCurrent()
-        guard let responseData = try sendMachPort(data: JSONEncoder().encode(request)) else {
+        // Loading the Everything index can take a while the first time.
+        guard let responseData = try sendMachPort(data: JSONEncoder().encode(request), recvTimeout: everything ? 150 : 10) else {
             fputs("error: no response from Cling app\n", stderr)
             throw ExitCode.failure
         }
@@ -151,6 +155,9 @@ struct Search: ParsableCommand {
         if let error = response.error {
             fputs("error: \(error)\n", stderr)
             throw ExitCode.failure
+        }
+        if let status = response.status {
+            fputs("\(status)\n", stderr)
         }
 
         if verbose {
@@ -205,7 +212,9 @@ struct Search: ParsableCommand {
         var response = ""
         while true {
             let n = Darwin.read(fd, &buf, buf.count)
-            if n <= 0 { break }
+            if n <= 0 {
+                break
+            }
             response += String(bytes: buf[0 ..< n], encoding: .utf8) ?? ""
         }
         print(response, terminator: "")
@@ -243,7 +252,14 @@ struct Reindex: ParsableCommand {
     @Option(name: .shortAndLong, parsing: .upToNextOption, help: "Scopes to reindex (home, library, applications, system, root) or volume paths (/Volumes/...). Omit for all.")
     var scope: [String] = []
 
+    @Flag(name: .shortAndLong, help: "Walk the Everything index again from scratch (Pro). It normally keeps itself current from file system events")
+    var everything = false
+
     mutating func run() throws {
+        if everything {
+            try reindexEverything()
+            return
+        }
         let volumes = scope.filter { $0.hasPrefix("/Volumes/") || $0.hasPrefix("/Volumes") }
         let scopes = scope.filter { !$0.hasPrefix("/Volumes") }
 
@@ -257,10 +273,14 @@ struct Reindex: ParsableCommand {
                let statusResp = try? JSONDecoder().decode(ClingResponse.self, from: statusData)
             {
                 for s in statusResp.scopes ?? [] {
-                    if let ts = s.lastIndexedAt { initialScopeTimestamps[s.rawValue.lowercased()] = ts }
+                    if let ts = s.lastIndexedAt {
+                        initialScopeTimestamps[s.rawValue.lowercased()] = ts
+                    }
                 }
                 for v in statusResp.volumes ?? [] {
-                    if let ts = v.lastIndexedAt { initialVolumeTimestamps[v.path] = ts }
+                    if let ts = v.lastIndexedAt {
+                        initialVolumeTimestamps[v.path] = ts
+                    }
                 }
             }
         }
@@ -386,6 +406,42 @@ struct Reindex: ParsableCommand {
     }
 }
 
+extension Reindex {
+    func reindexEverything() throws {
+        let request = ClingRequest(command: .reindex, everything: true)
+        guard let data = try sendMachPort(data: JSONEncoder().encode(request), recvTimeout: 10),
+              let response = try? JSONDecoder().decode(ClingResponse.self, from: data)
+        else {
+            fputs("error: no response from Cling app\n", stderr)
+            throw ExitCode.failure
+        }
+        if let error = response.error {
+            fputs("error: \(error)\n", stderr)
+            throw ExitCode.failure
+        }
+        guard wait else {
+            print(response.status ?? "indexing everything")
+            return
+        }
+
+        let t0 = CFAbsoluteTimeGetCurrent()
+        while true {
+            Thread.sleep(forTimeInterval: 1)
+            let statusReq = ClingRequest(command: .status)
+            guard let statusData = try? sendMachPort(data: JSONEncoder().encode(statusReq), recvTimeout: 5),
+                  let status = try? JSONDecoder().decode(ClingResponse.self, from: statusData)
+            else { continue }
+            let count = status.everythingCount ?? 0
+            fputs("\rindexing everything: \(count.formatted()) entries (\(Int(CFAbsoluteTimeGetCurrent() - t0))s)", stderr)
+            if status.everything != "indexing" {
+                fputs("\n", stderr)
+                print("everything: \(count.formatted()) entries in \(Int(CFAbsoluteTimeGetCurrent() - t0))s")
+                return
+            }
+        }
+    }
+}
+
 // MARK: - Status
 
 struct Status: ParsableCommand {
@@ -416,7 +472,9 @@ struct Status: ParsableCommand {
                 state: response.state,
                 operation: response.operation,
                 scopes: response.scopes,
-                volumes: response.volumes
+                volumes: response.volumes,
+                everything: response.everything,
+                everythingCount: response.everythingCount
             )
             if let out = try? encoder.encode(payload), let str = String(data: out, encoding: .utf8) {
                 print(str)

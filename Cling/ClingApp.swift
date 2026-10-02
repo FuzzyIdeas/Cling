@@ -289,6 +289,7 @@ class AppDelegate: LowtechProAppDelegate {
     func hideOrCloseMainWindow(_ window: NSWindow) {
         // Measured while the table is still laid out: outside instant mode the next window starts without one.
         _ = cursorAnchor(in: window)
+        EVERYTHING.windowHidden()
         WM.noteInactive()
         FUZZY.cancelPendingSearch()
         if Defaults[.instantMode] {
@@ -403,6 +404,7 @@ class AppDelegate: LowtechProAppDelegate {
             placeMainWindow(window, on: pendingDisplay ?? displayForMainWindow())
         }
         pendingDisplay = nil
+        EVERYTHING.windowShown()
         window.collectionBehavior.insert(.moveToActiveSpace)
         if Defaults[.instantMode] {
             window.animationBehavior = .none

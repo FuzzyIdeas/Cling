@@ -564,6 +564,10 @@ class FuzzyClient {
 
     /// All engines to search (enabled scopes + volumes + recents)
     var activeEngines: [(engine: SearchEngine, label: String, scoreBias: Int)] {
+        // Everything holds what all the others do and more, so it is searched alone.
+        if EVERYTHING.active, let engine = EVERYTHING.engine {
+            return [(engine, "Everything", 0)]
+        }
         let scopes = Defaults[.searchScopes]
         var result = [(SearchEngine, String, Int)]()
         for scope in scopes {
@@ -1668,6 +1672,14 @@ class FuzzyClient {
         }
     }
 
+    /// Everything was switched on or off, or its engine changed: search again against what is now active.
+    func everythingChanged() {
+        invalidateSearch()
+        if !refreshPoolsAfterReindex(), !emptyQuery || volumeFilter != nil {
+            performSearch()
+        }
+    }
+
     /// Force the next performSearch to run even if params haven't changed
     func invalidateSearch() {
         lastSearchQuery = "\0"
@@ -1733,7 +1745,9 @@ class FuzzyClient {
         let maxResults = (proactive || extensionOnly) ? Defaults[.maxResultsCount] : min(Defaults[.maxResultsCount], 500)
         let folderPrefixes = folderFilter?.folders.map(\.string)
         let volumePrefix = volumeFilter?.string
-        let removedPaths = removedFiles.union(excludedPaths)
+        // Everything follows deletions itself and honours no exclusions, and looking the paths up would make
+        // its engine build a path index millions of entries long.
+        let removedPaths = EVERYTHING.active ? [] : removedFiles.union(excludedPaths)
         let activeMaxDepth: Int? = {
             let q = quickFilter?.maxDepth
             let f = folderFilter?.maxDepth

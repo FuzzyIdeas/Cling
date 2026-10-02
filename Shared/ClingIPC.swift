@@ -38,7 +38,8 @@ public struct ClingRequest: Codable {
         folderPrefixes: [String]? = nil,
         dirsOnly: Bool? = nil,
         scopes: [String]? = nil,
-        paths: [String]? = nil
+        paths: [String]? = nil,
+        everything: Bool? = nil
     ) {
         self.command = command
         self.query = query
@@ -51,6 +52,7 @@ public struct ClingRequest: Codable {
         self.dirsOnly = dirsOnly
         self.scopes = scopes
         self.paths = paths
+        self.everything = everything
     }
 
     public let command: ClingCommand
@@ -64,6 +66,8 @@ public struct ClingRequest: Codable {
     public var dirsOnly: Bool?
     public var scopes: [String]?
     public var paths: [String]?
+    /// Search the Everything index (every file on the local disks) instead of the normal one.
+    public var everything: Bool?
 
 }
 
@@ -172,7 +176,9 @@ public struct ClingResponse: Codable {
         state: String? = nil,
         operation: String? = nil,
         scopes: [ClingScopeStatus]? = nil,
-        volumes: [ClingVolumeStatus]? = nil
+        volumes: [ClingVolumeStatus]? = nil,
+        everything: String? = nil,
+        everythingCount: Int? = nil
     ) {
         self.results = results
         self.status = status
@@ -183,6 +189,8 @@ public struct ClingResponse: Codable {
         self.operation = operation
         self.scopes = scopes
         self.volumes = volumes
+        self.everything = everything
+        self.everythingCount = everythingCount
     }
 
     public var results: [ClingSearchResult]?
@@ -194,5 +202,8 @@ public struct ClingResponse: Codable {
     public var operation: String?
     public var scopes: [ClingScopeStatus]?
     public var volumes: [ClingVolumeStatus]?
+    /// State of the Everything index: unloaded, loading, indexing or ready.
+    public var everything: String?
+    public var everythingCount: Int?
 
 }

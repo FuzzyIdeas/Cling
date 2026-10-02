@@ -336,6 +336,7 @@ struct ContentView: View {
     @State private var appManager = APP_MANAGER
     @State private var renamedPaths: [FilePath]? = nil
     @State private var fuzzy: FuzzyClient = FUZZY
+    @State private var everything = EVERYTHING
     @State private var stash: StashManager = STASH
     @ObservedObject private var km = KM
     @State private var sortHintsVisible = false
@@ -1043,12 +1044,26 @@ struct ContentView: View {
             }
             .animation(.easeInOut(duration: 0.15), value: fuzzy.searching)
             .animation(.easeInOut(duration: 0.15), value: queryTooShort)
+            everythingButton
             xButton
             historyButton
             saveFilterButton
             syntaxHelpButton
         }
         .offset(x: -10)
+    }
+
+    private var everythingButton: some View {
+        Button(action: { everything.toggle() }) {
+            Image(systemName: "asterisk")
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(everything.enabled ? .orange : .secondary)
+        .focusable(false)
+        .help("Everything: every file on the local disks, nothing excluded (⌘⇧E)")
+        .accessibilityLabel("Everything")
+        .accessibilityToggle(isOn: everything.enabled)
+        .needsPro(clicked: $everything.showProPrompt)
     }
 
     private var syntaxHelpButton: some View {
@@ -1102,7 +1117,8 @@ struct ContentView: View {
         }
     }
 
-    private var searchBar: some View {
+    /// The query field with its placeholder and ghost completion drawn in the same spot.
+    private var searchField: some View {
         ZStack(alignment: .leading) {
             if fuzzy.query.isEmpty, !imeComposing {
                 Text(LocalizedStringKey(placeholderHint))
@@ -1153,13 +1169,45 @@ struct ContentView: View {
                     tableFocusTarget: tableFocusTarget
                 ))
         }
+    }
+
+    /// Shown at the start of the search field while Everything is on; clicking it goes back to the normal index.
+    private var everythingChip: some View {
+        Button(action: { everything.toggle() }) {
+            HStack(spacing: 3) {
+                Image(systemName: "asterisk")
+                    .font(.scaled(9, .chrome, weight: .bold))
+                Text("Everything")
+                    .font(.scaled(11, .chrome, weight: .semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color.orange, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .help("Back to the normal index (⌘⇧E)")
+        .padding(.leading, 6)
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 0) {
+            if everything.enabled {
+                everythingChip
+            }
+            searchField
+        }
         // One font for the placeholder, the ghost completion and the real field: the ghost
         // suffix is positioned by drawing the query in clear text first, so any mismatch
         // between the two would slide the suggestion off the end of what was typed.
         .font(.scaled(13, .secondary))
         .animation(.easeInOut(duration: 0.45), value: placeholderHint)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.quaternary, lineWidth: 0.5))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(everything.enabled ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.quaternary), lineWidth: everything.enabled ? 1 : 0.5)
+        )
         .padding(.vertical)
         .onChange(of: fuzzy.query) {
             if navigatingHistory {
@@ -1766,6 +1814,13 @@ struct ContentView: View {
                pressed == KeyboardShortcuts.getShortcut(for: .clTogglePreview)
             {
                 Defaults[.showFilePreview].toggle()
+                return nil
+            }
+            // Search everything instead of the normal index (default ⌘⇧E, rebindable).
+            if let pressed = KeyboardShortcuts.Shortcut(event: event),
+               pressed == KeyboardShortcuts.getShortcut(for: .clToggleEverything)
+            {
+                EVERYTHING.toggle()
                 return nil
             }
             // Clear the whole stash (default ⌘⇧S, rebindable). Dispatched here rather than the

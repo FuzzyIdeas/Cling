@@ -165,6 +165,11 @@ extension FilterColor {
     }
 }
 
+extension FilterColor {
+    /// The orange of the Everything chip and outline.
+    static let everything = FilterColor(hue: 0.075)
+}
+
 // MARK: - The scope the search is currently in
 
 extension FuzzyClient {
@@ -173,6 +178,11 @@ extension FuzzyClient {
     var scopeWash: (top: FilterColor, bottom: FilterColor)? {
         let quick = quickFilter.map { $0.color ?? .forName($0.id) }
         let folder = folderFilter.map { $0.color ?? .forName($0.id) }
+        // Everything washes the top in orange, over whatever filter colours the bottom.
+        if EVERYTHING.enabled {
+            let below = quick ?? folder ?? volumeFilter.map { FilterColor.forName($0.string) }
+            return (.everything, below ?? .everything)
+        }
         if let quick, let folder {
             return (quick, folder)
         }

@@ -647,6 +647,26 @@ struct SearchResult: Comparable {
     }
 }
 
+// MARK: - CloudDownloads
+
+/// Listing a folder that iCloud Drive, Dropbox or another file provider keeps only in the cloud makes macOS download
+/// it first, and a walk would wait on the network for that. With downloads paused on the walking thread such a
+/// folder lists as empty right away, while the folder itself is still indexed. Walks never suspend, so pausing
+/// covers exactly the walk, and nothing else that later runs on the same thread.
+struct CloudDownloads {
+    let previous: Int32
+
+    static func pause() -> Self {
+        let previous = getiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD)
+        setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD, IOPOL_MATERIALIZE_DATALESS_FILES_OFF)
+        return Self(previous: max(previous, IOPOL_MATERIALIZE_DATALESS_FILES_DEFAULT))
+    }
+
+    func resume() {
+        setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD, previous)
+    }
+}
+
 // MARK: - SearchEngine
 
 final class SearchEngine: @unchecked Sendable {
@@ -721,6 +741,13 @@ final class SearchEngine: @unchecked Sendable {
     @discardableResult
     func addPath(_ path: String, isDir: Bool) -> Int {
         lock.withLock { _addPath(path, isDir: isDir) }
+    }
+
+    /// Add without looking for an existing entry, for an engine that never builds the path index (at millions
+    /// of entries the Everything index can't afford one). A path added twice turns up twice in this engine's
+    /// results, and merging results collapses them by path.
+    func appendPath(_ path: String, isDir: Bool) {
+        lock.withLock { _appendPath(path, isDir: isDir) }
     }
 
     /// Thread-safe remove.
@@ -1522,10 +1549,16 @@ final class SearchEngine: @unchecked Sendable {
         skipDir: ((String) -> Bool)? = nil,
         applyBlocklist: Bool = false,
         discoverGitignore: Bool = false,
+        skipGitDirs: Bool = true,
+        skipJunkFiles: Bool = true,
+        dedupe: Bool = true,
         progress: ((Int, String) -> Void)? = nil,
         cancelled: (() -> Bool)? = nil
     ) -> Int {
         let t0 = CFAbsoluteTimeGetCurrent()
+
+        let downloads = CloudDownloads.pause()
+        defer { downloads.resume() }
 
         let cDir = strdup(dir)!
         defer { Darwin.free(cDir) }
@@ -1590,7 +1623,11 @@ final class SearchEngine: @unchecked Sendable {
             guard !batch.isEmpty else { return }
             lock.lock()
             for (p, d) in batch {
-                _ = _addPath(p, isDir: d)
+                if dedupe {
+                    _ = _addPath(p, isDir: d)
+                } else {
+                    _appendPath(p, isDir: d)
+                }
             }
             lock.unlock()
             batch.removeAll(keepingCapacity: true)
@@ -1612,7 +1649,7 @@ final class SearchEngine: @unchecked Sendable {
             switch Int32(info) {
             case FTS_D:
                 // Skip .git
-                if ent.pointee.fts_namelen == 4 {
+                if skipGitDirs, ent.pointee.fts_namelen == 4 {
                     let n = ent.pointee.fts_path!.advanced(by: pathLen &- 4)
                     if n[0] == 0x2E, n[1] == 0x67, n[2] == 0x69, n[3] == 0x74 {
                         fts_set(ftsp, ent, Int32(FTS_SKIP))
@@ -1667,17 +1704,17 @@ final class SearchEngine: @unchecked Sendable {
                 // Skip .DS_Store, .localized, Icon\r
                 let nameLen = Int(ent.pointee.fts_namelen)
                 let n = ent.pointee.fts_path!.advanced(by: pathLen &- nameLen)
-                if nameLen == 9, n[0] == 0x2E, n[1] == 0x44, n[2] == 0x53,
+                if skipJunkFiles, nameLen == 9, n[0] == 0x2E, n[1] == 0x44, n[2] == 0x53,
                    n[3] == 0x5F, n[4] == 0x53
                 {
                     continue
                 } // .DS_Store
-                if nameLen == 10, n[0] == 0x2E, n[1] == 0x6C, n[2] == 0x6F,
+                if skipJunkFiles, nameLen == 10, n[0] == 0x2E, n[1] == 0x6C, n[2] == 0x6F,
                    n[3] == 0x63
                 {
                     continue
                 } // .localized
-                if nameLen == 5, n[0] == 0x49, n[1] == 0x63, n[2] == 0x6F,
+                if skipJunkFiles, nameLen == 5, n[0] == 0x49, n[1] == 0x63, n[2] == 0x6F,
                    n[3] == 0x6E, n[4] == 0x0D
                 {
                     continue
@@ -1756,6 +1793,8 @@ final class SearchEngine: @unchecked Sendable {
         cancelled: (() -> Bool)? = nil
     ) -> Int {
         let t0 = CFAbsoluteTimeGetCurrent()
+        let downloads = CloudDownloads.pause()
+        defer { downloads.resume() }
         let fm = FileManager.default
         let baseURL = URL(fileURLWithPath: dir)
         let keys: [URLResourceKey] = [.isDirectoryKey, .nameKey]
@@ -4060,7 +4099,13 @@ final class SearchEngine: @unchecked Sendable {
         if let existing = pathToID[path] {
             return existing
         }
+        let id = _insertPath(path, isDir: isDir)
+        pathToID[path] = id
+        return id
+    }
 
+    /// Fills a freed slot or appends, with no duplicate check and no path index update. Caller must hold the lock.
+    private func _insertPath(_ path: String, isDir: Bool) -> Int {
         let byteOff = allBytes.count
         var bnStart = 0, segCount = 1
         var mask: UInt64 = 0, bnMaskAccum: UInt64 = 0
@@ -4151,7 +4196,6 @@ final class SearchEngine: @unchecked Sendable {
             byteLengths.append(pathLen)
             extIDs.append(eid)
         }
-        pathToID[path] = id
         return id
     }
 
@@ -4175,6 +4219,15 @@ final class SearchEngine: @unchecked Sendable {
         byteLengths[id] = 0
         extIDs[id] = 0
         free.append(id)
+    }
+
+    /// Caller must hold the lock.
+    private func _appendPath(_ path: String, isDir: Bool) {
+        let id = _insertPath(path, isDir: isDir)
+        if pathIndexBuilt {
+            pathToID[path] = id
+        }
+        sortedByPath = nil
     }
 
     /// Bulk-add without pathToID dedup check (for initial load only).
