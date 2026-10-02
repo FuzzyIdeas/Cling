@@ -51,7 +51,9 @@ struct ExcludeEdit: Equatable {
     }
 
     mutating func setRaw(_ index: Int, _ text: String) {
-        if rawText == nil { rawText = lines.map { $0.serialize() } }
+        if rawText == nil {
+            rawText = lines.map { $0.serialize() }
+        }
         guard rawText!.indices.contains(index) else { return }
         rawText![index] = text
     }
@@ -96,7 +98,7 @@ struct ExcludeCountQuery: Equatable {
 /// would hit. Best effort: over-counts for wildcards (any-depth vs one level), which is the safe direction for
 /// an exclusion warning. Returns nil when no confident translation exists (the UI then shows no number).
 func excludeCountQuery(line: String, supportsGlobs: Bool, blocklistPrefix: Bool, root: String?) -> ExcludeCountQuery? {
-    let f = RuleGrid.frame(line)
+    let f = RuleGrid.frame(blocklistPrefix ? expandingHomeTilde(line) : line)
     let tokens = f.tokens.map(\.original)
     guard !tokens.isEmpty else { return nil }
     let isWild: (String) -> Bool = { $0.contains("*") }

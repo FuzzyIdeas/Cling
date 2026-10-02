@@ -296,7 +296,7 @@ enum IndexInclusionAnalyzer {
         // matches, the path is allowed through despite any block rule, so report no blocklist hits.
         var blocklistHits: [IgnoreHit] = []
         let exception = { (line: String) in String(line.dropFirst()).trimmingCharacters(in: .whitespaces) }
-        let allowPrefixes = snapshot.blockedPrefixes.filter { $0.hasPrefix("!") }.map(exception)
+        let allowPrefixes = snapshot.blockedPrefixes.filter { $0.hasPrefix("!") }.map(exception).map(expandingHomeTilde)
         let allowContains = snapshot.blockedContains.filter { $0.hasPrefix("!") }.map(exception)
         // Most-specific (longest) matching rule wins, so only report a block rule that out-specifies every
         // matching allow exception (mirrors isPathBlocked).
@@ -421,7 +421,8 @@ enum IndexInclusionAnalyzer {
 
     // MARK: Blocklist matching (mirrors isPathBlocked)
 
-    nonisolated static func prefixMatches(path: String, prefix: String) -> Bool {
+    nonisolated static func prefixMatches(path: String, prefix rawPrefix: String) -> Bool {
+        let prefix = expandingHomeTilde(rawPrefix)
         if path.hasPrefix(prefix) {
             return true
         }

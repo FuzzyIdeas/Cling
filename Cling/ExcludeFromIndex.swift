@@ -352,6 +352,7 @@ enum ExcludeAnalyzer {
         }
         if rule.mechanism == .blocklist {
             if rule.blocklistPrefix {
+                let line = expandingHomeTilde(line)
                 let core = line.hasSuffix("/") ? String(line.dropLast()) : line
                 return info.abs == core || info.abs.hasPrefix(core + "/")
             }

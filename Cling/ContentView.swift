@@ -161,6 +161,8 @@ struct ContentView: View {
                         focused = .search
                     }
                     cmdDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                        // Local monitors see every window's keys, including ⌘↓ typed in a sheet's field.
+                        guard event.window === AppDelegate.shared.mainWindow else { return event }
                         if event.modifierFlags.contains(.command),
                            event.keyCode == 125, // down arrow
                            focused == .search,
@@ -627,6 +629,14 @@ struct ContentView: View {
         km.optionOnly
     }
 
+    /// SwiftUI routes a key typed into a sheet or popover up through the views that presented it, so an
+    /// `.onKeyPress` sitting above a `.sheet` also sees every key typed into that sheet's fields (the
+    /// Reindex excluded path sheet lost `/` to the focus-search handler this way). Handlers on views that
+    /// present sheets must return `.ignored` unless the main window itself is key.
+    private var mainWindowIsKey: Bool {
+        NSApp.keyWindow === AppDelegate.shared.mainWindow
+    }
+
     /// Nothing at all while searching everything, so the tint itself carries the signal. Two
     /// filters at once give a gradient instead of a flat wash, so the window says both.
     @ViewBuilder private var scopeTint: some View {
@@ -796,12 +806,12 @@ struct ContentView: View {
     private var resultsListWithKeys: some View {
         resultsList
             .onKeyPress("/", phases: [.down]) { keyPress in
-                guard keyPress.modifiers.isEmpty else { return .ignored }
+                guard keyPress.modifiers.isEmpty, mainWindowIsKey else { return .ignored }
                 focused = .search
                 return .handled
             }
             .onKeyPress(.space) {
-                guard focused == .list || focused == .stash else {
+                guard mainWindowIsKey, focused == .list || focused == .stash else {
                     return .ignored
                 }
                 if !fuzzy.query.isEmpty {
@@ -1576,7 +1586,8 @@ struct ContentView: View {
     }
 
     private func handleFilterKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
-        guard keyPress.modifiers == [.option] else { return .ignored }
+        // ⌥-letters type characters (å, ∫, ç…) in the filter and path sheets presented under these handlers.
+        guard keyPress.modifiers == [.option], mainWindowIsKey else { return .ignored }
         guard keyPress.key != .escape else {
             fuzzy.folderFilter = nil
             fuzzy.quickFilter = nil

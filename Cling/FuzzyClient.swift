@@ -44,8 +44,8 @@ final class PathBlocklist: @unchecked Sendable {
         let (blockPrefixes, allowPfx) = Self.split(Defaults[.blockedPrefixes])
         let (blockContains, allowContains) = Self.split(Defaults[.blockedContains])
 
-        prefixes = Self.expandPrivate(blockPrefixes).map { Array($0.utf8) }
-        let expandedAllow = Self.expandPrivate(allowPfx)
+        prefixes = Self.expandPrivate(blockPrefixes.map(expandingHomeTilde)).map { Array($0.utf8) }
+        let expandedAllow = Self.expandPrivate(allowPfx.map(expandingHomeTilde))
         allowPrefixesStr = expandedAllow
         allowPrefixes = expandedAllow.map { Array($0.utf8) }
         components = blockContains.map { Array($0.utf8) }
@@ -85,6 +85,14 @@ final class PathBlocklist: @unchecked Sendable {
         }
         return out
     }
+}
+
+/// Spells out a leading `~` or `~/` against the home folder so a typed `~/Library/Caches/` works as a
+/// blocklist prefix. Hand-rolled because `expandingTildeInPath` drops the trailing slash, which would widen
+/// the prefix `~/Library/` to also block `~/LibraryOld`. `~user` forms are left as typed.
+func expandingHomeTilde(_ path: String) -> String {
+    guard path == "~" || path.hasPrefix("~/") else { return path }
+    return HOME.string + path.dropFirst()
 }
 
 /// Length of the longest pattern that matches `path` (0 if none). Used as a specificity score so a more
