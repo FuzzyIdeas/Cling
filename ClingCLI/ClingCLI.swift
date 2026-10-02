@@ -86,20 +86,16 @@ extension Logs {
                 case .off: ["config", "--subsystem", subsystem, "--reset"]
                 case .status: ["config", "--status", "--subsystem", subsystem]
                 }
-                // stdin and stdout stay the terminal's, so sudo can ask for the password there.
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-                process.arguments = ["/usr/bin/log"] + arguments
+                let status: Int32
                 do {
-                    try process.run()
+                    status = try runInForeground(["/usr/bin/sudo", "/usr/bin/log"] + arguments)
                 } catch {
-                    fputs("Could not change the log settings: \(error.localizedDescription)\n", stderr)
+                    fputs("Could not change the log settings: \(error)\n", stderr)
                     throw ExitCode.failure
                 }
-                process.waitUntilExit()
-                guard process.terminationStatus == 0 else {
-                    fputs("Could not change the log settings: exit status \(process.terminationStatus)\n", stderr)
-                    throw ExitCode.failure
+                guard status == 0 else {
+                    fputs("Could not change the log settings: sudo exited with status \(status)\n", stderr)
+                    throw ExitCode(status)
                 }
             }
 
@@ -114,6 +110,41 @@ extension Logs {
             }
         }
     }
+}
+
+// MARK: - SpawnError
+
+/// Why spawning failed, worded for the end of "Could not change the log settings: ".
+struct SpawnError: Error, CustomStringConvertible {
+    let description: String
+}
+
+/// Runs `argv` on the terminal's own stdin, stdout and stderr and returns its exit status.
+///
+/// posix_spawn rather than Process: Process starts the child in a process group of its own, which the terminal
+/// treats as a background job. sudo turns echo off before asking for the password, the kernel stops a background
+/// group that changes the terminal's settings with SIGTTOU, and the command hangs before the prompt shows whenever
+/// sudo has no cached password. Spawned in our group the child stays in the foreground, and Ctrl-C reaches it too.
+func runInForeground(_ argv: [String]) throws -> Int32 {
+    var cArgs: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) } + [nil]
+    defer { cArgs.forEach { free($0) } }
+
+    var pid: pid_t = 0
+    let spawned = posix_spawn(&pid, argv[0], nil, nil, &cArgs, environ)
+    guard spawned == 0 else {
+        throw SpawnError(description: "could not run \(argv[0]): \(String(cString: strerror(spawned)))")
+    }
+
+    var status: Int32 = 0
+    while waitpid(pid, &status, 0) == -1 {
+        guard errno == EINTR else {
+            throw SpawnError(description: "lost track of \(argv[0]): \(String(cString: strerror(errno)))")
+        }
+    }
+    // WIFEXITED and friends are C macros Swift can't see. The low 7 bits are the signal that ended the process,
+    // 0 when it exited on its own; reported the way a shell does, as 128 + the signal.
+    let signal = status & 0x7F
+    return signal == 0 ? (status >> 8) & 0xFF : 128 + signal
 }
 
 // MARK: - Explain
