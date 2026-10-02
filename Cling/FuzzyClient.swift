@@ -439,9 +439,9 @@ class FuzzyClient {
     nonisolated static let recentsRoots = ["/Users/", "/usr/local/", "/opt/", "/Applications/", "/private/tmp/", "/tmp/"]
 
     /// How far behind a saved scope may be and still catch up by replaying. On a busy development Mac about one event
-    /// id in twenty reaches the watcher, and replaying 2.6M changes cost ~80s of CPU (two thirds of it in fseventsd)
-    /// against ~45s for walking every scope, so past ~25M ids (~1.1M changes, a day or two of use) a walk is cheaper.
-    static let maxReplayGap: UInt64 = 25_000_000
+    /// id in twenty reaches the watcher, and replaying ~1M changes (20M ids, a day or so of use) cost ~28s of CPU, two
+    /// thirds of it in fseventsd reading its history, the same as walking every scope; further back a walk is cheaper.
+    static let maxReplayGap: UInt64 = 20_000_000
 
     @ObservationIgnored var searchTask: Task<Void, Never>?
     /// Thread-safe coordinator for CLI and multi-engine search
@@ -1718,12 +1718,12 @@ class FuzzyClient {
                     }
                     if path.exists {
                         let isDir = path.isDir
-                        if path.starts(with: HOME), pathStr.isIgnored(in: fsignoreString) {
+                        if path.starts(with: HOME), pathStr.isIgnored(in: fsignoreString, isDir: isDir) {
                             return
                         }
                         for volume in enabledVolumes where pathStr.hasPrefix(volume.string + "/") {
                             let vfsignore = volume / ".fsignore"
-                            if vfsignore.exists, pathStr.isIgnored(in: vfsignore.string) {
+                            if vfsignore.exists, pathStr.isIgnored(in: vfsignore.string, isDir: isDir) {
                                 return
                             }
                             break

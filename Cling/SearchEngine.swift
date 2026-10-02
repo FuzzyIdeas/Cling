@@ -675,13 +675,13 @@ struct WalkRules: @unchecked Sendable {
         ignoreCheck = {
             guard let ignoreFile else { return nil }
             if let ignoreRoot {
-                return { $0.isIgnored(in: ignoreFile, root: ignoreRoot) }
+                return { $0.isIgnored(in: ignoreFile, root: ignoreRoot, isDir: $1) }
             }
             let parent = (ignoreFile as NSString).deletingLastPathComponent
             guard !parent.isEmpty else { return nil }
             let prefix = parent.hasSuffix("/") ? parent : parent + "/"
             guard walkRoot == parent || walkRoot.hasPrefix(prefix) else { return nil }
-            return { $0.isIgnored(in: ignoreFile) }
+            return { $0.isIgnored(in: ignoreFile, isDir: $1) }
         }()
     }
 
@@ -702,7 +702,9 @@ struct WalkRules: @unchecked Sendable {
     let ignoredExtensions: Set<String>
     let hasNegationPatterns: Bool
     let blocklistAllows: Bool
-    let ignoreCheck: ((String) -> Bool)?
+    /// Whether the ignore file leaves a path out, told whether it is a folder: the walk knows already, and
+    /// letting the matcher find out cost a stat per entry.
+    let ignoreCheck: ((String, Bool) -> Bool)?
 
     /// The walk's folder checks, in its order, starting from the verdict for the folder above. The root itself is
     /// never checked or indexed by a walk, only gone into.
@@ -726,7 +728,7 @@ struct WalkRules: @unchecked Sendable {
         if dir.lastPathComponentNative == ".git" {
             return skipped
         }
-        if let ignoreCheck, ignoreCheck(dir) {
+        if let ignoreCheck, ignoreCheck(dir, true) {
             // When negation patterns exist (e.g. `*` + `!some/path/`), the walk still goes inside ignored
             // folders so that un-ignored descendants can be visited.
             return Folder(descended: hasNegationPatterns, added: false, gitignores: above.gitignores)
@@ -740,7 +742,7 @@ struct WalkRules: @unchecked Sendable {
         }
         var gitignores = above.gitignores
         if discoverGitignore {
-            if gitignores.contains(where: { dir.isIgnored(in: $0.file, root: $0.ownerDir) }) {
+            if gitignores.contains(where: { dir.isIgnored(in: $0.file, root: $0.ownerDir, isDir: true) }) {
                 return skipped
             }
             if let file = SearchEngine.gitignoreFile(in: dir) {
@@ -856,13 +858,13 @@ final class SearchEngine: @unchecked Sendable {
         {
             return false
         }
-        if let ignoreCheck = rules.ignoreCheck, ignoreCheck(path) {
+        if let ignoreCheck = rules.ignoreCheck, ignoreCheck(path, false) {
             return false
         }
         if rules.blocklistAllows, isPathBlocked(path) {
             return false
         }
-        if rules.discoverGitignore, above.gitignores.contains(where: { path.isIgnored(in: $0.file, root: $0.ownerDir) }) {
+        if rules.discoverGitignore, above.gitignores.contains(where: { path.isIgnored(in: $0.file, root: $0.ownerDir, isDir: false) }) {
             return false
         }
         return true
@@ -1772,11 +1774,11 @@ final class SearchEngine: @unchecked Sendable {
         // ignored if any active matcher reports it ignored (checked deepest-first, short-circuit). We pop by
         // ancestor-prefix at point of use rather than on FTS_DP, because FTS_SKIP'd dirs emit no FTS_DP.
         var gitignoreStack: [(file: String, ownerDir: String)] = inheritedGitignores
-        func gitignored(_ path: String) -> Bool {
+        func gitignored(_ path: String, isDir: Bool) -> Bool {
             while let top = gitignoreStack.last, path != top.ownerDir, !path.hasPrefix(top.ownerDir + "/") {
                 gitignoreStack.removeLast()
             }
-            for entry in gitignoreStack.reversed() where path.isIgnored(in: entry.file, root: entry.ownerDir) {
+            for entry in gitignoreStack.reversed() where path.isIgnored(in: entry.file, root: entry.ownerDir, isDir: isDir) {
                 return true
             }
             return false
@@ -1831,7 +1833,7 @@ final class SearchEngine: @unchecked Sendable {
 
                 let fullPath = String(decoding: UnsafeBufferPointer(start: pathPtr, count: pathLen), as: UTF8.self)
 
-                if let ignoreCheck, ignoreCheck(fullPath) {
+                if let ignoreCheck, ignoreCheck(fullPath, true) {
                     // When negation patterns exist (e.g. `*` + `!some/path/`), don't skip
                     // ignored directories so that un-ignored descendants can still be visited.
                     if !hasNegationPatterns {
@@ -1859,7 +1861,7 @@ final class SearchEngine: @unchecked Sendable {
                 }
                 if discoverGitignore {
                     // Test against ancestors' .gitignore files before pushing this dir's own.
-                    if gitignored(fullPath) {
+                    if gitignored(fullPath, isDir: true) {
                         fts_set(ftsp, ent, Int32(FTS_SKIP))
                         skippedIgnore &+= 1
                         continue
@@ -1913,7 +1915,7 @@ final class SearchEngine: @unchecked Sendable {
                 }
 
                 let fullPath = String(decoding: UnsafeBufferPointer(start: pathPtr, count: pathLen), as: UTF8.self)
-                if let ignoreCheck, ignoreCheck(fullPath) {
+                if let ignoreCheck, ignoreCheck(fullPath, false) {
                     skippedIgnore &+= 1
                     continue
                 }
@@ -1923,7 +1925,7 @@ final class SearchEngine: @unchecked Sendable {
                     skippedIgnore &+= 1
                     continue
                 }
-                if discoverGitignore, gitignored(fullPath) {
+                if discoverGitignore, gitignored(fullPath, isDir: false) {
                     skippedIgnore &+= 1
                     continue
                 }
@@ -2068,7 +2070,7 @@ final class SearchEngine: @unchecked Sendable {
                     if name == ".git" {
                         continue
                     }
-                    if let effectiveIgnoreFile, path.isIgnored(in: effectiveIgnoreFile) {
+                    if let effectiveIgnoreFile, path.isIgnored(in: effectiveIgnoreFile, isDir: true) {
                         // When negation patterns exist, keep traversing ignored dirs
                         // so un-ignored descendants can still be found.
                         if hasNegationPatterns {
@@ -2087,7 +2089,7 @@ final class SearchEngine: @unchecked Sendable {
                             continue
                         }
                     }
-                    if let effectiveIgnoreFile, path.isIgnored(in: effectiveIgnoreFile) {
+                    if let effectiveIgnoreFile, path.isIgnored(in: effectiveIgnoreFile, isDir: false) {
                         continue
                     }
                 }

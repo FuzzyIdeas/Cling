@@ -150,8 +150,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/alin23/swift-ignore",
       "state" : {
-        "revision" : "3e7faf99d08aed7b0eeb2c6c55c381018ad9308f",
-        "version" : "1.0.3"
+        "revision" : "24c07fa712fee67390bd8de0ca6bd70ad1fd7ef2",
+        "version" : "1.1.0"
       }
     },
     {
