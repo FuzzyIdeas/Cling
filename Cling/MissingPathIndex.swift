@@ -23,6 +23,9 @@ struct IndexInclusionPlan {
     var reindexScopes: Set<SearchScope> = []
     var reindexVolumes: Set<FilePath> = []
     var fullReindex = false
+    /// Walked on its own before the reindex so it is searchable right away (see `FuzzyClient.indexPathFirst`).
+    var path: String?
+    var isDir = false
 
     var isEmpty: Bool {
         addBlockedPrefixes.isEmpty && addBlockedContains.isEmpty &&
@@ -221,6 +224,8 @@ struct PathDiagnosis {
         case let .volume(v): plan.reindexVolumes = [v]
         case .full: plan.fullReindex = true
         }
+        plan.path = path
+        plan.isDir = isDir
         return plan
     }
 }
@@ -1270,10 +1275,12 @@ struct MissingPathSheet: View {
     }
 
     private func reindex(for d: PathDiagnosis) {
-        switch d.reindex {
-        case let .scopes(scopes): FUZZY.refresh(pauseSearch: false, scopes: scopes)
-        case let .volume(v): FUZZY.indexVolume(v)
-        case .full: FUZZY.refresh(pauseSearch: false)
+        FUZZY.indexPathFirst(d.path, isDir: d.isDir) {
+            switch d.reindex {
+            case let .scopes(scopes): FUZZY.refresh(pauseSearch: false, scopes: scopes)
+            case let .volume(v): FUZZY.indexVolume(v)
+            case .full: FUZZY.refresh(pauseSearch: false)
+            }
         }
     }
 }

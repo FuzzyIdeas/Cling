@@ -430,6 +430,10 @@ class FuzzyClient {
 
     static let freeScopes: Set<SearchScope> = [.home, .applications, .library]
 
+    /// How long `indexPathFirst` may walk before handing over to the full reindex. Past this the path is about as
+    /// costly as its scope, and whatever the walk reached stays searchable until the reindex lands.
+    static let pathFirstWalkBudget: CFAbsoluteTime = 3
+
     @ObservationIgnored var searchTask: Task<Void, Never>?
     /// Thread-safe coordinator for CLI and multi-engine search
     @ObservationIgnored let searchCoordinator = SearchCoordinator()
@@ -2136,15 +2140,76 @@ class FuzzyClient {
             }
         }
 
-        // 3. Reindex what's affected.
-        if plan.fullReindex {
-            refresh(pauseSearch: false)
-        } else {
-            if !plan.reindexScopes.isEmpty {
-                refresh(pauseSearch: false, scopes: Array(plan.reindexScopes))
+        // 3. Make the path itself searchable right away, then reindex what's affected.
+        let reindex: @MainActor () -> Void = { [self] in
+            if plan.fullReindex {
+                refresh(pauseSearch: false)
+            } else {
+                if !plan.reindexScopes.isEmpty {
+                    refresh(pauseSearch: false, scopes: Array(plan.reindexScopes))
+                }
+                for volume in plan.reindexVolumes {
+                    indexVolume(volume)
+                }
             }
-            for volume in plan.reindexVolumes {
-                indexVolume(volume)
+        }
+        if let path = plan.path {
+            indexPathFirst(path, isDir: plan.isDir, then: reindex)
+        } else {
+            reindex()
+        }
+    }
+
+    /// Walk just `path` into the live engine that owns it, then run `reindex`. A path brought back into the index
+    /// shows up in results as soon as its own walk ends (milliseconds for a project folder) instead of after its
+    /// whole scope is walked again. The reindex still follows: it replaces the engine with a clean one, and it sees
+    /// what a walk started below the scope root cannot, like a `.gitignore` in a folder above the path.
+    func indexPathFirst(_ path: String, isDir: Bool, then reindex: @escaping @MainActor () -> Void) {
+        // Excluded earlier this session: results hide it by exact path until the next full walk.
+        excludedPaths = excludedPaths.filter { $0 != path && !$0.hasPrefix(path + "/") }
+
+        guard let pathWalk = pathWalk(for: path) else {
+            reindex()
+            return
+        }
+        let budget = Self.pathFirstWalkBudget
+        Task.detached(priority: .userInitiated) {
+            var walk = pathWalk
+            if let volume = walk.volume {
+                // A network share can stall a single syscall past the budget, so leave it to the volume walk.
+                guard volume.url.isLocalVolume else {
+                    await MainActor.run { reindex() }
+                    return
+                }
+                let vfsignore = volume / ".fsignore"
+                if vfsignore.exists {
+                    let checker = vfsignore.string
+                    walk.ignoreFile = checker
+                    walk.skipDir = { $0.isIgnored(in: checker) }
+                }
+            }
+            // The ignore file may have just gained a `!` line for this path.
+            bust_gitignore_cache()
+
+            let deadline = CFAbsoluteTimeGetCurrent() + budget
+            // walkDirectory adds what is below the path but never the path itself.
+            walk.engine.addPath(path, isDir: isDir)
+            let added = !isDir
+                ? 0
+                : walk.engine.walkDirectory(
+                    path, ignoreFile: walk.ignoreFile, ignoreRoot: walk.ignoreRoot, skipDir: walk.skipDir,
+                    applyBlocklist: walk.applyBlocklist, discoverGitignore: walk.discoverGitignore,
+                    cancelled: { CFAbsoluteTimeGetCurrent() > deadline }
+                )
+            let cutOff = CFAbsoluteTimeGetCurrent() > deadline
+            await MainActor.run {
+                log.debug("indexPathFirst: \(path) added \(added) entries below it\(cutOff ? ", cut off at the budget" : "")")
+                self.updateIndexedCount()
+                self.invalidateSearch()
+                if !self.refreshPoolsAfterReindex(), !self.emptyQuery || self.volumeFilter != nil {
+                    self.performSearch()
+                }
+                reindex()
             }
         }
     }
@@ -2470,6 +2535,18 @@ class FuzzyClient {
         }.value
     }
 
+    /// The live engine a path belongs to and the rules its full walk applies there (same setup as `indexFiles`
+    /// and `indexVolumeEngine`), so the single-path walk adds exactly what the full one would.
+    private struct PathWalk: @unchecked Sendable {
+        let engine: SearchEngine
+        var volume: FilePath?
+        var ignoreFile: String?
+        var ignoreRoot: String?
+        var skipDir: ((String) -> Bool)?
+        var applyBlocklist = false
+        var discoverGitignore = false
+    }
+
     @ObservationIgnored private var _lastOperationUpdate: CFAbsoluteTime = 0
     @ObservationIgnored private var _operationThrottle: Task<Void, Never>?
 
@@ -2511,6 +2588,39 @@ class FuzzyClient {
         }
         updated += newLines.joined(separator: "\n")
         return updated
+    }
+
+    private func pathWalk(for path: String) -> PathWalk? {
+        func contains(_ root: String) -> Bool {
+            path == root || path.hasPrefix(root + "/")
+        }
+
+        if let volume = enabledVolumes.first(where: { contains($0.string) }) {
+            // The volume's own .fsignore is read off-main in indexPathFirst: stat on a stalled volume can block.
+            return volumeEngines[volume].map { PathWalk(engine: $0, volume: volume) }
+        }
+        let volumePaths = Set(enabledVolumes.map(\.string))
+        let homeIgnore: String? = fsignore.exists ? fsignoreString : nil
+        for scope in Defaults[.searchScopes] {
+            guard let engine = scopeEngines[scope],
+                  let root = walkDirs(for: scope).first(where: { contains($0.dir) && !($0.excludePrefix.map(contains) ?? false) })
+            else { continue }
+            let scopeIgnoreFile = ScopeIgnore.rootedScopes.contains(scope) ? ScopeIgnore.activeFile(for: scope) : nil
+            return PathWalk(
+                engine: engine,
+                ignoreFile: scopeIgnoreFile ?? (root.applyIgnore ? homeIgnore : nil),
+                ignoreRoot: scopeIgnoreFile != nil ? root.dir : nil,
+                skipDir: { dir in
+                    if let excl = root.excludePrefix, dir.hasPrefix(excl) {
+                        return true
+                    }
+                    return volumePaths.contains(dir)
+                },
+                applyBlocklist: true,
+                discoverGitignore: scope == .home && Defaults[.honorGitignore]
+            )
+        }
+        return nil
     }
 
     private func appendIgnoreLines(_ lines: [String], to file: FilePath, suppressWatcher: Bool) {
