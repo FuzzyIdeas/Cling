@@ -658,6 +658,15 @@ final class SearchEngine: @unchecked Sendable {
         var pathLen: Int
     }
 
+    // MARK: - Folder counts
+
+    struct ChildCount: Sendable {
+        let path: String
+        var isDir: Bool
+        /// The child's own entry plus everything below it.
+        var count: Int
+    }
+
     private(set) var entries: [Entry] = []
 
     private(set) var bnBoundaries: [UInt64] = [] // bit N = 1 means basename byte N is a word boundary (camelCase, delimiter, etc.)
@@ -722,6 +731,118 @@ final class SearchEngine: @unchecked Sendable {
 
     func hasPath(_ path: String) -> Bool {
         lock.withLock { ensurePathIndex(); return pathToID[path] != nil }
+    }
+
+    /// What sits directly in `dir`, each with the number of entries it accounts for. Matches on the lowercased
+    /// bytes, like the folder filter. A walk adds a folder's contents in one run, so consecutive entries mostly
+    /// share a child and the dictionary is only consulted when the child changes.
+    func childCounts(of dir: String) -> [ChildCount] {
+        let prefix = Self.lowercasedDirPrefix(dir)
+        let pLen = prefix.count
+        var counts: [ChildCount] = []
+        var indexByName: [[UInt8]: Int] = [:]
+        var lastIdx = -1, lastOff = 0, lastLen = 0
+
+        lock.lock()
+        defer { lock.unlock() }
+        allBytes.withUnsafeBufferPointer { buf in
+            guard let base = buf.baseAddress else { return }
+            for i in 0 ..< entries.count {
+                let len = byteLengths[i]
+                guard len > pLen else { continue }
+                let off = byteOffsets[i]
+                guard memcmp(base + off, prefix, pLen) == 0 else { continue }
+
+                let stop = off + len
+                var end = off + pLen
+                while end < stop, base[end] != 0x2F {
+                    end &+= 1
+                }
+                let childLen = end - off
+                guard childLen > pLen else { continue }
+                let isDir = end < stop || entries[i].isDir
+
+                if lastIdx >= 0, childLen == lastLen, memcmp(base + off, base + lastOff, childLen) == 0 {
+                    counts[lastIdx].count &+= 1
+                    counts[lastIdx].isDir = counts[lastIdx].isDir || isDir
+                    continue
+                }
+                let name = Array(UnsafeBufferPointer(start: base + off + pLen, count: childLen - pLen))
+                if let idx = indexByName[name] {
+                    counts[idx].count &+= 1
+                    counts[idx].isDir = counts[idx].isDir || isDir
+                    lastIdx = idx
+                } else {
+                    // Lowercasing is byte for byte, so the same range of the stored path keeps its case.
+                    let path = String(decoding: entries[i].path.utf8.prefix(childLen), as: UTF8.self)
+                    indexByName[name] = counts.count
+                    lastIdx = counts.count
+                    counts.append(ChildCount(path: path, isDir: isDir, count: 1))
+                }
+                lastOff = off
+                lastLen = childLen
+            }
+        }
+        return counts
+    }
+
+    /// Number of entries below `dir`.
+    func countBelow(_ dir: String) -> Int {
+        let prefix = Self.lowercasedDirPrefix(dir)
+        let pLen = prefix.count
+        var n = 0
+        lock.lock()
+        defer { lock.unlock() }
+        allBytes.withUnsafeBufferPointer { buf in
+            guard let base = buf.baseAddress else { return }
+            for i in 0 ..< entries.count where byteLengths[i] > pLen && memcmp(base + byteOffsets[i], prefix, pLen) == 0 {
+                n &+= 1
+            }
+        }
+        return n
+    }
+
+    /// Remove `dir` and everything below it, returning how many entries went.
+    @discardableResult
+    func removeSubtree(_ dir: String) -> Int {
+        removeSubtrees([dir])
+    }
+
+    /// Remove each of `dirs` and everything below them in a single pass, however many there are, returning how
+    /// many entries went. Matches on the lowercased bytes, like the folder filter.
+    @discardableResult
+    func removeSubtrees(_ dirs: [String]) -> Int {
+        // Sorted, and without any prefix that sits inside another one (it is covered already). That makes the
+        // set prefix-free, so a path can only fall under the last prefix that sorts at or before it.
+        let prefixes = dirs.map(Self.lowercasedDirPrefix)
+            .sorted { $0.lexicographicallyPrecedes($1) }
+            .reduce(into: [[UInt8]]()) { kept, p in
+                if let last = kept.last, p.starts(with: last) {
+                    return
+                }
+                kept.append(p)
+            }
+        guard !prefixes.isEmpty else { return 0 }
+
+        var ids: [Int] = []
+        lock.lock()
+        defer { lock.unlock() }
+        allBytes.withUnsafeBufferPointer { buf in
+            guard let base = buf.baseAddress else { return }
+            for i in 0 ..< entries.count where byteLengths[i] > 0 {
+                if Self.isInside(base + byteOffsets[i], byteLengths[i], prefixes) {
+                    ids.append(i)
+                }
+            }
+        }
+        for id in ids {
+            _removeID(id)
+        }
+        if !ids.isEmpty {
+            // Emptied slots sort first, which would break the binary search over the old order.
+            sortedByPath = nil
+        }
+        return ids.count
     }
 
     func clear() {
@@ -2064,6 +2185,46 @@ final class SearchEngine: @unchecked Sendable {
     private var nextExtID: UInt16 {
         get { Self.globalNextExtID }
         set { Self.globalNextExtID = newValue }
+    }
+
+    private static func lowercasedDirPrefix(_ dir: String) -> [UInt8] {
+        (dir.hasSuffix("/") ? dir : dir + "/").utf8.map(toLowerByte)
+    }
+
+    /// Whether the path bytes name one of the `dir/` prefixes' dirs or something below one. Compares the path
+    /// with a slash appended, so the dir itself lands exactly on its prefix.
+    private static func isInside(_ path: UnsafePointer<UInt8>, _ len: Int, _ prefixes: [[UInt8]]) -> Bool {
+        // Index of the first prefix that sorts after the slashed path.
+        var lo = 0, hi = prefixes.count
+        while lo < hi {
+            let mid = (lo &+ hi) / 2
+            if compareSlashed(prefixes[mid], path, len) <= 0 {
+                lo = mid &+ 1
+            } else {
+                hi = mid
+            }
+        }
+        guard lo > 0 else { return false }
+        let prefix = prefixes[lo - 1]
+        guard len + 1 >= prefix.count else { return false }
+        return prefix.withUnsafeBufferPointer { p in
+            memcmp(path, p.baseAddress!, min(len, prefix.count)) == 0
+        }
+    }
+
+    /// Orders `prefix` against the path bytes followed by `/`: negative, zero or positive like memcmp.
+    private static func compareSlashed(_ prefix: [UInt8], _ path: UnsafePointer<UInt8>, _ len: Int) -> Int {
+        let n = min(prefix.count, len + 1)
+        var k = 0
+        while k < n {
+            let a = prefix[k]
+            let b = k < len ? path[k] : 0x2F
+            if a != b {
+                return a < b ? -1 : 1
+            }
+            k &+= 1
+        }
+        return prefix.count - (len + 1)
     }
 
     /// The split whose tail sits closest to a real extension, longest tail breaking ties. Scans the
@@ -3996,7 +4157,16 @@ final class SearchEngine: @unchecked Sendable {
 
     private func _removePath(_ path: String) -> Bool {
         ensurePathIndex()
-        guard let id = pathToID.removeValue(forKey: path) else { return false }
+        guard let id = pathToID[path] else { return false }
+        _removeID(id)
+        return true
+    }
+
+    /// Caller must hold the lock.
+    private func _removeID(_ id: Int) {
+        if pathIndexBuilt {
+            pathToID.removeValue(forKey: entries[id].path)
+        }
         entries[id] = Entry(path: "", isDir: false, bnStart: 0, segCount: 0, pathLen: 0)
         masks[id] = 0
         bnMasks[id] = 0
@@ -4005,7 +4175,6 @@ final class SearchEngine: @unchecked Sendable {
         byteLengths[id] = 0
         extIDs[id] = 0
         free.append(id)
-        return true
     }
 
     /// Bulk-add without pathToID dedup check (for initial load only).

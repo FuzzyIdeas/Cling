@@ -442,6 +442,7 @@ class FuzzyClient {
     var showLiveIndex = false
     var showActivityLog = false
     var showRunHistory = false
+    var showIndexBrowser = false
     @ObservationIgnored var savedQuery: String?
     var activityLog: [ActivityEntry] = []
     var loadingIndex = false
@@ -2164,15 +2165,19 @@ class FuzzyClient {
     /// shows up in results as soon as its own walk ends (milliseconds for a project folder) instead of after its
     /// whole scope is walked again. The reindex still follows: it replaces the engine with a clean one, and it sees
     /// what a walk started below the scope root cannot, like a `.gitignore` in a folder above the path.
-    func indexPathFirst(_ path: String, isDir: Bool, then reindex: @escaping @MainActor () -> Void) {
+    func indexPathFirst(
+        _ path: String, isDir: Bool, budget: CFAbsoluteTime? = pathFirstWalkBudget,
+        then reindex: @escaping @MainActor () -> Void
+    ) {
         // Excluded earlier this session: results hide it by exact path until the next full walk.
-        excludedPaths = excludedPaths.filter { $0 != path && !$0.hasPrefix(path + "/") }
+        let outside = { (p: String) in p != path && !p.hasPrefix(path + "/") }
+        excludedPaths = excludedPaths.filter(outside)
+        removedFiles = removedFiles.filter(outside)
 
         guard let pathWalk = pathWalk(for: path) else {
             reindex()
             return
         }
-        let budget = Self.pathFirstWalkBudget
         Task.detached(priority: .userInitiated) {
             var walk = pathWalk
             if let volume = walk.volume {
@@ -2191,7 +2196,7 @@ class FuzzyClient {
             // The ignore file may have just gained a `!` line for this path.
             bust_gitignore_cache()
 
-            let deadline = CFAbsoluteTimeGetCurrent() + budget
+            let deadline = budget.map { CFAbsoluteTimeGetCurrent() + $0 } ?? .infinity
             // walkDirectory adds what is below the path but never the path itself.
             walk.engine.addPath(path, isDir: isDir)
             let added = !isDir
@@ -2221,6 +2226,44 @@ class FuzzyClient {
         guard !rules.isEmpty else { return }
         logActivity("Excluded \(paths.count) path\(paths.count == 1 ? "" : "s") from index")
 
+        writeExcludeRules(rules)
+
+        // Drop the selected paths from the live index immediately for instant feedback.
+        excludedPaths.formUnion(paths.map(\.string))
+        for path in paths {
+            for eng in scopeEngines.values {
+                eng.removePath(path.string)
+            }
+            for eng in volumeEngines.values {
+                eng.removePath(path.string)
+            }
+            recentsEngine.removePath(path.string)
+        }
+        removedFiles.formUnion(paths.map(\.string))
+        results = results.without(paths)
+        scoredResults = scoredResults.without(paths)
+        recents = recents.without(paths)
+        sortedRecents = sortedRecents.without(paths)
+        removeContentsFromIndex(of: paths)
+
+        if reindex {
+            let scopes = Set(paths.flatMap { IndexInclusionAnalyzer.scopesForPath($0.string, home: HOME.string) })
+            let volumes = Set(paths.compactMap { p in enabledVolumes.first { p.starts(with: $0) } })
+            for volume in volumes {
+                indexVolume(volume)
+            }
+            if !scopes.isEmpty {
+                refresh(pauseSearch: false, scopes: Array(scopes))
+            } else if volumes.isEmpty {
+                refresh(pauseSearch: false)
+            }
+        } else {
+            scheduleSaveIndexes()
+        }
+    }
+
+    /// Append exclusion rules to the stores they name: the home, volume or scope ignore file, or the blocklist.
+    func writeExcludeRules(_ rules: [ExcludeRule]) {
         var homeLines: [String] = []
         var volumeLines: [FilePath: [String]] = [:]
         var scopeLines: [SearchScope: [String]] = [:]
@@ -2259,37 +2302,67 @@ class FuzzyClient {
         if blocklistChanged {
             PathBlocklist.shared.rebuild()
         }
+    }
 
-        // Drop the selected paths from the live index immediately for instant feedback.
-        excludedPaths.formUnion(paths.map(\.string))
-        for path in paths {
-            for eng in scopeEngines.values {
-                eng.removePath(path.string)
+    /// Take back rules written by `writeExcludeRules`, line for line.
+    func removeExcludeRules(_ rules: [ExcludeRule]) {
+        var blocklistChanged = false
+        for rule in rules {
+            switch rule.mechanism {
+            case .homeIgnore:
+                removeIgnoreLines([rule.line], from: fsignore, suppressWatcher: true)
+            case let .volumeIgnore(v):
+                removeIgnoreLines([rule.line], from: v / ".fsignore", suppressWatcher: false)
+            case let .scopeIgnore(scope):
+                removeIgnoreLines([rule.line], from: ScopeIgnore.file(for: scope), suppressWatcher: false)
+            case .blocklist:
+                if rule.blocklistPrefix {
+                    Defaults[.blockedPrefixes] = Self.removingLines([rule.line], from: Defaults[.blockedPrefixes])
+                } else {
+                    Defaults[.blockedContains] = Self.removingLines([rule.line], from: Defaults[.blockedContains])
+                }
+                blocklistChanged = true
             }
-            for eng in volumeEngines.values {
-                eng.removePath(path.string)
-            }
-            recentsEngine.removePath(path.string)
         }
-        removedFiles.formUnion(paths.map(\.string))
-        results = results.without(paths)
-        scoredResults = scoredResults.without(paths)
-        recents = recents.without(paths)
-        sortedRecents = sortedRecents.without(paths)
+        if blocklistChanged {
+            PathBlocklist.shared.rebuild()
+        }
+    }
 
-        if reindex {
-            let scopes = Set(paths.flatMap { IndexInclusionAnalyzer.scopesForPath($0.string, home: HOME.string) })
-            let volumes = Set(paths.compactMap { p in enabledVolumes.first { p.starts(with: $0) } })
-            for volume in volumes {
-                indexVolume(volume)
+    /// Exclude `path` with the same exact rule the Exclude sheet recommends, and drop it with everything below it
+    /// from the live index straight away (no reindex). Returns the rule so `restorePruned` can take it back.
+    func pruneFromIndex(_ path: String) -> ExcludeRule {
+        let info = ExcludePathInfo(path: FilePath(path), home: HOME.string, volumes: enabledVolumes)
+        let rule = ExcludeAnalyzer.exactRule(info)
+        writeExcludeRules([rule])
+        logActivity("Pruned \(path.shellString) from index")
+
+        let under = { (p: FilePath) in p.string == path || p.string.hasPrefix(path + "/") }
+        results.removeAll(where: under)
+        scoredResults.removeAll(where: under)
+        recents.removeAll(where: under)
+        sortedRecents.removeAll(where: under)
+
+        let engines = Array(scopeEngines.values) + Array(volumeEngines.values) + [recentsEngine]
+        Task.detached(priority: .userInitiated) {
+            let removed = engines.reduce(0) { $0 + $1.removeSubtree(path) }
+            await MainActor.run {
+                log.debug("pruneFromIndex: \(path) removed \(removed) entries")
+                self.updateIndexedCount()
+                self.invalidateSearch()
+                self.scheduleSaveIndexes()
             }
-            if !scopes.isEmpty {
-                refresh(pauseSearch: false, scopes: Array(scopes))
-            } else if volumes.isEmpty {
-                refresh(pauseSearch: false)
-            }
-        } else {
+        }
+        return rule
+    }
+
+    /// Undo `pruneFromIndex`: take its rule back out and walk the path into the index again, whole.
+    func restorePruned(_ path: String, isDir: Bool, rule: ExcludeRule, then done: @escaping @MainActor () -> Void) {
+        removeExcludeRules([rule])
+        logActivity("Re-added \(path.shellString) to index")
+        indexPathFirst(path, isDir: isDir, budget: nil) { [self] in
             scheduleSaveIndexes()
+            done()
         }
     }
 
@@ -2535,6 +2608,25 @@ class FuzzyClient {
         }.value
     }
 
+    func walkDirs(for scope: SearchScope) -> [(dir: String, excludePrefix: String?, applyIgnore: Bool)] {
+        switch scope {
+        case .home:
+            var dirs: [(dir: String, excludePrefix: String?, applyIgnore: Bool)] = [(HOME.string, "\(HOME.string)/Library", true)]
+            if FileManager.default.fileExists(atPath: "/Users/Shared") {
+                // /Users/Shared is not under HOME, so ~/.fsignore (rooted at HOME) cannot be applied.
+                dirs.append(("/Users/Shared", nil, false))
+            }
+            return dirs
+        case .library: return [("\(HOME.string)/Library", nil, true)]
+        case .applications: return [("/Applications", nil, false), ("/System/Applications", nil, false)]
+        case .system: return [("/System", "/System/Volumes", false)]
+        case .root:
+            return ["/usr", "/bin", "/sbin", "/opt", "/etc", "/Library", "/var", "/private"]
+                .filter { FileManager.default.fileExists(atPath: $0) }
+                .map { ($0, nil, false) }
+        }
+    }
+
     /// The live engine a path belongs to and the rules its full walk applies there (same setup as `indexFiles`
     /// and `indexVolumeEngine`), so the single-path walk adds exactly what the full one would.
     private struct PathWalk: @unchecked Sendable {
@@ -2588,6 +2680,40 @@ class FuzzyClient {
         }
         updated += newLines.joined(separator: "\n")
         return updated
+    }
+
+    /// The selected paths leave the index above, but what is inside an excluded folder would stay searchable until
+    /// the next reindex, which an exact rule never asks for. Drop it from every engine off the main thread (one
+    /// pass per engine for any number of folders), and from the lists on screen now.
+    private func removeContentsFromIndex(of paths: Set<FilePath>) {
+        let excluded = Set(paths.map(\.string))
+        let insideExcluded = { (p: FilePath) -> Bool in
+            var dir = p.string
+            while let slash = dir.lastIndex(of: "/"), slash != dir.startIndex {
+                dir = String(dir[..<slash])
+                if excluded.contains(dir) {
+                    return true
+                }
+            }
+            return false
+        }
+        results.removeAll(where: insideExcluded)
+        scoredResults.removeAll(where: insideExcluded)
+        recents.removeAll(where: insideExcluded)
+        sortedRecents.removeAll(where: insideExcluded)
+
+        let dirs = Array(excluded)
+        let engines = Array(scopeEngines.values) + Array(volumeEngines.values) + [recentsEngine]
+        Task.detached(priority: .userInitiated) {
+            let removed = engines.reduce(0) { $0 + $1.removeSubtrees(dirs) }
+            guard removed > 0 else { return }
+            await MainActor.run {
+                log.debug("excludeFromIndex: removed \(removed) entries inside \(dirs.count) excluded paths")
+                self.updateIndexedCount()
+                self.invalidateSearch()
+                self.scheduleSaveIndexes()
+            }
+        }
     }
 
     private func pathWalk(for path: String) -> PathWalk? {
@@ -2645,6 +2771,28 @@ class FuzzyClient {
             handle.closeFile()
         } catch {
             log.error("Failed to append to \(file.string): \(error.localizedDescription)")
+        }
+
+        bust_gitignore_cache()
+        if suppressWatcher {
+            fsignoreContentHashes[file.string] = contentHash(of: file.string)
+        }
+    }
+
+    private func removeIgnoreLines(_ lines: [String], from file: FilePath, suppressWatcher: Bool) {
+        guard let content = try? String(contentsOfFile: file.string, encoding: .utf8) else { return }
+        let updated = Self.removingLines(lines, from: content)
+        guard updated != content else { return }
+
+        if suppressWatcher {
+            fsignoreWatchSuppressedUntil = CFAbsoluteTimeGetCurrent() + 10
+            fsignoreReindexTask?.cancel()
+        }
+        do {
+            // In place, not atomically: the ignore-file watcher holds the file's descriptor.
+            try updated.write(toFile: file.string, atomically: false, encoding: .utf8)
+        } catch {
+            log.error("Failed to rewrite \(file.string): \(error.localizedDescription)")
         }
 
         bust_gitignore_cache()
@@ -2726,25 +2874,6 @@ class FuzzyClient {
             }
         }
         return false
-    }
-
-    private func walkDirs(for scope: SearchScope) -> [(dir: String, excludePrefix: String?, applyIgnore: Bool)] {
-        switch scope {
-        case .home:
-            var dirs: [(dir: String, excludePrefix: String?, applyIgnore: Bool)] = [(HOME.string, "\(HOME.string)/Library", true)]
-            if FileManager.default.fileExists(atPath: "/Users/Shared") {
-                // /Users/Shared is not under HOME, so ~/.fsignore (rooted at HOME) cannot be applied.
-                dirs.append(("/Users/Shared", nil, false))
-            }
-            return dirs
-        case .library: return [("\(HOME.string)/Library", nil, true)]
-        case .applications: return [("/Applications", nil, false), ("/System/Applications", nil, false)]
-        case .system: return [("/System", "/System/Volumes", false)]
-        case .root:
-            return ["/usr", "/bin", "/sbin", "/opt", "/etc", "/Library", "/var", "/private"]
-                .filter { FileManager.default.fileExists(atPath: $0) }
-                .map { ($0, nil, false) }
-        }
     }
 
 }

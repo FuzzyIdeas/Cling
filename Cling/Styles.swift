@@ -417,11 +417,11 @@ final class TableRegistry {
         return scrollView.documentView as? NSTableView
     }
 
-    func register(_ scrollView: NSScrollView, isStash: Bool) {
-        if isStash {
-            stashScrollView = scrollView
-        } else {
-            resultsScrollView = scrollView
+    func register(_ scrollView: NSScrollView, as field: FocusedField) {
+        switch field {
+        case .stash: stashScrollView = scrollView
+        case .indexBrowser: indexBrowserScrollView = scrollView
+        default: resultsScrollView = scrollView
         }
     }
 
@@ -434,11 +434,15 @@ final class TableRegistry {
         if rowArea(of: resultsScrollView)?.contains(point) == true {
             return .list
         }
+        if rowArea(of: indexBrowserScrollView)?.contains(point) == true {
+            return .indexBrowser
+        }
         return nil
     }
 
     private weak var stashScrollView: NSScrollView?
     private weak var resultsScrollView: NSScrollView?
+    private weak var indexBrowserScrollView: NSScrollView?
 
     private func rowArea(of scrollView: NSScrollView?) -> NSRect? {
         guard let clip = scrollView?.contentView, clip.window != nil else { return nil }
@@ -447,22 +451,41 @@ final class TableRegistry {
 }
 
 extension View {
-    /// Registers the table with `TableRegistry` (for the header-hosted buttons). With
-    /// `isStash: true` it also hides the scrollbars and blocks user scrolling entirely
-    /// while every row fits (`lockVertical`).
+    /// Registers the table with `TableRegistry` (for the header-hosted buttons and click-to-focus). For
+    /// the stash it also hides the scrollbars and blocks user scrolling entirely while every row fits
+    /// (`lockVertical`).
     func tableRegistration(
-        isStash: Bool,
+        _ field: FocusedField,
         lockVertical: Bool = false
     ) -> some View {
-        background(TableScrollConfigurator(isStash: isStash, lockVertical: lockVertical))
+        background(TableScrollConfigurator(field: field, lockVertical: lockVertical))
+    }
+}
+
+extension View {
+    /// Home and End (fn-← and fn-→) also select the first or last row, so the arrows carry on from there. The
+    /// key still reaches the table afterwards, which scrolls to that end the way it always did.
+    func homeEndSelectsRow<ID>(in ids: @escaping () -> [ID], select: @escaping (ID) -> Void) -> some View {
+        onKeyPress(keys: [.home, .end], phases: .down) { press in
+            guard press.modifiers.isDisjoint(with: [.shift, .command, .option, .control]) else { return .ignored }
+            let all = ids()
+            if let id = press.key == .home ? all.first : all.last {
+                select(id)
+            }
+            return .ignored
+        }
     }
 }
 
 // MARK: - TableScrollConfigurator
 
 private struct TableScrollConfigurator: NSViewRepresentable {
-    let isStash: Bool
+    let field: FocusedField
     let lockVertical: Bool
+
+    var isStash: Bool {
+        field == .stash
+    }
 
     func makeNSView(context _: Context) -> NSView {
         let view = NSView(frame: .zero)
@@ -503,7 +526,8 @@ private struct TableScrollConfigurator: NSViewRepresentable {
                 scrollView.contentView = clip
                 scrollView.documentView = doc
             }
-            TableRegistry.shared.register(scrollView, isStash: isStash)
+            TableRegistry.shared.register(scrollView, as: field)
+            guard field == .list || field == .stash else { return }
             // Both tables call these on every update so the header buttons install as soon as
             // their table exists and get cleaned up when it goes away.
             SortHintBadges.shared.syncScoreButton()

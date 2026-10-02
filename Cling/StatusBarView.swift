@@ -30,6 +30,7 @@ struct StatusBarView: View {
                 if fuzzy.showActivityLog {
                     fuzzy.showLiveIndex = false
                     fuzzy.showRunHistory = false
+                    fuzzy.showIndexBrowser = false
                     fuzzy.savedQuery = fuzzy.query
                     fuzzy.query = ""
                 } else if let saved = fuzzy.savedQuery {
@@ -62,6 +63,7 @@ struct StatusBarView: View {
                     if fuzzy.showLiveIndex {
                         fuzzy.showActivityLog = false
                         fuzzy.showRunHistory = false
+                        fuzzy.showIndexBrowser = false
                         fuzzy.savedQuery = fuzzy.query
                         fuzzy.query = ""
                     } else if let saved = fuzzy.savedQuery {
@@ -87,6 +89,7 @@ struct StatusBarView: View {
                     if fuzzy.showRunHistory {
                         fuzzy.showActivityLog = false
                         fuzzy.showLiveIndex = false
+                        fuzzy.showIndexBrowser = false
                         fuzzy.savedQuery = fuzzy.query
                         fuzzy.query = ""
                     } else if let saved = fuzzy.savedQuery {
@@ -103,6 +106,26 @@ struct StatusBarView: View {
                 .accessibilityToggle(isOn: fuzzy.showRunHistory)
                 .help("Toggle run history")
             }
+
+            Button(action: {
+                fuzzy.showIndexBrowser.toggle()
+                if fuzzy.showIndexBrowser {
+                    fuzzy.showActivityLog = false
+                    fuzzy.showLiveIndex = false
+                    fuzzy.showRunHistory = false
+                    fuzzy.savedQuery = fuzzy.query
+                    fuzzy.query = ""
+                } else if let saved = fuzzy.savedQuery {
+                    fuzzy.query = saved
+                    fuzzy.savedQuery = nil
+                }
+            }) {
+                Image(systemName: "chart.bar.doc.horizontal")
+            }
+            .buttonStyle(.text(borderColor: .clear, active: fuzzy.showIndexBrowser, activeTint: .purple))
+            .accessibilityLabel("Index size")
+            .accessibilityToggle(isOn: fuzzy.showIndexBrowser)
+            .help("Toggle index size view")
 
             Spacer()
 

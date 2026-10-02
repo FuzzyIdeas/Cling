@@ -59,7 +59,7 @@ let dateFormat = Date.FormatStyle
 // MARK: - FocusedField
 
 enum FocusedField {
-    case search, list, stash, openWith, executeScript
+    case search, list, stash, openWith, executeScript, indexBrowser
 }
 
 // MARK: - RowToggleTap
@@ -430,7 +430,7 @@ struct ContentView: View {
     /// Whether the normal results table (not a log/history/live view) is showing,
     /// the only context where the file preview panel makes sense.
     private var isShowingResultsTable: Bool {
-        !fuzzy.showLiveIndex && !fuzzy.showActivityLog && !fuzzy.showRunHistory && !showFullHistory
+        !fuzzy.showLiveIndex && !fuzzy.showActivityLog && !fuzzy.showRunHistory && !fuzzy.showIndexBrowser && !showFullHistory
     }
 
     /// Files whose previews are shown: the selected results in table order, falling
@@ -465,7 +465,7 @@ struct ContentView: View {
     }
 
     private var showingResults: Bool {
-        !fuzzy.showLiveIndex && !fuzzy.showActivityLog
+        !fuzzy.showLiveIndex && !fuzzy.showActivityLog && !fuzzy.showIndexBrowser
     }
 
     /// History entries matching the query, for the ⌘↓ suggestions list.
@@ -523,6 +523,9 @@ struct ContentView: View {
     /// Which table the keyboard should land in when leaving the search field: follow the
     /// current selection into the stash if that's where it lives.
     private var tableFocusTarget: FocusedField {
+        if fuzzy.showIndexBrowser {
+            return .indexBrowser
+        }
         guard !stash.files.isEmpty, let id = selectedResultIDs.first,
               stash.files.contains(where: { $0.string == id })
         else { return .list }
@@ -693,6 +696,8 @@ struct ContentView: View {
                 liveIndexTable
             }
             .raisedPanel()
+        } else if fuzzy.showIndexBrowser {
+            IndexBrowserView(focused: $focused)
         } else if fuzzy.showActivityLog {
             activityLogList
         } else if fuzzy.showRunHistory {
@@ -1332,9 +1337,10 @@ struct ContentView: View {
                             lastDrillSetQuery = previous
                             return .handled
                         }
+                        .homeEndSelectsRow(in: { visibleResults.map(\.string) }, select: { selectedResultIDs = [$0] })
                         .focused($focused, equals: .list)
                         .transparentTableBackground()
-                        .tableRegistration(isStash: false)
+                        .tableRegistration(.list)
                         .padding(6)
 
                     }
@@ -1393,6 +1399,7 @@ struct ContentView: View {
                     .help(row.lastRun.formatted(date: .abbreviated, time: .standard))
             }.width(min: 100, ideal: 120)
         }
+        .homeEndSelectsRow(in: { sortedRunHistory.map(\.id) }, select: { runHistorySelection = [$0] })
         .contextMenu(forSelectionType: String.self) { ids in
             filePathContextMenu(paths: ids.compactMap { id in sortedRunHistory.first { $0.id == id }?.path })
         } primaryAction: { ids in
@@ -1428,6 +1435,7 @@ struct ContentView: View {
                     .help(change.date.formatted(date: .abbreviated, time: .standard))
             }.width(min: 70, ideal: 80)
         }
+        .homeEndSelectsRow(in: { sortedLiveChanges.map(\.id) }, select: { liveIndexSelection = [$0] })
         .contextMenu(forSelectionType: UUID.self) { ids in
             let paths = ids.compactMap { id in sortedLiveChanges.first { $0.id == id }.map { FilePath($0.path) } }
             filePathContextMenu(paths: paths)
@@ -1495,6 +1503,7 @@ struct ContentView: View {
             focused = .list
             return .handled
         }
+        .homeEndSelectsRow(in: { stash.files.map(\.string) }, select: { selectedResultIDs = [$0] })
         .focused($focused, equals: .stash)
         .contextMenu(forSelectionType: String.self) { ids in
             RightClickMenu(
@@ -1509,7 +1518,7 @@ struct ContentView: View {
             }
         }
         .transparentTableBackground()
-        .tableRegistration(isStash: true, lockVertical: locked)
+        .tableRegistration(.stash, lockVertical: locked)
         .frame(height: height)
         .padding(6)
     }
