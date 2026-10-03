@@ -133,6 +133,7 @@ class AppDelegate: LowtechProAppDelegate {
         assignFilterUUIDsIfNeeded()
         ClingShortcuts.setup()
         FUZZY.start()
+        SB.setup()
         if !SWIFTUI_PREVIEW {
             CatchUpAgent.sync()
         }
@@ -161,6 +162,10 @@ class AppDelegate: LowtechProAppDelegate {
         KM.specialKey = Defaults[.enableGlobalHotkey] ? Defaults[.showAppKey] : nil
         KM.specialKeyModifiers = Defaults[.triggerKeys]
         KM.onSpecialHotkey = { [self] in
+            if SB.ownsHotkey {
+                SB.toggle()
+                return
+            }
             toggleMainWindow(isFront: mainWindow?.isKeyWindow ?? false)
         }
         applyMenuBarIconSetting()
@@ -233,7 +238,7 @@ class AppDelegate: LowtechProAppDelegate {
             WM.open("onboarding")
         } else {
             NSApp.setActivationPolicy(Defaults[.showDockIcon] ? .regular : .accessory)
-            if Defaults[.showWindowAtLaunch], !skipWindow {
+            if Defaults[.showWindowAtLaunch], !skipWindow, !SB.ownsHotkey {
                 pendingDisplay = displayForMainWindow()
                 WM.open("main")
                 mainWindow?.becomeMain()
@@ -256,6 +261,10 @@ class AppDelegate: LowtechProAppDelegate {
         // the Settings window, don't also pop the main search window.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [self] in
             if let settings = settingsWindow, settings.isKeyWindow || settings.isMainWindow {
+                return
+            }
+            // The search bar activates Cling for its sheets and alerts; that isn't a summon of the window.
+            if SB.isExpanded || (SB.ownsHotkey && mainWindow?.isVisible != true) {
                 return
             }
             focusWindow()
@@ -390,6 +399,10 @@ class AppDelegate: LowtechProAppDelegate {
     }
 
     @objc func menuBarIconClicked() {
+        if SB.ownsHotkey {
+            SB.toggle()
+            return
+        }
         // Clicking a status item sends the app to the background first, and in utility mode that
         // deactivation already hid the window by the time this runs. Without the grace window the
         // click meant to dismiss Cling would find an empty screen and summon it straight back.
@@ -409,6 +422,7 @@ class AppDelegate: LowtechProAppDelegate {
     }
 
     func focusWindow() {
+        WM.mainContentSuspended = false
         DropZoneOverlay.shared.dismissIfPresenting()
         guard let window = mainWindow else { return }
         if !window.isVisible || window.alphaValue == 0 {
@@ -497,7 +511,12 @@ class AppDelegate: LowtechProAppDelegate {
 //        log.debug("Reopened")
 
         DropZoneOverlay.shared.dismissIfPresenting()
+        if SB.ownsHotkey {
+            SB.expand()
+            return true
+        }
         if let mainWindow {
+            WM.mainContentSuspended = false
             mainWindow.orderFrontRegardless()
             mainWindow.becomeMain()
             mainWindow.becomeKey()
@@ -577,6 +596,7 @@ class AppDelegate: LowtechProAppDelegate {
         }
 
         if window.identifier?.rawValue == "main" {
+            WM.mainContentSuspended = false
             WM.mainWindowActive = true
             WM.noteActive()
             FUZZY.refreshDefaultResultsIfNeeded()
@@ -767,9 +787,21 @@ class WindowManager {
 
     var mainWindowActive = false
 
+    /// The floating search bar is expanded. Searches run for it the same as for the main window.
+    @ObservationIgnored var searchBarActive = false
+
+    /// The hidden search window's content is dropped while the search bar is in use, since it would
+    /// otherwise redraw its table for every result the bar gets. Set back before the window shows.
+    var mainContentSuspended = false
+
     /// Bumped when the app comes back after being away long enough for the result selection to
     /// count as stale. Observed by ContentView, which then jumps the selection back to the top.
     var selectionResetToken = 0
+
+    /// Something is showing results, so a search is worth running.
+    var searchUIActive: Bool {
+        mainWindowActive || searchBarActive
+    }
 
     /// Roughly a third of the table's width, clamped so it stays usable. Lives here rather than in
     /// ContentView because the filter discovery row lines its divider up with the same seam, so the
@@ -794,6 +826,9 @@ class WindowManager {
     }
 
     func open(_ window: String) {
+        if window == "main" {
+            mainContentSuspended = false
+        }
         if window == "main", NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) != nil {
             focus()
             AppDelegate.shared?.focusWindow()
@@ -871,7 +906,7 @@ struct ClingApp: App {
 
     var body: some Scene {
         Window("Cling", id: "main") {
-            ContentView()
+            MainWindowContent()
                 .frame(minWidth: WindowManager.DEFAULT_SIZE.width, minHeight: 300)
                 .background {
                     WindowBackground()

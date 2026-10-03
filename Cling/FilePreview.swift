@@ -689,6 +689,9 @@ struct QuickLookPreview: NSViewRepresentable {
     let url: URL
 
     static func dismantleNSView(_ nsView: QLPreviewView, coordinator: ()) {
+        // `close()` asserts unless the view is still active, and it stops being active when it
+        // leaves its window, which a hosting view torn down out of order can do first.
+        guard nsView.window != nil else { return }
         nsView.close()
     }
 

@@ -738,6 +738,8 @@ private struct GeneralSettingsPane: View {
                 }
             }
 
+            SearchBarSettingsSection()
+
             Section("Privacy") {
                 SentryToggleRow(
                     title: "Send error reports",

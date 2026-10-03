@@ -1997,7 +1997,7 @@ class FuzzyClient {
 
     func updateWindowOnScreen() {
         let onScreen = NSApp.windows.contains { window in
-            ["main", "settings"].contains(window.identifier?.rawValue ?? "") && window.isVisible && window.alphaValue > 0
+            ["main", "settings", "searchbar"].contains(window.identifier?.rawValue ?? "") && window.isVisible && window.alphaValue > 0
                 && window.occlusionState.contains(.visible)
         }
         guard onScreen != windowOnScreen.value else { return }
@@ -2150,7 +2150,7 @@ class FuzzyClient {
         // Skip stray fires after the window dismisses — only the UI consumes
         // scoredResults/results, and the TextField binding can commit a final
         // update post-close that re-arms the 150ms typing debounce.
-        guard WM.mainWindowActive else {
+        guard WM.searchUIActive else {
             querySendTask = nil
             return
         }
@@ -2933,7 +2933,7 @@ class FuzzyClient {
             return
         }
         invalidateDefaultResults()
-        guard WM.mainWindowActive else { return }
+        guard WM.searchUIActive else { return }
         updateDefaultResultsTask = mainAsyncAfter(ms: 500) { [self] in
             performUpdateDefaultResults()
         }
