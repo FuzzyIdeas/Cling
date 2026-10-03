@@ -955,6 +955,12 @@ final class SearchEngine: @unchecked Sendable {
         return nil
     }
 
+    /// Room left after `count` loaded entries (or bytes), so the first live change after a load appends in place
+    /// instead of reallocating and copying every array: about 80 ms of holding the lock on a 700K-entry scope.
+    static func headroom(_ count: Int, minimum: Int = 1024) -> Int {
+        max(minimum, count / 64)
+    }
+
     // MARK: - Capacity
 
     func reserveCapacity(_ n: Int, avgPathLen: Int = 50) {
@@ -1167,112 +1173,104 @@ final class SearchEngine: @unchecked Sendable {
         }
     }
 
-    func saveBinaryIndex(to url: URL) {
+    /// Writes the index to a temporary file and renames it into place, so a crash or a full disk mid-write leaves the
+    /// previous file whole. Removed entries, and the bytes they left behind in `allBytes`, are dropped on the way out,
+    /// and the sections stream through a small buffer instead of a copy the size of the file.
+    @discardableResult
+    func saveBinaryIndex(to url: URL) -> Bool {
         let t0 = CFAbsoluteTimeGetCurrent()
+        guard let out = AtomicFileWriter(destination: url.path) else {
+            slog.error("saveBinaryIndex: can't create \(url.path).saving")
+            return false
+        }
         lock.lock()
         let n = entries.count
-
-        // Compute total path string bytes
-        var totalPathBytes = 0
-        var idx = 0
-        while idx < n {
-            totalPathBytes += entries[idx].path.utf8.count + 1 // +1 for null terminator
-            idx &+= 1
+        var live = 0, liveBytes = 0
+        var i = 0
+        while i < n {
+            if byteLengths[i] > 0 {
+                live &+= 1
+                liveBytes &+= byteLengths[i]
+            }
+            i &+= 1
         }
 
-        let headerSize = 24 // magic + entryCount + allBytesCount
-        let masksSize = n * 8
-        let bnMasksSize = n * 8
-        let bnBoundariesSize = n * 8
-        let offsetsSize = n * 4
-        let lengthsSize = n * 2
-        let bnStartsSize = n * 2
-        let segCountsSize = n
-        let isDirsSize = n
-        let totalSize = headerSize + masksSize + bnMasksSize + bnBoundariesSize + offsetsSize + lengthsSize + bnStartsSize + segCountsSize + isDirsSize + allBytes.count + totalPathBytes
+        out.write(Self.binaryMagic)
+        out.write(UInt64(live))
+        out.write(UInt64(liveBytes))
 
-        var data = Data(count: totalSize)
-        data.withUnsafeMutableBytes { buf in
-            let ptr = buf.baseAddress!
-            var offset = 0
-
-            // Header
-            ptr.storeBytes(of: Self.binaryMagic, toByteOffset: offset, as: UInt64.self); offset += 8
-            ptr.storeBytes(of: UInt64(n), toByteOffset: offset, as: UInt64.self); offset += 8
-            ptr.storeBytes(of: UInt64(allBytes.count), toByteOffset: offset, as: UInt64.self); offset += 8
-
-            // Masks
-            masks.withUnsafeBufferPointer { src in _ = memcpy(ptr + offset, src.baseAddress!, n * 8) }; offset += masksSize
-            bnMasks.withUnsafeBufferPointer { src in _ = memcpy(ptr + offset, src.baseAddress!, n * 8) }; offset += bnMasksSize
-            bnBoundaries.withUnsafeBufferPointer { src in _ = memcpy(ptr + offset, src.baseAddress!, n * 8) }; offset += bnBoundariesSize
-
-            // Compact byteOffsets as UInt32
+        func eachLive(_ body: (Int) -> Void) {
             var i = 0
             while i < n {
-                ptr.storeBytes(of: UInt32(byteOffsets[i]), toByteOffset: offset + i * 4, as: UInt32.self)
-                i &+= 1
-            }
-            offset += offsetsSize
-
-            // Compact byteLengths as UInt16
-            i = 0
-            while i < n {
-                ptr.storeBytes(of: UInt16(min(entries[i].pathLen, 65535)), toByteOffset: offset + i * 2, as: UInt16.self)
-                i &+= 1
-            }
-            offset += lengthsSize
-
-            // bnStarts
-            i = 0
-            while i < n {
-                ptr.storeBytes(of: UInt16(min(entries[i].bnStart, 65535)), toByteOffset: offset + i * 2, as: UInt16.self)
-                i &+= 1
-            }
-            offset += bnStartsSize
-
-            // segCounts
-            i = 0
-            while i < n {
-                (ptr + offset + i).storeBytes(of: UInt8(min(entries[i].segCount, 255)), as: UInt8.self)
-                i &+= 1
-            }
-            offset += segCountsSize
-
-            // isDirs
-            i = 0
-            while i < n {
-                (ptr + offset + i).storeBytes(of: UInt8(entries[i].isDir ? 1 : 0), as: UInt8.self)
-                i &+= 1
-            }
-            offset += isDirsSize
-
-            // allBytes
-            allBytes.withUnsafeBufferPointer { src in _ = memcpy(ptr + offset, src.baseAddress!, allBytes.count) }
-            offset += allBytes.count
-
-            // Path strings (null-terminated)
-            i = 0
-            while i < n {
-                let path = entries[i].path
-                var mutPath = path
-                mutPath.withUTF8 { utf8 in
-                    _ = memcpy(ptr + offset, utf8.baseAddress!, utf8.count)
-                    offset += utf8.count
+                if byteLengths[i] > 0 {
+                    body(i)
                 }
-                (ptr + offset).storeBytes(of: UInt8(0), as: UInt8.self)
-                offset += 1
                 i &+= 1
             }
+        }
+        /// Runs of live entries go out in one write each: without removals that is the whole array at once.
+        func writeLiveRuns(_ array: [UInt64]) {
+            array.withUnsafeBufferPointer { buf in
+                var i = 0
+                while i < n {
+                    guard byteLengths[i] > 0 else { i &+= 1; continue }
+                    var j = i
+                    while j < n, byteLengths[j] > 0 {
+                        j &+= 1
+                    }
+                    out.write(buf.baseAddress! + i, count: (j - i) * 8)
+                    i = j
+                }
+            }
+        }
+        writeLiveRuns(masks)
+        writeLiveRuns(bnMasks)
+        writeLiveRuns(bnBoundaries)
+        var newOffset: UInt32 = 0
+        eachLive {
+            out.write(newOffset)
+            newOffset &+= UInt32(byteLengths[$0])
+        }
+        eachLive { out.write(UInt16(min(byteLengths[$0], 65535))) }
+        eachLive { out.write(UInt16(min(entries[$0].bnStart, 65535))) }
+        eachLive { out.write(UInt8(min(entries[$0].segCount, 255))) }
+        eachLive { out.write(UInt8(entries[$0].isDir ? 1 : 0)) }
+        allBytes.withUnsafeBufferPointer { buf in
+            let base = buf.baseAddress!
+            // Entries added one after another sit one after another in allBytes, so their bytes go out together.
+            var runStart = 0, runLength = 0
+            eachLive { id in
+                let off = byteOffsets[id], len = byteLengths[id]
+                if off == runStart + runLength {
+                    runLength += len
+                } else {
+                    out.write(base + runStart, count: runLength)
+                    runStart = off
+                    runLength = len
+                }
+            }
+            out.write(base + runStart, count: runLength)
+        }
+        eachLive { id in
+            var path = entries[id].path
+            path.withUTF8 { out.write($0.baseAddress!, count: $0.count) }
+            out.write(UInt8(0))
         }
         lock.unlock()
 
-        try? data.write(to: url)
+        let size = out.position
+        guard out.commit() else {
+            slog.error("saveBinaryIndex: writing \(url.path) failed")
+            return false
+        }
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-        slog.info("saveBinaryIndex: \(n) entries, \(totalSize / 1_048_576)MB in \(ms, format: .fixed(precision: 1))ms")
+        slog.info("saveBinaryIndex: \(live) of \(n) entries, \(size / 1_048_576)MB in \(ms, format: .fixed(precision: 1))ms")
+        return true
     }
 
     func loadBinaryIndex(from url: URL, progress: ((Int) -> Void)? = nil) -> Bool {
         let t0 = CFAbsoluteTimeGetCurrent()
+        adviseSequentialRead(url.path)
         guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
             slog.error("loadBinaryIndex: failed to read \(url.path)")
             return false
@@ -1303,117 +1301,93 @@ final class SearchEngine: @unchecked Sendable {
             }
 
             lock.lock()
-            let headerSize = 24
-            var offset = headerSize
+            var offset = 24
 
-            // Masks: bulk memcpy
-            masks = [UInt64](repeating: 0, count: n)
-            masks.withUnsafeMutableBufferPointer { dst in _ = memcpy(dst.baseAddress!, ptr + offset, n * 8) }
+            masks = Self.copied(ptr + offset, count: n, as: UInt64.self)
             offset += n * 8
-
-            bnMasks = [UInt64](repeating: 0, count: n)
-            bnMasks.withUnsafeMutableBufferPointer { dst in _ = memcpy(dst.baseAddress!, ptr + offset, n * 8) }
+            bnMasks = Self.copied(ptr + offset, count: n, as: UInt64.self)
             offset += n * 8
-
-            bnBoundaries = [UInt64](repeating: 0, count: n)
-            bnBoundaries.withUnsafeMutableBufferPointer { dst in _ = memcpy(dst.baseAddress!, ptr + offset, n * 8) }
+            bnBoundaries = Self.copied(ptr + offset, count: n, as: UInt64.self)
             offset += n * 8
 
             progress?(n / 4)
 
-            // byteOffsets from UInt32
-            byteOffsets = [Int](repeating: 0, count: n)
+            byteOffsets = Self.widened(ptr + offset, count: n, as: UInt32.self)
+            offset += n * 4
+            byteLengths = Self.widened(ptr + offset, count: n, as: UInt16.self)
+            // extID and the scorer read allBytes[off ..< off + len] raw, so a corrupt pair walks off the end of the
+            // buffer.
             var i = 0
             while i < n {
-                byteOffsets[i] = Int(ptr.load(fromByteOffset: offset + i * 4, as: UInt32.self))
-                i &+= 1
-            }
-            offset += n * 4
-
-            // byteLengths from UInt16
-            byteLengths = [Int](repeating: 0, count: n)
-            var slicesValid = true
-            i = 0
-            while i < n {
-                let l = Int(ptr.load(fromByteOffset: offset + i * 2, as: UInt16.self))
-                byteLengths[i] = l
-                // extID and the scorer read allBytes[off ..< off + len] raw, so a corrupt pair walks
-                // off the end of the buffer. Checked here because both values are already in hand.
-                if byteOffsets[i] &+ l > allBytesCount {
-                    slicesValid = false; break
+                if byteOffsets[i] &+ byteLengths[i] > allBytesCount {
+                    lock.unlock()
+                    slog.error("loadBinaryIndex: entry byte range outside allBytes, \(url.path)")
+                    return
                 }
                 i &+= 1
             }
-            guard slicesValid else {
-                lock.unlock()
-                slog.error("loadBinaryIndex: entry byte range outside allBytes, \(url.path)")
-                return
-            }
             offset += n * 2
 
-            // bnStarts
-            var bnStarts = [Int](repeating: 0, count: n)
-            i = 0
-            while i < n {
-                bnStarts[i] = Int(ptr.load(fromByteOffset: offset + i * 2, as: UInt16.self))
-                i &+= 1
-            }
+            let bnStartsOffset = offset
             offset += n * 2
-
-            // segCounts
-            var segCounts = [Int](repeating: 0, count: n)
-            i = 0
-            while i < n {
-                segCounts[i] = Int((ptr + offset + i).load(as: UInt8.self))
-                i &+= 1
-            }
+            let segCountsOffset = offset
             offset += n
-
-            // isDirs
-            var isDirs = [Bool](repeating: false, count: n)
-            i = 0
-            while i < n {
-                isDirs[i] = (ptr + offset + i).load(as: UInt8.self) != 0
-                i &+= 1
-            }
+            let isDirsOffset = offset
             offset += n
 
             progress?(n / 2)
 
-            // allBytes: bulk memcpy
-            allBytes = [UInt8](repeating: 0, count: allBytesCount)
-            allBytes.withUnsafeMutableBufferPointer { dst in _ = memcpy(dst.baseAddress!, ptr + offset, allBytesCount) }
+            allBytes = Self.copied(ptr + offset, count: allBytesCount, as: UInt8.self)
+            if allBytes.capacity < allBytesCount + Self.headroom(allBytesCount, minimum: 65536) {
+                allBytes.reserveCapacity(allBytesCount + Self.headroom(allBytesCount, minimum: 65536))
+            }
             offset += allBytesCount
 
             progress?(n * 3 / 4)
 
-            // Path strings (null-terminated)
-            entries = [Entry](repeating: Entry(path: "", isDir: false, bnStart: 0, segCount: 0, pathLen: 0), count: n)
-            i = 0
+            // Path strings (null-terminated). Only entries that were fully set up count as initialized, so a truncated
+            // tail leaves a consistent (shorter) array behind to throw away.
             let strBase = (ptr + offset).assumingMemoryBound(to: UInt8.self)
             let strEnd = totalLen - offset // the string region runs to the end of the file
-            var strOff = 0
             var stringsValid = true
-            while i < n {
-                // Find null terminator, bounded by the region: a truncated tail would otherwise run
-                // this scan off the end of the mapping.
-                var sLen = 0
-                while strOff + sLen < strEnd, strBase[strOff + sLen] != 0 {
-                    sLen &+= 1
+            var parsed = 0
+            let loadedEntries = [Entry](unsafeUninitializedCapacity: n + Self.headroom(n)) { dst, initialized in
+                var strOff = 0
+                var i = 0
+                while i < n {
+                    // Find null terminator, bounded by the region: a truncated tail would otherwise run this scan off
+                    // the end of the mapping.
+                    var sLen = 0
+                    while strOff + sLen < strEnd, strBase[strOff + sLen] != 0 {
+                        sLen &+= 1
+                    }
+                    guard strOff + sLen < strEnd else { stringsValid = false; break }
+                    let path = String(decoding: UnsafeBufferPointer(start: strBase + strOff, count: sLen), as: UTF8.self)
+                    (dst.baseAddress! + i).initialize(to: Entry(
+                        path: path,
+                        isDir: (ptr + isDirsOffset + i).load(as: UInt8.self) != 0,
+                        bnStart: Int(ptr.loadUnaligned(fromByteOffset: bnStartsOffset + i * 2, as: UInt16.self)),
+                        segCount: Int((ptr + segCountsOffset + i).load(as: UInt8.self)),
+                        pathLen: byteLengths[i]
+                    ))
+                    strOff += sLen + 1
+                    i &+= 1
                 }
-                guard strOff + sLen < strEnd else { stringsValid = false; break }
-                let path = String(decoding: UnsafeBufferPointer(start: strBase + strOff, count: sLen), as: UTF8.self)
-                entries[i] = Entry(path: path, isDir: isDirs[i], bnStart: bnStarts[i], segCount: segCounts[i], pathLen: byteLengths[i])
-                strOff += sLen + 1
-                i &+= 1
+                initialized = i
+                parsed = i
             }
             guard stringsValid else {
                 lock.unlock()
-                slog.error("loadBinaryIndex: path strings truncated at entry \(i)/\(n), \(url.path)")
+                slog.error("loadBinaryIndex: path strings truncated at entry \(parsed)/\(n), \(url.path)")
                 return
             }
+            entries = loadedEntries
+            extIDs = []
+            extIDs.reserveCapacity(n + Self.headroom(n))
 
             computeExtIDs()
+            free.removeAll()
+            pathToID.removeAll()
             pathIndexBuilt = false
             sortedByPath = nil
             lock.unlock()
@@ -1425,184 +1399,6 @@ final class SearchEngine: @unchecked Sendable {
         let n = entries.count
         slog.info("loadBinaryIndex: \(n) entries, read=\(readMs, format: .fixed(precision: 1))ms parse=\(parseMs, format: .fixed(precision: 1))ms")
         return loaded
-    }
-
-    /// Append entries from a binary index file into the current engine.
-    @discardableResult
-    func appendBinaryIndex(from url: URL, progress: ((Int) -> Void)? = nil) -> Bool {
-        let t0 = CFAbsoluteTimeGetCurrent()
-        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return false }
-
-        var appended = false
-        data.withUnsafeBytes { raw in
-            let ptr = raw.baseAddress!
-            let totalLen = raw.count
-            guard totalLen > 24 else { return }
-
-            let magic = ptr.load(fromByteOffset: 0, as: UInt64.self)
-            guard magic == Self.binaryMagic else { return }
-
-            let rawN = ptr.load(fromByteOffset: 8, as: UInt64.self)
-            let rawAllBytes = ptr.load(fromByteOffset: 16, as: UInt64.self)
-            guard let (n, allBytesCount) = Self.binaryHeaderBounds(
-                rawN: rawN, rawAllBytes: rawAllBytes, totalLen: totalLen
-            ) else {
-                slog.error("appendBinaryIndex: truncated index, n=\(rawN) allBytes=\(rawAllBytes) file=\(totalLen)B")
-                return
-            }
-
-            let headerSize = 24
-            var offset = headerSize
-
-            var newMasks = [UInt64](repeating: 0, count: n)
-            newMasks.withUnsafeMutableBufferPointer { dst in _ = memcpy(dst.baseAddress!, ptr + offset, n * 8) }
-            offset += n * 8
-
-            var newBnMasks = [UInt64](repeating: 0, count: n)
-            newBnMasks.withUnsafeMutableBufferPointer { dst in _ = memcpy(dst.baseAddress!, ptr + offset, n * 8) }
-            offset += n * 8
-
-            var newBnBoundaries = [UInt64](repeating: 0, count: n)
-            newBnBoundaries.withUnsafeMutableBufferPointer { dst in _ = memcpy(dst.baseAddress!, ptr + offset, n * 8) }
-            offset += n * 8
-
-            var newByteOffsets = [Int](repeating: 0, count: n)
-            var i = 0
-            while i < n {
-                newByteOffsets[i] = Int(ptr.load(fromByteOffset: offset + i * 4, as: UInt32.self))
-                i &+= 1
-            }
-            offset += n * 4
-
-            var newByteLengths = [Int](repeating: 0, count: n)
-            var slicesValid = true
-            i = 0
-            while i < n {
-                let l = Int(ptr.load(fromByteOffset: offset + i * 2, as: UInt16.self))
-                newByteLengths[i] = l
-                // Same unchecked slice into allBytes as loadBinaryIndex; see binaryHeaderBounds.
-                if newByteOffsets[i] &+ l > allBytesCount {
-                    slicesValid = false; break
-                }
-                i &+= 1
-            }
-            guard slicesValid else {
-                slog.error("appendBinaryIndex: entry byte range outside allBytes, \(url.path)")
-                return
-            }
-            offset += n * 2
-
-            var bnStarts = [Int](repeating: 0, count: n)
-            i = 0
-            while i < n {
-                bnStarts[i] = Int(ptr.load(fromByteOffset: offset + i * 2, as: UInt16.self))
-                i &+= 1
-            }
-            offset += n * 2
-
-            var segCounts = [Int](repeating: 0, count: n)
-            i = 0
-            while i < n {
-                segCounts[i] = Int((ptr + offset + i).load(as: UInt8.self))
-                i &+= 1
-            }
-            offset += n
-
-            var isDirs = [Bool](repeating: false, count: n)
-            i = 0
-            while i < n {
-                isDirs[i] = (ptr + offset + i).load(as: UInt8.self) != 0
-                i &+= 1
-            }
-            offset += n
-
-            var newAllBytes = [UInt8](repeating: 0, count: allBytesCount)
-            newAllBytes.withUnsafeMutableBufferPointer { dst in _ = memcpy(dst.baseAddress!, ptr + offset, allBytesCount) }
-            offset += allBytesCount
-
-            var newEntries = [Entry](repeating: Entry(path: "", isDir: false, bnStart: 0, segCount: 0, pathLen: 0), count: n)
-            let strBase = (ptr + offset).assumingMemoryBound(to: UInt8.self)
-            let strEnd = totalLen - offset
-            var strOff = 0
-            var stringsValid = true
-            i = 0
-            while i < n {
-                var sLen = 0
-                while strOff + sLen < strEnd, strBase[strOff + sLen] != 0 {
-                    sLen &+= 1
-                }
-                guard strOff + sLen < strEnd else { stringsValid = false; break }
-                let path = String(decoding: UnsafeBufferPointer(start: strBase + strOff, count: sLen), as: UTF8.self)
-                newEntries[i] = Entry(path: path, isDir: isDirs[i], bnStart: bnStarts[i], segCount: segCounts[i], pathLen: newByteLengths[i])
-                strOff += sLen + 1
-                i &+= 1
-            }
-            guard stringsValid else {
-                slog.error("appendBinaryIndex: path strings truncated at entry \(i)/\(n), \(url.path)")
-                return
-            }
-
-            // Append under lock, shifting byteOffsets by current allBytes size
-            lock.lock()
-            let baseOffset = allBytes.count
-            i = 0
-            while i < n {
-                newByteOffsets[i] += baseOffset
-                i &+= 1
-            }
-            entries.append(contentsOf: newEntries)
-            masks.append(contentsOf: newMasks)
-            bnMasks.append(contentsOf: newBnMasks)
-            bnBoundaries.append(contentsOf: newBnBoundaries)
-            byteOffsets.append(contentsOf: newByteOffsets)
-            byteLengths.append(contentsOf: newByteLengths)
-            allBytes.append(contentsOf: newAllBytes)
-            computeExtIDs()
-            pathIndexBuilt = false
-            sortedByPath = nil
-            lock.unlock()
-            appended = true
-            progress?(n)
-        }
-
-        let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-        let total = lock.withLock { entries.count }
-        slog.info("appendBinaryIndex: \(url.lastPathComponent) \(total) total entries in \(ms, format: .fixed(precision: 1))ms")
-        return appended
-    }
-
-    // MARK: - Text Persistence (human-readable, used as fallback)
-
-    func saveIndex(to url: URL) {
-        let t0 = CFAbsoluteTimeGetCurrent()
-
-        lock.lock()
-        let entryCount = entries.count
-
-        // Write as raw bytes directly from stored data
-        var data = Data()
-        data.reserveCapacity(allBytes.count + entryCount * 4 + 20)
-        data.append(contentsOf: "cling-index-v1\n".utf8)
-
-        let dTab = UInt8(ascii: "\t")
-        let dNL = UInt8(ascii: "\n")
-        let dD = UInt8(ascii: "D")
-        let dF = UInt8(ascii: "F")
-
-        for i in 0 ..< entryCount {
-            let e = entries[i]
-            guard e.pathLen > 0 else { continue } // skip freed slots
-            data.append(e.isDir ? dD : dF)
-            data.append(dTab)
-            data.append(contentsOf: e.path.utf8)
-            data.append(dNL)
-        }
-        lock.unlock()
-
-        try? data.write(to: url)
-
-        let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-        slog.info("saveIndex: \(entryCount) entries in \(ms, format: .fixed(precision: 1))ms to \(url.path)")
     }
 
     /// Build pathToID from entries (call after bulk load to enable add/remove)
@@ -1653,167 +1449,6 @@ final class SearchEngine: @unchecked Sendable {
 
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
         slog.debug("buildSortedPathIndex: \(n) entries in \(ms, format: .fixed(precision: 1))ms")
-    }
-
-    func loadIndex(from url: URL, progress: ((Int) -> Void)? = nil) -> Bool {
-        let t0 = CFAbsoluteTimeGetCurrent()
-
-        // Memory-map the file instead of reading into Data (avoids 1.1GB copy)
-        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
-            slog.error("loadIndex: failed to read \(url.path)")
-            return false
-        }
-        let readMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-
-        let t1 = CFAbsoluteTimeGetCurrent()
-        var entryCount = 0
-
-        data.withUnsafeBytes { buf in
-            guard let base = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-            let len = buf.count
-            guard len > 15 else { return }
-
-            // Verify header: "cling-index-v1\n"
-            let headerEnd = 14
-            guard len > headerEnd,
-                  base[0] == 0x63, /* c */
-                  base[6] == 0x69, /* i (in "index") */
-                  base[headerEnd] == 0x0A else { return }
-
-            // Count newlines for pre-allocation (while loop to avoid Range<Int> generic overhead in debug)
-            let t_count = CFAbsoluteTimeGetCurrent()
-            var nlCount = 0
-            var _k = 0
-            while _k < len {
-                if base[_k] == 0x0A {
-                    nlCount &+= 1
-                }; _k &+= 1
-            }
-            let countMs = (CFAbsoluteTimeGetCurrent() - t_count) * 1000
-            slog.debug("loadIndex: counted \(nlCount) lines in \(countMs, format: .fixed(precision: 1))ms")
-
-            lock.lock()
-            entries.reserveCapacity(nlCount)
-            masks.reserveCapacity(nlCount)
-            bnMasks.reserveCapacity(nlCount)
-            byteOffsets.reserveCapacity(nlCount)
-            byteLengths.reserveCapacity(nlCount)
-            // allBytes stores lowercased path bytes; total bytes ~ file size minus overhead
-            allBytes.reserveCapacity(len)
-
-            // Two-pass approach:
-            // Pass 1: scan lines, compute lowercased bytes + masks directly from mmap'd bytes
-            //         Store a (fileOffset, length) per entry for deferred String creation
-            // Pass 2: create Entry.path Strings in bulk
-
-            // Temp storage for file offsets (avoids String creation in hot loop)
-            var pathOffsets = [Int]() // offset into `base` where the path starts
-            var pathLens = [Int]() // length of path in bytes
-            var isDirs = [Bool]()
-            pathOffsets.reserveCapacity(nlCount)
-            pathLens.reserveCapacity(nlCount)
-            isDirs.reserveCapacity(nlCount)
-
-            var i = headerEnd + 1 // skip header line
-            while i < len {
-                var j = i
-                while j < len, base[j] != 0x0A {
-                    j &+= 1
-                }
-
-                if j - i > 2 {
-                    let isDir = base[i] == 0x44 // 'D'
-                    let pathStart = i + 2
-                    let pathLen = j - pathStart
-
-                    // Compute lowercased bytes, masks, bnStart, segCount in one pass over raw bytes
-                    let byteOff = allBytes.count
-                    var bnStart = 0, segCount = 1
-                    var mask: UInt64 = 0, bnMaskAccum: UInt64 = 0
-
-                    // Bulk-copy bytes then lowercase in-place (avoids per-byte append overhead)
-                    let copyStart = allBytes.count
-                    allBytes.append(contentsOf: UnsafeBufferPointer(start: base + pathStart, count: pathLen))
-
-                    var k = 0
-                    while k < pathLen {
-                        let b = allBytes[copyStart &+ k]
-                        let low = toLowerByte(b)
-                        if low != b {
-                            allBytes[copyStart &+ k] = low
-                        }
-
-                        if low == 0x2F {
-                            segCount &+= 1
-                            bnStart = k + 1
-                            bnMaskAccum = 0
-                        } else {
-                            var bit: UInt64 = 0
-                            if low >= 0x61, low <= 0x7A {
-                                bit = 1 << UInt64(low &- 0x61)
-                            } else if low >= 0x30, low <= 0x39 {
-                                bit = 1 << UInt64(26 &+ low &- 0x30)
-                            } else if low == 0x2E {
-                                bit = 1 << 36
-                            } else if low == 0x2D {
-                                bit = 1 << 37
-                            } else if low == 0x5F {
-                                bit = 1 << 38
-                            }
-                            mask |= bit
-                            bnMaskAccum |= bit
-                        }
-                        k &+= 1
-                    }
-
-                    // Store everything except the String (deferred)
-                    pathOffsets.append(pathStart)
-                    pathLens.append(pathLen)
-                    isDirs.append(isDir)
-
-                    // Append parallel arrays (no Entry.path yet, placeholder empty string)
-                    entries.append(Entry(
-                        path: "",
-                        isDir: isDir,
-                        bnStart: bnStart,
-                        segCount: segCount,
-                        pathLen: pathLen
-                    ))
-                    masks.append(mask)
-                    bnMasks.append(bnMaskAccum)
-                    byteOffsets.append(byteOff)
-                    byteLengths.append(pathLen)
-                    let eid = allBytes.withUnsafeBufferPointer { buf in
-                        extID(for: buf.baseAddress! + byteOff, len: pathLen, bnStart: bnStart)
-                    }
-                    extIDs.append(eid)
-
-                    entryCount &+= 1
-                    if entryCount % 200_000 == 0 {
-                        progress?(entryCount)
-                    }
-                }
-                i = j + 1
-            }
-
-            // Pass 2: create String objects for Entry.path (bulk, still from mmap'd buffer)
-            let t_strings = CFAbsoluteTimeGetCurrent()
-            var idx = 0
-            while idx < entryCount {
-                entries[idx].path = String(decoding: UnsafeBufferPointer(start: base + pathOffsets[idx], count: pathLens[idx]), as: UTF8.self)
-                idx &+= 1
-            }
-            let stringMs = (CFAbsoluteTimeGetCurrent() - t_strings) * 1000
-            slog.debug("loadIndex: created \(entryCount) strings in \(stringMs, format: .fixed(precision: 1))ms")
-
-            pathIndexBuilt = false
-            sortedByPath = nil
-            lock.unlock()
-        }
-
-        let parseMs = (CFAbsoluteTimeGetCurrent() - t1) * 1000
-        slog.info("loadIndex: \(entryCount) entries, read=\(readMs, format: .fixed(precision: 1))ms parse=\(parseMs, format: .fixed(precision: 1))ms")
-        return entryCount > 0
     }
 
     @discardableResult
@@ -2481,6 +2116,28 @@ final class SearchEngine: @unchecked Sendable {
     private var nextExtID: UInt16 {
         get { Self.globalNextExtID }
         set { Self.globalNextExtID = newValue }
+    }
+
+    /// A copy of `count` values read straight from the file, with headroom.
+    private static func copied<T>(_ src: UnsafeRawPointer, count: Int, as _: T.Type) -> [T] {
+        [T](unsafeUninitializedCapacity: count + headroom(count)) { buf, initialized in
+            if count > 0 {
+                memcpy(buf.baseAddress!, src, count * MemoryLayout<T>.stride)
+            }
+            initialized = count
+        }
+    }
+
+    /// `count` narrow integers from the file, widened to Int, with headroom.
+    private static func widened<T: FixedWidthInteger>(_ src: UnsafeRawPointer, count: Int, as _: T.Type) -> [Int] {
+        [Int](unsafeUninitializedCapacity: count + headroom(count)) { buf, initialized in
+            var i = 0
+            while i < count {
+                buf[i] = Int(src.loadUnaligned(fromByteOffset: i * MemoryLayout<T>.size, as: T.self))
+                i &+= 1
+            }
+            initialized = count
+        }
     }
 
     private static func lowercasedDirPrefix(_ dir: String) -> [UInt8] {
@@ -4485,56 +4142,6 @@ final class SearchEngine: @unchecked Sendable {
             pathToID[path] = id
         }
         sortedByPath = nil
-    }
-
-    /// Bulk-add without pathToID dedup check (for initial load only).
-    /// Caller must hold the lock.
-    private func _bulkAddPath(_ path: String, isDir: Bool) {
-        let byteOff = allBytes.count
-        var bnStart = 0, segCount = 1
-        var mask: UInt64 = 0, bnMaskAccum: UInt64 = 0
-        var pathLen = 0
-
-        var _path = path
-        _path.withUTF8 { utf8 in
-            var p = 0
-            while p < utf8.count {
-                let low = toLowerByte(utf8[p])
-                allBytes.append(low)
-                pathLen &+= 1
-                if low == 0x2F {
-                    segCount &+= 1
-                    bnStart = pathLen
-                    bnMaskAccum = 0
-                } else {
-                    var bit: UInt64 = 0
-                    if low >= 0x61, low <= 0x7A {
-                        bit = 1 << UInt64(low &- 0x61)
-                    } else if low >= 0x30, low <= 0x39 {
-                        bit = 1 << UInt64(26 &+ low &- 0x30)
-                    } else if low == 0x2E {
-                        bit = 1 << 36
-                    } else if low == 0x2D {
-                        bit = 1 << 37
-                    } else if low == 0x5F {
-                        bit = 1 << 38
-                    }
-                    mask |= bit
-                    bnMaskAccum |= bit
-                }
-                p &+= 1
-            }
-        }
-
-        entries.append(Entry(path: path, isDir: isDir, bnStart: bnStart, segCount: segCount, pathLen: pathLen))
-        masks.append(mask)
-        bnMasks.append(bnMaskAccum)
-        byteOffsets.append(byteOff)
-        byteLengths.append(pathLen)
-        let eid = allBytes.withUnsafeBufferPointer { buf in
-            extID(for: buf.baseAddress! + byteOff, len: pathLen, bnStart: bnStart)
-        }
-        extIDs.append(eid)
     }
 
 }
