@@ -555,7 +555,9 @@ struct FilterEditorSheet: View {
     }
 
     @State private var fuzzy = FUZZY
-    @State private var selection: FilterEditorSelection? = .quickFilters
+    /// The first quick filter rather than the list of all of them, which fills the detail with every filter's editor.
+    @State private var selection: FilterEditorSelection? = Defaults[.quickFilters].first.map { .quickFilter($0.uuid) } ?? .quickFilters
+    @Environment(\.colorScheme) private var colorScheme
 
     @Default(.quickFilters) private var quickFilters
     @Default(.folderFilters) private var folderFilters
@@ -592,9 +594,7 @@ struct FilterEditorSheet: View {
                 }
                 ForEach(quickFilters, id: \.uuid) { filter in
                     NavigationLink(value: FilterEditorSelection.quickFilter(filter.uuid)) {
-                        Label(filter.id, systemImage: "line.3.horizontal.decrease.circle")
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                        filterLabel(filter.id, icon: filter.icon ?? "line.3.horizontal.decrease.circle.fill", color: filter.color ?? .forName(filter.id))
                     }
                 }
                 Button(action: addQuickFilter) {
@@ -610,9 +610,7 @@ struct FilterEditorSheet: View {
                 }
                 ForEach(folderFilters, id: \.uuid) { filter in
                     NavigationLink(value: FilterEditorSelection.folderFilter(filter.uuid)) {
-                        Label(filter.id, systemImage: "folder.fill")
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                        filterLabel(filter.id, icon: filter.icon ?? "folder.fill", color: filter.color ?? .forName(filter.id))
                     }
                 }
                 Button(action: addFolderFilter) {
@@ -679,6 +677,18 @@ struct FilterEditorSheet: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// A filter in the list with the icon and colour it carries in the search window.
+    private func filterLabel(_ name: String, icon: String, color: FilterColor) -> some View {
+        Label {
+            Text(name)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        } icon: {
+            Image(systemName: icon)
+                .foregroundStyle(color.accent(dark: colorScheme == .dark))
+        }
     }
 
     private func emptySection(_ text: String) -> some View {
