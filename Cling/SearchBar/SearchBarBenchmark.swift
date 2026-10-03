@@ -565,7 +565,8 @@
             _ = await waitForQuiet()
             let meter = Meter("list-inserts", tag)
             var list = base
-            for i in 0 ..< 30 {
+            let updates = max(UserDefaults.standard.integer(forKey: "searchBarBenchmarkListUpdates"), 30)
+            for i in 0 ..< updates {
                 if i % 3 == 2 {
                     list.remove(at: min(5, list.count - 1))
                 } else {
