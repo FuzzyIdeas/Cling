@@ -659,8 +659,10 @@
                 SettingsNavigation.shared.selection = SettingsCategory(rawValue: pane) ?? .general
                 WM.open("settings")
                 await settle(1500)
-                // Scrolled to the end, where General's Search bar section is.
-                scrollToEnd()
+                // General scrolled to its end, where the Search bar section is; other panes from the top.
+                if SettingsNavigation.shared.selection == .general {
+                    scrollToEnd()
+                }
                 return
             }
             if CommandLine.arguments.contains("-searchBarShowcaseWindow") {
