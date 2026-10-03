@@ -25,54 +25,38 @@ struct StatusBarView: View {
                 .buttonStyle(.text(borderColor: .clear))
             }
 
-            Button(action: {
-                fuzzy.showActivityLog.toggle()
-                if fuzzy.showActivityLog {
-                    fuzzy.showLiveIndex = false
-                    fuzzy.showRunHistory = false
-                    fuzzy.showIndexBrowser = false
-                    fuzzy.savedQuery = fuzzy.query
-                    fuzzy.query = ""
-                } else if let saved = fuzzy.savedQuery {
-                    fuzzy.query = saved
-                    fuzzy.savedQuery = nil
-                }
-            }) {
-                if everything.enabled {
-                    everythingStatus
-                } else if !fuzzy.operation.isEmpty {
-                    HStack(spacing: 4) {
+            // Text only while something runs; the activity log behind it says what ran.
+            Button(action: { toggle(\.showActivityLog) }) {
+                HStack(spacing: 4) {
+                    if let runningAction {
                         ProgressView()
                             .progressViewStyle(CircularProgressViewStyle())
                             .controlSize(.mini)
-                        Text(fuzzy.operation)
+                        Text(runningAction)
                             .truncationMode(.middle)
                             .lineLimit(1)
+                    } else {
+                        Image(systemName: "list.bullet.rectangle")
                     }
-                } else if let subset = fuzzy.filteredSubsetCount {
-                    Text("Searching \(subset.formatted()) files")
-                } else {
-                    Text("\(fuzzy.indexedCount.formatted()) files indexed")
                 }
             }
             .buttonStyle(.text(borderColor: .clear, active: fuzzy.showActivityLog, activeTint: .blue))
+            .accessibilityLabel("Activity log")
             .accessibilityToggle(isOn: fuzzy.showActivityLog)
             .help("Toggle activity log")
 
+            // The count is what people click to find out where all those files come from.
+            if let countText {
+                Button(action: { toggle(\.showIndexBrowser) }) {
+                    Text(countText)
+                }
+                .buttonStyle(.text(borderColor: .clear, active: fuzzy.showIndexBrowser, activeTint: .purple))
+                .accessibilityToggle(isOn: fuzzy.showIndexBrowser)
+                .help("Toggle index size view")
+            }
+
             if !fuzzy.liveIndexChanges.isEmpty {
-                Button(action: {
-                    fuzzy.showLiveIndex.toggle()
-                    if fuzzy.showLiveIndex {
-                        fuzzy.showActivityLog = false
-                        fuzzy.showRunHistory = false
-                        fuzzy.showIndexBrowser = false
-                        fuzzy.savedQuery = fuzzy.query
-                        fuzzy.query = ""
-                    } else if let saved = fuzzy.savedQuery {
-                        fuzzy.query = saved
-                        fuzzy.savedQuery = nil
-                    }
-                }) {
+                Button(action: { toggle(\.showLiveIndex) }) {
                     HStack(spacing: 2) {
                         Circle()
                             .fill(fuzzy.showLiveIndex ? .green : .secondary)
@@ -86,19 +70,7 @@ struct StatusBarView: View {
             }
 
             if !RH.entries.isEmpty {
-                Button(action: {
-                    fuzzy.showRunHistory.toggle()
-                    if fuzzy.showRunHistory {
-                        fuzzy.showActivityLog = false
-                        fuzzy.showLiveIndex = false
-                        fuzzy.showIndexBrowser = false
-                        fuzzy.savedQuery = fuzzy.query
-                        fuzzy.query = ""
-                    } else if let saved = fuzzy.savedQuery {
-                        fuzzy.query = saved
-                        fuzzy.savedQuery = nil
-                    }
-                }) {
+                Button(action: { toggle(\.showRunHistory) }) {
                     HStack(spacing: 2) {
                         Image(systemName: "clock.arrow.circlepath")
                         Text("\(RH.entries.count) runs")
@@ -108,26 +80,6 @@ struct StatusBarView: View {
                 .accessibilityToggle(isOn: fuzzy.showRunHistory)
                 .help("Toggle run history")
             }
-
-            Button(action: {
-                fuzzy.showIndexBrowser.toggle()
-                if fuzzy.showIndexBrowser {
-                    fuzzy.showActivityLog = false
-                    fuzzy.showLiveIndex = false
-                    fuzzy.showRunHistory = false
-                    fuzzy.savedQuery = fuzzy.query
-                    fuzzy.query = ""
-                } else if let saved = fuzzy.savedQuery {
-                    fuzzy.query = saved
-                    fuzzy.savedQuery = nil
-                }
-            }) {
-                Image(systemName: "chart.bar.doc.horizontal")
-            }
-            .buttonStyle(.text(borderColor: .clear, active: fuzzy.showIndexBrowser, activeTint: .purple))
-            .accessibilityLabel("Index size")
-            .accessibilityToggle(isOn: fuzzy.showIndexBrowser)
-            .help("Toggle index size view")
 
             Spacer()
 
@@ -186,16 +138,37 @@ struct StatusBarView: View {
     @Default(.toolbarRowsHidden) private var toolbarRowsHidden
     @Default(.dimStatusBar) private var dimStatusBar
 
-    @ViewBuilder private var everythingStatus: some View {
-        if everything.loading || everything.building {
-            HStack(spacing: 4) {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle())
-                    .controlSize(.mini)
-                Text(everything.loading ? "Loading Everything…" : "Indexing everything: \(everything.count.formatted()) files")
+    /// What is running right now, shown on the activity log button.
+    private var runningAction: String? {
+        if everything.enabled, everything.loading || everything.building {
+            return everything.loading ? "Loading Everything…" : "Indexing everything: \(everything.count.formatted()) files"
+        }
+        return fuzzy.operation.isEmpty ? nil : fuzzy.operation
+    }
+
+    /// The count on the index size button, left out while Everything is still loading or being built.
+    private var countText: String? {
+        if everything.enabled {
+            return everything.loading || everything.building ? nil : "\(everything.count.formatted()) files in Everything"
+        }
+        if let subset = fuzzy.filteredSubsetCount {
+            return "Searching \(subset.formatted()) files"
+        }
+        return "\(fuzzy.indexedCount.formatted()) files indexed"
+    }
+
+    /// Opens one of the panels in place of the results, closing the others, and puts the query back when it closes.
+    private func toggle(_ panel: ReferenceWritableKeyPath<FuzzyClient, Bool>) {
+        fuzzy[keyPath: panel].toggle()
+        if fuzzy[keyPath: panel] {
+            for other in [\FuzzyClient.showActivityLog, \.showLiveIndex, \.showRunHistory, \.showIndexBrowser] where other != panel {
+                fuzzy[keyPath: other] = false
             }
-        } else {
-            Text("\(everything.count.formatted()) files in Everything")
+            fuzzy.savedQuery = fuzzy.query
+            fuzzy.query = ""
+        } else if let saved = fuzzy.savedQuery {
+            fuzzy.query = saved
+            fuzzy.savedQuery = nil
         }
     }
 
