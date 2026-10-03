@@ -51,6 +51,7 @@ NOT_EXPOSED = {
     "mcpEnabled": "the agent switch; an agent reads it through cling_status and only the user turns it on",
     "searchHintsManuallyEnabled": "bookkeeping, set alongside showSearchHints",
     "instantMode": "removed on main, where instant mode is always on",
+    "searchBarPillOrigin": "where the pinned search field sits, set by dragging it; the Style preview only shows it",
 }
 
 # Top-level CLI commands with no MCP tool.
