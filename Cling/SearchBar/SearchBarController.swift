@@ -661,10 +661,6 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         root.sortButton.configure(symbol: "arrow.up.arrow.down", accessibility: "Sort", target: self, action: #selector(showSortMenu(_:)))
         root.sortButton.toolTip = "Sort"
         root.previewButton.configure(symbol: "sidebar.right", accessibility: "Toggle Preview", target: self, action: #selector(togglePreview(_:)))
-        root.filterChip.onClick = { [weak self] in
-            guard let self else { return }
-            showFilterMenu(root.filterButton)
-        }
         root.resizeOverlay.minSize = Self.minSize
         root.resizeOverlay.onResizeEnd = { [weak self] in self?.storeSize() }
         root.hintBar.onHint = { [weak self] id in self?.performHint(id) }
@@ -855,13 +851,9 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             }
         }
         if inputs.filterText != previous?.filterText || inputs.everything != previous?.everything || previous == nil {
-            root.filterChip.text = inputs.filterText
-            root.filterChip.isHidden = inputs.filterText.isEmpty
-            if let hue = inputs.scopeHue {
-                let dark = root.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                root.filterChip.color = NSColor(FilterColor(hue: hue).accent(dark: dark))
-            }
-            root.everythingButton.tint = inputs.everything ? .systemOrange : nil
+            root.filterButton.label = inputs.filterText.isEmpty ? nil : inputs.filterText
+            root.filterButton.tint = inputs.filterText.isEmpty ? nil : inputs.scopeHue.map { NSColor.searchBarFilter(hue: $0) }
+            root.everythingButton.tint = inputs.everything ? .searchBarEverything : nil
             root.everythingButton.label = inputs.everything ? "Everything" : nil
             root.everythingButton.isEnabled = proactive
             root.needsLayout = true

@@ -9,6 +9,7 @@
 
 import AppKit
 import Defaults
+import SwiftUI
 
 // MARK: - SearchBarMetrics
 
@@ -27,6 +28,23 @@ enum SearchBarMetrics {
     static let buttonRadius: CGFloat = modern ? 9 : 6
     static let cardRadius: CGFloat = modern ? 18 : 9
     static let buttonSide: CGFloat = 30
+}
+
+extension NSColor {
+    /// Everything's orange. The system orange is too light to read on its own tint over a light background, so light
+    /// mode gets a deeper one.
+    static let searchBarEverything = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? .systemOrange
+            : NSColor(srgbRed: 0.7, green: 0.32, blue: 0, alpha: 1)
+    }
+
+    /// A quick filter's colour for its pill, following light and dark mode.
+    static func searchBarFilter(hue: Double) -> NSColor {
+        NSColor(name: nil) { appearance in
+            NSColor(FilterColor(hue: hue).accent(dark: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua))
+        }
+    }
 }
 
 // MARK: - SearchBarTintView

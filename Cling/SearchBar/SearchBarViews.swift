@@ -32,7 +32,8 @@ final class SearchBarField: NSTextField {
 // MARK: - SearchBarIconButton
 
 /// A borderless SF Symbol button that tints itself and never takes focus away from the field. With `squircle` it sits
-/// on a rounded square like a toolbar button, tinted along with the symbol while it's on.
+/// on a rounded square like a toolbar button, tinted along with the symbol while it's on. With a label it becomes a pill
+/// holding the symbol and the label, squircle or not.
 final class SearchBarIconButton: NSButton {
     override var isHighlighted: Bool {
         didSet { updateBackground() }
@@ -63,7 +64,7 @@ final class SearchBarIconButton: NSButton {
         didSet { updateBackground() }
     }
 
-    /// Text after the symbol, in the tint colour: the Everything toggle while it's on.
+    /// Text after the symbol, in the tint colour: the Everything toggle while it's on, the active filter.
     var label: String? {
         didSet {
             guard label != oldValue else { return }
@@ -102,7 +103,7 @@ final class SearchBarIconButton: NSButton {
         if let hoverArea {
             removeTrackingArea(hoverArea)
         }
-        guard squircle else { return }
+        guard hasBackground else { return }
         let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
         addTrackingArea(area)
         hoverArea = area
@@ -141,6 +142,10 @@ final class SearchBarIconButton: NSButton {
 
     private var hoverArea: NSTrackingArea?
 
+    private var hasBackground: Bool {
+        squircle || label != nil
+    }
+
     private var hovering = false {
         didSet {
             guard hovering != oldValue else { return }
@@ -168,7 +173,7 @@ final class SearchBarIconButton: NSButton {
 
     private func updateBackground() {
         guard let layer else { return }
-        guard squircle else {
+        guard hasBackground else {
             layer.backgroundColor = nil
             return
         }
@@ -465,80 +470,6 @@ final class SearchBarResizeOverlay: NSView {
     }
 }
 
-// MARK: - SearchBarChip
-
-/// A small capsule label: the active filter, or the orange Everything badge.
-final class SearchBarChip: NSView {
-    init(color: NSColor? = nil) {
-        fill = color
-        super.init(frame: .zero)
-        wantsLayer = true
-        layerContentsRedrawPolicy = .onSetNeedsDisplay
-    }
-
-    @available(*, unavailable)
-    required init?(coder _: NSCoder) {
-        fatalError()
-    }
-
-    override var isFlipped: Bool {
-        true
-    }
-    override var allowsVibrancy: Bool {
-        false
-    }
-
-    var onClick: (() -> Void)?
-
-    var text = "" {
-        didSet {
-            guard text != oldValue else { return }
-            needsDisplay = true
-        }
-    }
-
-    var color: NSColor = .secondaryLabelColor {
-        didSet { needsDisplay = true }
-    }
-
-    var fill: NSColor? {
-        didSet { needsDisplay = true }
-    }
-
-    var fittingWidth: CGFloat {
-        guard !text.isEmpty else { return 0 }
-        return ceil((text as NSString).size(withAttributes: attrs).width) + 16
-    }
-
-    override func acceptsFirstMouse(for _: NSEvent?) -> Bool {
-        true
-    }
-
-    override func draw(_: NSRect) {
-        guard !text.isEmpty else { return }
-        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
-        if let fill {
-            fill.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
-        } else {
-            color.withAlphaComponent(0.14).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
-        }
-        var attrs = attrs
-        attrs[.foregroundColor] = fill == nil ? color : NSColor.white
-        let size = (text as NSString).size(withAttributes: attrs)
-        (text as NSString).draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2), withAttributes: attrs)
-    }
-
-    override func mouseDown(with _: NSEvent) {
-        onClick?()
-    }
-
-    private var attrs: [NSAttributedString.Key: Any] {
-        [.font: NSFont.systemFont(ofSize: FontScale.size(10.5, .chrome), weight: .semibold)]
-    }
-}
-
 // MARK: - SearchBarRootView
 
 /// Everything inside the expanded bar. Owns no state: the controller pushes values in.
@@ -551,7 +482,6 @@ final class SearchBarRootView: NSView {
         addSubview(background)
         addSubview(field)
         addSubview(filterButton)
-        addSubview(filterChip)
         addSubview(spinner)
         addSubview(everythingButton)
         addSubview(sortButton)
@@ -591,7 +521,6 @@ final class SearchBarRootView: NSView {
         emptyLabel.textColor = .tertiaryLabelColor
         emptyLabel.isHidden = true
 
-        filterChip.isHidden = true
         previewContainer.isHidden = true
         applyFonts()
     }
@@ -609,7 +538,6 @@ final class SearchBarRootView: NSView {
     let background = SearchBarBackgroundView()
     let field = SearchBarField()
     let filterButton = SearchBarIconButton()
-    let filterChip = SearchBarChip()
     let spinner = NSProgressIndicator()
     let everythingButton = SearchBarIconButton()
     let sortButton = SearchBarIconButton()
@@ -668,11 +596,17 @@ final class SearchBarRootView: NSView {
         let iconBox = FontScale.length(28, .control)
         // The filter button is centred over the rows' icons and the query starts where their names do.
         let rowStyle = SearchBarRowStyle.shared
-        let filterWidth = iconBox + 4
-        let filterX = (SearchBarRowStyle.iconX + rowStyle.iconSide / 2 - filterWidth / 2).rounded()
-        filterButton.frame = NSRect(x: filterX, y: (mid - iconBox / 2).rounded(), width: filterWidth, height: iconBox)
-
         let side = FontScale.length(SearchBarMetrics.buttonSide, .control)
+        if filterButton.label == nil {
+            let filterWidth = iconBox + 4
+            let filterX = (SearchBarRowStyle.iconX + rowStyle.iconSide / 2 - filterWidth / 2).rounded()
+            filterButton.frame = NSRect(x: filterX, y: (mid - iconBox / 2).rounded(), width: filterWidth, height: iconBox)
+        } else {
+            // An active filter is a pill around the filter icon, starting where the rows' highlight does.
+            let width = min(filterButton.fittingWidth, max(w * 0.4, 160))
+            filterButton.frame = NSRect(x: SearchBarMetrics.inset + 4, y: (mid - side / 2).rounded(), width: width, height: side)
+        }
+
         var right = w - 12
         for button in [previewButton, sortButton, everythingButton] {
             let width = button.fittingWidth
@@ -685,18 +619,10 @@ final class SearchBarRootView: NSView {
         spinner.frame = NSRect(x: right - spinnerSide, y: (mid - spinnerSide / 2).rounded(), width: spinnerSide, height: spinnerSide)
         right -= spinnerSide + 6
 
-        if !filterChip.isHidden {
-            let chipHeight = FontScale.length(20, .chrome)
-            let width = min(filterChip.fittingWidth, 220)
-            right -= width
-            filterChip.frame = NSRect(x: right, y: (mid - chipHeight / 2).rounded(), width: width, height: chipHeight)
-            right -= 6
-        }
-
         // The text sits with its capitals centred on the midline, like the symbols around it. The field draws its text
         // 2 pt in from its frame, with its baseline a point short of one ascender down from the top.
         let font = field.font ?? .systemFont(ofSize: 20)
-        let fieldX = rowStyle.textX - 2
+        let fieldX = max(rowStyle.textX - 2, filterButton.frame.maxX + 10)
         let fieldHeight = ceil(font.ascender - font.descender) + 2
         let fieldY = (mid + font.capHeight / 2 - font.ascender + 1).rounded()
         field.frame = NSRect(x: fieldX, y: fieldY, width: max(right - fieldX - 4, 40), height: fieldHeight)
