@@ -569,6 +569,29 @@ enum WindowDisplay: String, CaseIterable, Defaults.Serializable {
     }
 }
 
+// MARK: - WindowPosition
+
+/// Where on its display the search window comes up when it is summoned.
+enum WindowPosition: String, CaseIterable, Defaults.Serializable {
+    case centered
+    case last
+    case cursor
+
+    /// The position in effect: the cursor is only on the chosen display when that is the cursor's display.
+    static var current: WindowPosition {
+        let position = Defaults[.windowPosition]
+        return position == .cursor && Defaults[.windowDisplay] != .cursor ? .centered : position
+    }
+
+    var label: String {
+        switch self {
+        case .centered: "Always centered"
+        case .last: "Last position"
+        case .cursor: "At cursor"
+        }
+    }
+}
+
 // MARK: - WindowAppearance
 
 enum WindowAppearance: String, CaseIterable, Defaults.Serializable {
@@ -674,9 +697,8 @@ extension Defaults.Keys {
     static let keepWindowOpenWhenDefocused = Key<Bool>("keepWindowOpenWhenDefocused", default: false)
     static let instantMode = Key<Bool>("instantMode", default: true)
     static let windowDisplay = Key<WindowDisplay>("windowDisplay", default: .cursor)
-    /// With `windowDisplay == .cursor`: bring the window up with the pointer over the first row's name,
-    /// instead of where it last sat on that display.
-    static let windowAtCursor = Key<Bool>("windowAtCursor", default: true)
+    /// Where the window lands on that display; see `WindowPosition.current` for `.cursor` on another display.
+    static let windowPosition = Key<WindowPosition>("windowPosition", default: .centered)
     /// Seconds away (app in the background or window hidden) after which the result selection is
     /// considered stale and jumps back to the first row. 0 = keep the selection forever.
     static let resetSelectionAfter = Key<TimeInterval>("resetSelectionAfter", default: 300)

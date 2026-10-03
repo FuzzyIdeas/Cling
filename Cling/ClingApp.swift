@@ -425,7 +425,9 @@ class AppDelegate: LowtechProAppDelegate {
         WM.mainContentSuspended = false
         DropZoneOverlay.shared.dismissIfPresenting()
         guard let window = mainWindow else { return }
-        if !window.isVisible || window.alphaValue == 0 {
+        // A summon that already picked its display places the window even when it's up, as at launch, where
+        // SwiftUI shows it before this runs.
+        if !window.isVisible || window.alphaValue == 0 || pendingDisplay != nil {
             placeMainWindow(window, on: pendingDisplay ?? displayForMainWindow())
         }
         pendingDisplay = nil
@@ -455,21 +457,28 @@ class AppDelegate: LowtechProAppDelegate {
         }
     }
 
-    /// Moves a hidden search window onto `screen`. With *Open at the cursor* it comes up with the pointer over
-    /// the first row's name, every time. Otherwise it takes the spot of the usable area it had on its previous
-    /// display, and a window already on that display keeps the frame it was given there. Either way it stays
-    /// inside the usable area (no menu bar or Dock), with `screenPadding` to spare where it fits and the whole
-    /// span where it doesn't.
+    /// Moves a hidden search window onto `screen`, per *Window position*. *Always centered* puts it in the middle
+    /// of the usable area every time, and *At cursor* brings it up with the pointer over the first row's name.
+    /// *Last position* takes the spot of the usable area it had on its previous display, and a window already on
+    /// that display keeps the frame it was given there. Either way it stays inside the usable area (no menu bar
+    /// or Dock), with `screenPadding` to spare where it fits and the whole span where it doesn't.
     func placeMainWindow(_ window: NSWindow, on screen: NSScreen?) {
         guard let screen else { return }
         let area = screen.visibleFrame
         let size = window.frame.size
-        if Defaults[.windowDisplay] == .cursor, Defaults[.windowAtCursor] {
+        switch WindowPosition.current {
+        case .centered:
+            let origin = CGPoint(x: area.midX - size.width / 2, y: area.midY - size.height / 2)
+            window.setFrame(Self.frame(size, origin: origin, in: area), display: false)
+            return
+        case .cursor:
             let mouse = NSEvent.mouseLocation
             let anchor = cursorAnchor(in: window)
             let origin = CGPoint(x: mouse.x - anchor.x, y: mouse.y - anchor.y)
             window.setFrame(Self.frame(size, origin: origin, in: area), display: false)
             return
+        case .last:
+            break
         }
 
         let current = Self.screen(containing: window.frame)
@@ -519,6 +528,9 @@ class AppDelegate: LowtechProAppDelegate {
         }
         if let mainWindow {
             WM.mainContentSuspended = false
+            if !mainWindow.isVisible || mainWindow.alphaValue == 0 {
+                placeMainWindow(mainWindow, on: displayForMainWindow())
+            }
             mainWindow.orderFrontRegardless()
             mainWindow.becomeMain()
             mainWindow.becomeKey()

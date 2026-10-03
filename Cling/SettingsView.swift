@@ -687,8 +687,17 @@ private struct GeneralSettingsPane: View {
                     .labelsHidden()
                     .fixedSize()
                 }
-                if windowDisplay == .cursor {
-                    Toggle("Open at the cursor", isOn: $windowAtCursor)
+                SettingRow(title: "Window position") {
+                    Picker("Window position", selection: Binding(
+                        get: { windowPosition == .cursor && windowDisplay != .cursor ? .centered : windowPosition },
+                        set: { windowPosition = $0 }
+                    )) {
+                        ForEach(WindowPosition.allCases.filter { $0 != .cursor || windowDisplay == .cursor }, id: \.self) { position in
+                            Text(position.label).tag(position)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
                 }
 
                 DescriptiveToggle(
@@ -757,7 +766,7 @@ private struct GeneralSettingsPane: View {
     @Default(.keepWindowOpenWhenDefocused) private var keepWindowOpenWhenDefocused
     @Default(.instantMode) private var instantMode
     @Default(.windowDisplay) private var windowDisplay
-    @Default(.windowAtCursor) private var windowAtCursor
+    @Default(.windowPosition) private var windowPosition
     @Default(.resetSelectionAfter) private var resetSelectionAfter
     @Default(.enableGlobalHotkey) private var enableGlobalHotkey
     @Default(.showAppKey) private var showAppKey
