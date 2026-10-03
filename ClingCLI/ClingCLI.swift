@@ -45,7 +45,7 @@ struct ClingCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "cling",
         abstract: "Cling: fast fuzzy file search from the command line",
-        subcommands: [Search.self, Reindex.self, Status.self, Recents.self, Index.self, Explain.self, Logs.self],
+        subcommands: [Search.self, Reindex.self, Status.self, Recents.self, Index.self, Explain.self, Logs.self, CatchUp.self],
         defaultSubcommand: Search.self
     )
 }

@@ -926,6 +926,9 @@ private struct SearchSettingsPane: View {
                 scopeRow(.library, label: "Library", detail: "User library directory (`~/Library`)")
                 proScopeRow(.system, label: "System", detail: "`/System`")
                 proScopeRow(.root, label: "Root", detail: "`/usr`, `/bin`, `/sbin`, `/opt`, `/etc`, `/Library`, `/var`, `/private`")
+
+                Toggle("Watch file events in the background", isOn: $updateWhileClosed)
+                    .onChange(of: updateWhileClosed) { CatchUpAgent.sync() }
             }
 
             Section("Matching") {
@@ -1063,6 +1066,7 @@ private struct SearchSettingsPane: View {
     @Default(.showSearchHints) private var showSearchHints
     @Default(.searchHintsManuallyEnabled) private var searchHintsManuallyEnabled
     @Default(.literalSearch) private var literalSearch
+    @Default(.updateWhileClosed) private var updateWhileClosed
 
     private func scopeRow(_ scope: SearchScope, label: String, detail: LocalizedStringKey) -> some View {
         HStack(alignment: .firstTextBaseline) {

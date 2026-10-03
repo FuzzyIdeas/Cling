@@ -134,6 +134,9 @@ class AppDelegate: LowtechProAppDelegate {
         ClingShortcuts.setup()
         FUZZY.start()
         SB.setup()
+        if !SWIFTUI_PREVIEW {
+            CatchUpAgent.sync()
+        }
         setupCleanup()
         QuickLookSupport.shared.warmUp()
 

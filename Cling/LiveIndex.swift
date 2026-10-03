@@ -7,21 +7,7 @@ private let log = Logger(subsystem: clingSubsystem, category: "LiveIndex")
 
 // MARK: - FSEventsHistory
 
-/// FSEvents keeps a log of file changes on each disk whether or not anything is watching, so an index saved with
-/// its position in that log can catch up on launch by replaying from there instead of walking again.
-enum FSEventsHistory {
-    /// The sealed system volume only changes in a macOS update, and FSEvents doesn't report those.
-    static var systemBuild: String {
-        ProcessInfo.processInfo.operatingSystemVersionString
-    }
-
-    /// Identifies the data volume's FSEvents history; it changes when that history is thrown away.
-    static var fseventsUUID: String {
-        var st = stat()
-        guard lstat("/Users", &st) == 0, let uuid = FSEventsCopyUUIDForDevice(st.st_dev) else { return "" }
-        return CFUUIDCreateString(nil, uuid) as String? ?? ""
-    }
-
+extension FSEventsHistory {
     static func replayable(eventID: UInt64, system: String, fseventsUUID uuid: String) -> Bool {
         eventID > 0 && eventID <= FSEventsGetCurrentEventId() && system == systemBuild && uuid == fseventsUUID
     }
@@ -29,26 +15,6 @@ enum FSEventsHistory {
     /// Dropped events or wrapped ids, or the whole disk flagged for rescanning: the replay can't be trusted.
     static func lost(_ flags: EonilFSEventsEventFlags, path: String) -> Bool {
         !flags.isDisjoint(with: [.userDropped, .kernelDropped, .idsWrapped]) || (flags.contains(.mustScanSubDirs) && isRoot(path))
-    }
-
-    static func isRoot(_ path: String) -> Bool {
-        path == "/" || path == "/System/Volumes/Data" || path == "/System/Volumes/Data/"
-    }
-
-    /// The data volume's own mount path maps back onto /, and the system's helper volumes and /dev are left out.
-    static func normalized(_ raw: String) -> String? {
-        var path = raw
-        // A path bridged from NSString is copied to native storage once here, which keeps the hashing, comparing and
-        // prefix checks that follow off the slow path. FSChangeStream's paths are native already.
-        path.makeContiguousUTF8()
-        if path.utf8.count > 1, path.hasSuffix("/") {
-            path.removeLast()
-        }
-        if path.hasPrefix("/System/Volumes/Data/") {
-            return String(path.utf8.dropFirst("/System/Volumes/Data".utf8.count))!
-        }
-        guard !path.isEmpty, path != "/", !path.hasPrefix("/System/Volumes/"), !path.hasPrefix("/dev/") else { return nil }
-        return path
     }
 
     /// Whether a failed lstat means the path is gone. A path that exists but can't be read (Full Disk Access taken
@@ -126,6 +92,10 @@ struct ScopeIndexState: Codable {
         }
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: file.url, options: .atomic)
+        // Every saved scope now holds what the background agent gathered while Cling was closed.
+        if let oldest = state.eventIDs.values.min() {
+            ChangeJournal.discard(ifSavedPast: oldest)
+        }
     }
 
     static func forget(_ scopes: [SearchScope]) {
