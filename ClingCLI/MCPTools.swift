@@ -292,13 +292,24 @@ extension MCPServer {
             + "Ask the user to allow it in Cling Settings, MCP.")
     }
 
-    static func stopServer() throws -> ToolOutput {
-        // Taking permission away needs no alert, so this never waits and never checks.
+    static func stopServer(wait: TimeInterval = 5) throws -> ToolOutput {
+        // Taking permission away needs no alert, but the URL is handled after `open` returns, so this waits
+        // until Cling says it's off: a change sent right after must already be refused.
         try openControlURL("stop")
-        return .json([
-            "ok": true, "stopped": true,
-            "note": "Cling will refuse changes from agents until it is started again. Reading still works.",
-        ])
+        let deadline = Date().addingTimeInterval(wait)
+        while Date() < deadline {
+            if case let .json(payload)? = try? run(["mcp", "status"], timeout: 5),
+               let mcp = (payload as? [String: Any])?["mcp"] as? [String: Any],
+               mcp["enabled"] as? Bool == false
+            {
+                return .json([
+                    "ok": true, "stopped": true,
+                    "note": "Cling will refuse changes from agents until it is started again. Reading still works.",
+                ])
+            }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        throw ClingMCPError("Cling did not confirm it stopped accepting changes. Ask the user to turn it off in Cling Settings, MCP.")
     }
 
     static func status() throws -> ToolOutput {

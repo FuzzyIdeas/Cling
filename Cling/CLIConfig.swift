@@ -380,7 +380,16 @@ extension CLIConfig {
     }
 
     private static func runner(of url: URL, content: String) -> ScriptRunner {
-        ScriptRunner(fromShebang: ScriptHeaderParser.shebang(content) ?? "") ?? ScriptRunner(fromExtension: url.pathExtension) ?? .zsh
+        let byExtension = ScriptRunner(fromExtension: url.pathExtension)
+        guard let byShebang = ScriptRunner(fromShebang: ScriptHeaderParser.shebang(content) ?? "") else {
+            return byExtension ?? .zsh
+        }
+        // `sh` and `zsh` both run /bin/zsh, so the shebang can't tell them apart and a `.zsh` script would be
+        // rewritten as `.sh`. The extension can.
+        if let byExtension, byExtension.path == byShebang.path {
+            return byExtension
+        }
+        return byShebang
     }
 
     @MainActor private static func info(_ url: URL, withCode: Bool = false) -> ScriptInfo {
