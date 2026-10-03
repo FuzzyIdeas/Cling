@@ -96,7 +96,7 @@ struct SidebarIcon: View {
 // MARK: - SettingsCategory
 
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case general, interface, actionBar, shortcuts, apps, search, volumes, filters, scripts, exclusions, licenseAndUpdates, about
+    case general, interface, actionBar, shortcuts, apps, search, volumes, filters, scripts, mcp, exclusions, licenseAndUpdates, about
 
     var id: String {
         rawValue
@@ -113,6 +113,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .volumes: "Drives & Volumes"
         case .filters: "Filters"
         case .scripts: "Scripts"
+        case .mcp: "MCP"
         case .exclusions: "Excluded Paths"
         case .licenseAndUpdates: "License & updates"
         case .about: "About"
@@ -130,6 +131,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .volumes: "externaldrive"
         case .filters: "line.3.horizontal.decrease.circle"
         case .scripts: "terminal"
+        case .mcp: "sparkles"
         case .exclusions: "eye.slash"
         case .licenseAndUpdates: "key"
         case .about: "info.circle"
@@ -147,6 +149,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .volumes: .mutedTeal
         case .filters: .sage
         case .scripts: .plum
+        case .mcp: .mutedTeal
         case .exclusions: .terracotta
         case .licenseAndUpdates: .ochre
         case .about: .dustyRose
@@ -231,6 +234,7 @@ struct SettingsView: View {
                     sidebarRow(.shortcuts)
                     sidebarRow(.apps)
                     sidebarRow(.scripts)
+                    sidebarRow(.mcp)
                 }
                 Section("Support") {
                     sidebarRow(.licenseAndUpdates)
@@ -267,6 +271,7 @@ struct SettingsView: View {
         case .volumes: VolumesSettingsPane()
         case .filters: FiltersSettingsPane()
         case .scripts: ScriptsSettingsPane()
+        case .mcp: MCPSettingsPane()
         case .exclusions: ExclusionsSettingsPane()
         case .licenseAndUpdates: LicenseAndUpdatesSettingsPane()
         case .about: AboutSettingsPane()
