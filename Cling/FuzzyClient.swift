@@ -2172,6 +2172,9 @@ class FuzzyClient {
 
         // Combine user query with QuickFilter's queryString
         var query = constructQuery(query)
+        // Only what was typed picks the first engine: a filter's own folders are in every query it makes, and the
+        // iCloud Drive one's `~/Library/Mobile Documents` would send each search to the Library engine first.
+        let hintQuery = query
         if let qf = quickFilter {
             // The filter wraps the user's typed query: prefix (constraints + Prepend) before it,
             // suffix (Append) after it. Order matters for the fuzzy word ranking.
@@ -2278,7 +2281,10 @@ class FuzzyClient {
             var accumulated = [SearchResult]()
 
             // Pick the best first engine based on query hints
-            let bestFirstIdx = Self.bestFirstEngine(for: query, engines: engines)
+            let bestFirstIdx = Self.bestFirstEngine(for: hintQuery, engines: engines)
+            // Set on the main actor once the merged results are shown, so a late first-engine list can't cover them.
+            nonisolated(unsafe) var finalShown = false
+            var interimTask: Task<Void, Never>?
 
             await withTaskCancellationHandler {
                 // Phase 1: Search the best engine first for instant results
@@ -2298,16 +2304,23 @@ class FuzzyClient {
 
                 guard !cancelFlag else { return }
 
-                // Show first engine results immediately. The stale-path filter stat()s each result,
-                // so it runs off the main actor (see existingResultPaths) to avoid hanging the UI.
-                let interim = Self.mergeResults(firstResults, maxResults: maxResults)
-                let interimPaths = await self.existingResultPaths(from: interim)
-                await MainActor.run {
-                    self.scoredResults = interimPaths
-                    self.results = self.sortedResults()
-                }
+                guard engineCount > 1 else { return }
 
-                guard !cancelFlag, engineCount > 1 else { return }
+                // The first engine's results go up only when the others are slow: when they're quick, showing them
+                // first only flashes one engine's list before the merged one replaces it. The stale-path filter
+                // stat()s each result, so it runs off the main actor (see existingResultPaths).
+                let interim = Self.mergeResults(firstResults, maxResults: maxResults)
+                interimTask = Task.detached(priority: .userInitiated) {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    guard !Task.isCancelled, !cancelFlag else { return }
+                    let interimPaths = await self.existingResultPaths(from: interim)
+                    guard !Task.isCancelled, !cancelFlag else { return }
+                    await MainActor.run {
+                        guard !finalShown, !cancelFlag else { return }
+                        self.scoredResults = interimPaths
+                        self.results = self.sortedResults()
+                    }
+                }
 
                 // Phase 2: Search remaining engines in parallel, single final update
                 await withTaskGroup(of: [SearchResult].self) { group in
@@ -2341,6 +2354,7 @@ class FuzzyClient {
             } onCancel: {
                 cancelFlag = true
             }
+            interimTask?.cancel()
 
             guard !cancelFlag else {
                 await MainActor.run { self.searching = false }
@@ -2351,6 +2365,7 @@ class FuzzyClient {
             let finalPaths = await self.existingResultPaths(from: searchResults)
 
             await MainActor.run {
+                finalShown = true
                 self.scoredResults = finalPaths
                 self.results = self.sortedResults()
                 self.searching = false
