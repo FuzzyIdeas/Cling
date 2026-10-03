@@ -45,7 +45,11 @@ struct ClingCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "cling",
         abstract: "Cling: fast fuzzy file search from the command line",
-        subcommands: [Search.self, Reindex.self, Status.self, Recents.self, Index.self, Explain.self, Logs.self, CatchUp.self],
+        subcommands: [
+            Search.self, Reindex.self, Status.self, Recents.self, Index.self, Explain.self, Why.self,
+            SettingsCommand.self, FilterCommand.self, ScriptCommand.self, VolumeCommand.self, ScopeCommand.self,
+            IgnoreCommand.self, ShortcutCommand.self, MCPCommand.self, Logs.self, CatchUp.self,
+        ],
         defaultSubcommand: Search.self
     )
 }
@@ -62,10 +66,32 @@ extension Logs {
     /// Debug builds keep debug logs through their Info.plist; a release build needs the system's logging config
     /// changed, which only root can do, so this runs `log config` under sudo and lets it ask in the terminal.
     struct Persist: ParsableCommand {
+        /// Shared with the `cling_debug_logs` MCP tool, which differs only in how it gets root: sudo in a
+        /// terminal, an administrator dialog when there is no terminal.
         enum Action: String, ExpressibleByArgument, CaseIterable {
             case on
             case off
             case status
+
+            /// nil for status, whose answer is what `log config` printed.
+            var doneMessage: String? {
+                switch self {
+                case .on: """
+                    Debug logs for Cling are kept now. Read them with:
+                        log show --debug --info --last 1h --predicate 'subsystem BEGINSWITH "com.lowtechguys.Cling"'
+                    """
+                case .off: "Debug logs for Cling are back to the macOS default"
+                case .status: nil
+                }
+            }
+
+            func logConfigArguments(subsystem: String) -> [String] {
+                switch self {
+                case .on: ["config", "--subsystem", subsystem, "--mode", "level:debug,persist:debug"]
+                case .off: ["config", "--subsystem", subsystem, "--reset"]
+                case .status: ["config", "--status", "--subsystem", subsystem]
+                }
+            }
         }
 
         static let configuration = CommandConfiguration(
@@ -81,14 +107,9 @@ extension Logs {
 
         mutating func run() throws {
             for subsystem in Self.subsystems {
-                let arguments = switch action {
-                case .on: ["config", "--subsystem", subsystem, "--mode", "level:debug,persist:debug"]
-                case .off: ["config", "--subsystem", subsystem, "--reset"]
-                case .status: ["config", "--status", "--subsystem", subsystem]
-                }
                 let status: Int32
                 do {
-                    status = try runInForeground(["/usr/bin/sudo", "/usr/bin/log"] + arguments)
+                    status = try runInForeground(["/usr/bin/sudo", "/usr/bin/log"] + action.logConfigArguments(subsystem: subsystem))
                 } catch {
                     fputs("Could not change the log settings: \(error)\n", stderr)
                     throw ExitCode.failure
@@ -99,14 +120,8 @@ extension Logs {
                 }
             }
 
-            switch action {
-            case .on:
-                print("Debug logs for Cling are kept now. Read them with:")
-                print("    log show --debug --info --last 1h --predicate 'subsystem BEGINSWITH \"com.lowtechguys.Cling\"'")
-            case .off:
-                print("Debug logs for Cling are back to the macOS default")
-            case .status:
-                break
+            if let message = action.doneMessage {
+                print(message)
             }
         }
     }
@@ -159,6 +174,9 @@ struct Explain: ParsableCommand {
         """
     )
 
+    @Flag(name: .long, help: "Output as JSON, with the exact rules that exclude each path and the ways to include it")
+    var json = false
+
     @Argument(parsing: .remaining, help: "Paths to diagnose")
     var paths: [String]
 
@@ -169,8 +187,14 @@ struct Explain: ParsableCommand {
             let abs = tilde.hasPrefix("/") ? tilde : (cwd as NSString).appendingPathComponent(tilde)
             return (abs as NSString).standardizingPath
         }
+        if json {
+            // An older Cling ignores the action and answers with the plain report, which is still printed.
+            let response = try ask(ClingRequest(command: .explain, paths: resolved, action: "diagnose"))
+            print(response.payload ?? response.status ?? "(no output)")
+            return
+        }
         let request = ClingRequest(command: .explain, paths: resolved)
-        guard let data = try sendMachPort(data: JSONEncoder().encode(request)) else {
+        guard let data = try sendMachPort(data: request.encoded()) else {
             fputs("error: no response from Cling app\n", stderr)
             throw ExitCode.failure
         }
@@ -221,6 +245,15 @@ struct Search: ParsableCommand {
     @Flag(name: .shortAndLong, help: "Search the Everything index: every file on the local disks, with no ignore rules (Pro). Loads it first when needed, and builds it on first use")
     var everything = false
 
+    @Option(name: .long, help: "Apply a saved quick filter by name, the way the search window does")
+    var quickFilter: String?
+
+    @Option(name: .long, help: "Apply a saved folder filter by name, the way the search window does")
+    var folderFilter: String?
+
+    @Flag(name: .long, help: "Output as JSON, with scores")
+    var json = false
+
     mutating func run() throws {
         if socket {
             try runSocket()
@@ -233,12 +266,13 @@ struct Search: ParsableCommand {
         let request = ClingRequest(
             command: .search, query: query, maxResults: count, verbose: verbose,
             suffixPattern: suffix, folderPrefixes: folders?.components(separatedBy: ","),
-            dirsOnly: dirsOnly ? true : nil, scopes: scope.isEmpty ? nil : scope, everything: everything ? true : nil
+            dirsOnly: dirsOnly ? true : nil, scopes: scope.isEmpty ? nil : scope, everything: everything ? true : nil,
+            quickFilter: quickFilter, folderFilter: folderFilter
         )
 
         let t0 = CFAbsoluteTimeGetCurrent()
         // Loading the Everything index can take a while the first time.
-        guard let responseData = try sendMachPort(data: JSONEncoder().encode(request), recvTimeout: everything ? 150 : 10) else {
+        guard let responseData = try sendMachPort(data: request.encoded(), recvTimeout: everything ? 150 : 10) else {
             fputs("error: no response from Cling app\n", stderr)
             throw ExitCode.failure
         }
@@ -252,6 +286,18 @@ struct Search: ParsableCommand {
         if let error = response.error {
             fputs("error: \(error)\n", stderr)
             throw ExitCode.failure
+        }
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            let payload = ClingResponse(
+                results: response.results ?? [], status: response.status,
+                indexCount: response.indexCount, searchMs: response.searchMs
+            )
+            if let out = try? encoder.encode(payload), let str = String(data: out, encoding: .utf8) {
+                print(str)
+            }
+            return
         }
         if let status = response.status {
             fputs("\(status)\n", stderr)
@@ -366,7 +412,7 @@ struct Reindex: ParsableCommand {
         var initialVolumeTimestamps: [String: Double] = [:]
         if wait, !cancel {
             let statusReq = ClingRequest(command: .status)
-            if let statusData = try? sendMachPort(data: JSONEncoder().encode(statusReq), recvTimeout: 5),
+            if let statusData = try? sendMachPort(data: statusReq.encoded(), recvTimeout: 5),
                let statusResp = try? JSONDecoder().decode(ClingResponse.self, from: statusData)
             {
                 for s in statusResp.scopes ?? [] {
@@ -384,7 +430,7 @@ struct Reindex: ParsableCommand {
 
         let command: ClingCommand = cancel ? .cancelIndex : .reindex
         let request = ClingRequest(command: command, rebuild: rebuild, scopes: scopes.isEmpty && volumes.isEmpty ? nil : scopes, paths: volumes.isEmpty ? nil : volumes)
-        guard let data = try sendMachPort(data: JSONEncoder().encode(request), recvTimeout: 300) else {
+        guard let data = try sendMachPort(data: request.encoded(), recvTimeout: 300) else {
             fputs("error: no response from Cling app\n", stderr)
             throw ExitCode.failure
         }
@@ -417,9 +463,14 @@ struct Reindex: ParsableCommand {
 
         fputs("indexing...", stderr)
         while true {
+            if let deadline = CLI_DEADLINE, Date() > deadline {
+                fputs("\n", stderr)
+                print("still indexing; the status command shows how far it got")
+                return
+            }
             Thread.sleep(forTimeInterval: 1)
             let statusReq = ClingRequest(command: .status)
-            guard let statusData = try sendMachPort(data: JSONEncoder().encode(statusReq), recvTimeout: 5),
+            guard let statusData = try sendMachPort(data: statusReq.encoded(), recvTimeout: 5),
                   let statusResp = try? JSONDecoder().decode(ClingResponse.self, from: statusData)
             else { continue }
 
@@ -506,7 +557,7 @@ struct Reindex: ParsableCommand {
 extension Reindex {
     func reindexEverything() throws {
         let request = ClingRequest(command: .reindex, everything: true)
-        guard let data = try sendMachPort(data: JSONEncoder().encode(request), recvTimeout: 10),
+        guard let data = try sendMachPort(data: request.encoded(), recvTimeout: 10),
               let response = try? JSONDecoder().decode(ClingResponse.self, from: data)
         else {
             fputs("error: no response from Cling app\n", stderr)
@@ -523,9 +574,13 @@ extension Reindex {
 
         let t0 = CFAbsoluteTimeGetCurrent()
         while true {
+            if let deadline = CLI_DEADLINE, Date() > deadline {
+                print("still indexing everything; the status command shows how far it got")
+                return
+            }
             Thread.sleep(forTimeInterval: 1)
             let statusReq = ClingRequest(command: .status)
-            guard let statusData = try? sendMachPort(data: JSONEncoder().encode(statusReq), recvTimeout: 5),
+            guard let statusData = try? sendMachPort(data: statusReq.encoded(), recvTimeout: 5),
                   let status = try? JSONDecoder().decode(ClingResponse.self, from: statusData)
             else { continue }
             let count = status.everythingCount ?? 0
@@ -549,7 +604,7 @@ struct Status: ParsableCommand {
 
     mutating func run() throws {
         let request = ClingRequest(command: .status)
-        guard let data = try sendMachPort(data: JSONEncoder().encode(request), recvTimeout: 5) else {
+        guard let data = try sendMachPort(data: request.encoded(), recvTimeout: 5) else {
             fputs("error: no response from Cling app\n", stderr)
             throw ExitCode.failure
         }
@@ -592,7 +647,7 @@ struct Recents: ParsableCommand {
 
     mutating func run() throws {
         let request = ClingRequest(command: .recents, maxResults: count)
-        guard let data = try sendMachPort(data: JSONEncoder().encode(request), recvTimeout: 5) else {
+        guard let data = try sendMachPort(data: request.encoded(), recvTimeout: 5) else {
             fputs("error: no response from Cling app\n", stderr)
             throw ExitCode.failure
         }
@@ -630,7 +685,7 @@ struct Index: ParsableCommand {
         mutating func run() throws {
             let resolved = paths.map { ($0 as NSString).expandingTildeInPath }
             let request = ClingRequest(command: .indexAdd, scopes: scope.isEmpty ? nil : scope, paths: resolved)
-            guard let data = try sendMachPort(data: JSONEncoder().encode(request)) else {
+            guard let data = try sendMachPort(data: request.encoded()) else {
                 fputs("error: no response from Cling app\n", stderr)
                 throw ExitCode.failure
             }
@@ -658,7 +713,7 @@ struct Index: ParsableCommand {
         mutating func run() throws {
             let resolved = paths.map { ($0 as NSString).expandingTildeInPath }
             let request = ClingRequest(command: .indexRemove, scopes: scope.isEmpty ? nil : scope, paths: resolved)
-            guard let data = try sendMachPort(data: JSONEncoder().encode(request)) else {
+            guard let data = try sendMachPort(data: request.encoded()) else {
                 fputs("error: no response from Cling app\n", stderr)
                 throw ExitCode.failure
             }
@@ -686,7 +741,7 @@ struct Index: ParsableCommand {
         mutating func run() throws {
             let resolved = paths.map { ($0 as NSString).expandingTildeInPath }
             let request = ClingRequest(command: .indexHas, scopes: scope.isEmpty ? nil : scope, paths: resolved)
-            guard let data = try sendMachPort(data: JSONEncoder().encode(request)) else {
+            guard let data = try sendMachPort(data: request.encoded()) else {
                 fputs("error: no response from Cling app\n", stderr)
                 throw ExitCode.failure
             }
