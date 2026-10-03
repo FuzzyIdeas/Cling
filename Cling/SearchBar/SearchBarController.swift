@@ -320,8 +320,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     }
 
     func windowDidEndLiveResize(_: Notification) {
-        guard let panel else { return }
-        Defaults[.searchBarSize] = [panel.frame.width, panel.frame.height]
+        storeSize()
     }
 
     // MARK: Field
@@ -600,29 +599,30 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         return shown.contains(" ") ? "in:\"\(shown)\"" : "in:\(shown)"
     }
 
+    private func storeSize() {
+        guard let panel else { return }
+        Defaults[.searchBarSize] = [panel.frame.width, panel.frame.height]
+        // A borderless window's shadow follows its content, which changed shape.
+        panel.invalidateShadow()
+    }
+
     private func ensurePanel() -> SearchBarPanel {
         if let panel {
             return panel
         }
         let size = storedSize
+        // Borderless, so the bar has its own rounder corners and no window rim. It is moved by SearchBarRootView's
+        // own drag and resized by its SearchBarResizeOverlay.
         let panel = SearchBarPanel(
             contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.titled, .fullSizeContentView, .resizable, .nonactivatingPanel],
+            styleMask: [.borderless, .resizable, .nonactivatingPanel],
             backing: .buffered,
             defer: true
         )
         panel.identifier = NSUserInterfaceItemIdentifier("searchbar")
         panel.controller = self
         panel.delegate = self
-        panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
         panel.title = "Cling"
-        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            panel.standardWindowButton(button)?.isHidden = true
-        }
-        // Moved by SearchBarRootView's own drag. A movable titled window has AppKit work out which
-        // parts of its titlebar strip can drag it, from scratch whenever a view moves under it, and
-        // here that was every row scrolling in or out.
         panel.isMovable = false
         panel.isFloatingPanel = true
         panel.level = .floating
@@ -655,8 +655,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             guard let self else { return }
             showFilterMenu(root.filterButton)
         }
-        root.everythingChip.text = "Everything"
-        root.everythingChip.onClick = { EVERYTHING.toggle() }
+        root.resizeOverlay.minSize = Self.minSize
+        root.resizeOverlay.onResizeEnd = { [weak self] in self?.storeSize() }
         root.hintBar.onHint = { [weak self] id in self?.performHint(id) }
 
         results.onSelectionChange = { [weak self] in self?.selectionChanged() }
@@ -851,8 +851,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
                 let dark = root.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                 root.filterChip.color = NSColor(FilterColor(hue: hue).accent(dark: dark))
             }
-            root.everythingChip.isHidden = !inputs.everything
             root.everythingButton.tint = inputs.everything ? .systemOrange : nil
+            root.everythingButton.label = inputs.everything ? "Everything" : nil
             root.everythingButton.isEnabled = proactive
             root.needsLayout = true
         }
@@ -923,7 +923,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         guard paths != previewPaths else { return }
         previewPaths = paths
         signpost("preview")
-        let view = AnyView(FilePreviewPanel(paths: paths))
+        let view = AnyView(FilePreviewPanel(paths: paths, plain: true))
         if let previewHost {
             previewHost.rootView = view
         } else {

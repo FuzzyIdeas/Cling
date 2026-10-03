@@ -407,7 +407,7 @@ final class SearchBarRowView: NSTableRowView {
     override func layout() {
         super.layout()
         let side = SearchBarRowStyle.shared.iconSide
-        selectionView.frame = bounds.insetBy(dx: 6, dy: 1)
+        selectionView.frame = bounds.insetBy(dx: SearchBarMetrics.inset, dy: 1)
         iconView.frame = NSRect(x: SearchBarRowStyle.iconX, y: ((bounds.height - side) / 2).rounded(), width: side, height: side)
         content.frame = bounds
     }
@@ -515,7 +515,7 @@ final class SearchBarSelectionView: NSView {
 
     override func updateLayer() {
         layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(strong ? 0.32 : 0.2).cgColor
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = SearchBarMetrics.rowRadius
         layer?.cornerCurve = .continuous
     }
 }
@@ -612,17 +612,17 @@ final class SearchBarRowContent: NSView {
             text.draw(
                 kind, style: .meta,
                 in: NSRect(x: metaX + tagWidth + 6, y: top + 1, width: max(metaWidth - tagWidth - 6, 10), height: style.nameLineHeight),
-                color: .secondaryLabelColor, alignRight: true
+                color: .tertiaryLabelColor, alignRight: true
             )
         } else {
-            text.draw(kind, style: .meta, in: NSRect(x: metaX, y: top + 1, width: metaWidth, height: style.nameLineHeight), color: .secondaryLabelColor, alignRight: true)
+            text.draw(kind, style: .meta, in: NSRect(x: metaX, y: top + 1, width: metaWidth, height: style.nameLineHeight), color: .tertiaryLabelColor, alignRight: true)
         }
         let meta = metaLine(path)
         drawnMeta = meta
         text.draw(
             meta, style: .meta,
             in: NSRect(x: metaX, y: top + style.nameLineHeight + gap, width: metaWidth, height: style.detailLineHeight),
-            color: .secondaryLabelColor, alignRight: true
+            color: .tertiaryLabelColor, alignRight: true
         )
     }
 

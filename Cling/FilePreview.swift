@@ -162,10 +162,25 @@ enum TextSniffer {
 
 struct FilePreviewPanel: View {
     let paths: [FilePath]
+    /// For the search bar's preview card: the header and footer sit above and below the content on the card itself,
+    /// without bars of their own, and the content is rounded to match the card.
+    var plain = false
 
     var body: some View {
         ZStack(alignment: .top) {
-            if let path = current {
+            if plain, let path = current {
+                let kind = PreviewKind(for: path.url)
+                VStack(spacing: 0) {
+                    header(for: path)
+                    content(for: path, kind: kind, topInset: 0, bottomInset: 0)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .padding(.horizontal, 8)
+                    FileInfoBar(path: path, kind: kind)
+                }
+            } else if plain {
+                emptyState
+            } else if let path = current {
                 let kind = PreviewKind(for: path.url)
                 content(for: path, kind: kind, topInset: headerHeight, bottomInset: footerHeight)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

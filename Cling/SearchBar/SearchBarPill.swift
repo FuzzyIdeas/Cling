@@ -100,7 +100,7 @@ final class SearchBarPillView: NSView {
         label.needsDisplay = true
     }
 
-    private let background = SearchBarBackgroundView()
+    private let background = SearchBarBackgroundView(clear: true)
     private let label = PillLabel()
     private var dragStart: NSPoint?
     private var dragged = false
@@ -134,29 +134,19 @@ private final class PillLabel: NSView {
         #endif
         let font = NSFont.systemFont(ofSize: SearchBarPillView.fontSize)
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.secondaryLabelColor]
+        // The colour goes in as the symbol's palette, resolved now, while this view's appearance is the current one.
+        let color = NSColor(cgColor: NSColor.secondaryLabelColor.cgColor) ?? .secondaryLabelColor
         let config = NSImage.SymbolConfiguration(pointSize: SearchBarPillView.fontSize - 1, weight: .medium)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
         let glyph = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)?.withSymbolConfiguration(config)
         var x: CGFloat = 10
         if let glyph {
-            let tinted = glyph.tinted(.secondaryLabelColor)
             let size = glyph.size
-            tinted.draw(in: NSRect(x: x, y: (bounds.height - size.height) / 2, width: size.width, height: size.height))
+            glyph.draw(in: NSRect(x: x, y: (bounds.height - size.height) / 2, width: size.width, height: size.height))
             x += size.width + 5
         }
         let text = SearchBarPillView.text as NSString
         let size = text.size(withAttributes: attrs)
         text.draw(at: NSPoint(x: x, y: (bounds.height - size.height) / 2), withAttributes: attrs)
-    }
-}
-
-private extension NSImage {
-    /// The template glyph filled with `color`, so it follows light and dark mode at draw time.
-    func tinted(_ color: NSColor) -> NSImage {
-        NSImage(size: size, flipped: false) { rect in
-            self.draw(in: rect)
-            color.set()
-            rect.fill(using: .sourceAtop)
-            return true
-        }
     }
 }
