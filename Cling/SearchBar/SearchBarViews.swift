@@ -505,6 +505,8 @@ final class SearchBarRootView: NSView {
 
         addSubview(background)
         addSubview(field)
+        addSubview(ghostLabel)
+        addSubview(completionHints)
         addSubview(filterButton)
         addSubview(spinner)
         addSubview(everythingButton)
@@ -567,6 +569,8 @@ final class SearchBarRootView: NSView {
     let sortButton = SearchBarIconButton()
     let previewButton = SearchBarIconButton()
     let emptyLabel = NSTextField(labelWithString: "")
+    let ghostLabel = SearchBarGhostLabel()
+    let completionHints = SearchBarCompletionHints()
     let hintBar = SearchBarHintBar()
     /// Holds the preview's hosting view, created the first time the preview is shown.
     let previewContainer = SearchBarCardView()
@@ -599,6 +603,14 @@ final class SearchBarRootView: NSView {
 
     var searchRowHeight: CGFloat {
         FontScale.length(54, .secondary)
+    }
+
+    /// The rest of a past search that starts with the query, with the keys that take it.
+    var completion: SearchBarCompletion? {
+        didSet {
+            guard completion != oldValue else { return }
+            layoutCompletion()
+        }
     }
 
     /// Clicks that reach the background drag the window. The panel isn't movable by AppKit (see
@@ -672,6 +684,7 @@ final class SearchBarRootView: NSView {
         let fieldHeight = ceil(font.ascender - font.descender) + 2
         let fieldY = (mid + font.capHeight / 2 - font.ascender + 1).rounded()
         field.frame = NSRect(x: fieldX, y: fieldY, width: max(right - fieldX - 4, 40), height: fieldHeight)
+        layoutCompletion()
 
         hintBar.frame = NSRect(x: 0, y: h - hintHeight, width: w, height: hintHeight)
 
@@ -710,4 +723,40 @@ final class SearchBarRootView: NSView {
     }
 
     private var fontScale: Double = 0
+
+    private static func width(_ text: String, _ font: NSFont) -> CGFloat {
+        (text as NSString).size(withAttributes: [.font: font]).width
+    }
+
+    /// The ghost continues the query in the field's font: a label draws its text as far in from its frame as the field
+    /// does, so starting it the query's width along puts the rest right after what's typed.
+    private func layoutCompletion() {
+        guard let completion, let font = field.font else {
+            ghostLabel.isHidden = true
+            completionHints.isHidden = true
+            return
+        }
+        let start = field.frame.minX + Self.width(completion.typed, font)
+        let limit = field.frame.maxX
+        // A longer query scrolls in the field, and the rest would no longer follow it.
+        guard start + 28 < limit else {
+            ghostLabel.isHidden = true
+            completionHints.isHidden = true
+            return
+        }
+        ghostLabel.font = font
+        ghostLabel.stringValue = completion.suffix
+        let suffixWidth = Self.width(completion.suffix, font) + 4
+        ghostLabel.frame = NSRect(x: start, y: field.frame.minY, width: min(suffixWidth, limit - start), height: field.frame.height)
+        ghostLabel.isHidden = false
+
+        let hintsX = ghostLabel.frame.maxX + 6
+        completionHints.hints = completionHints.fitting(completion.hints, in: limit - hintsX)
+        let height = completionHints.height
+        let mid = min(searchRowHeight, bounds.height) / 2
+        completionHints.frame = NSRect(x: hintsX, y: (mid - height / 2).rounded(), width: completionHints.fittingWidth, height: height)
+        completionHints.isHidden = completionHints.hints.isEmpty
+        completionHints.needsDisplay = true
+    }
+
 }

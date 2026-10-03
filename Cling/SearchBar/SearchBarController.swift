@@ -270,6 +270,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         }
         panel.makeKeyAndOrderFront(nil)
         root.field.currentEditor()?.selectAll(nil)
+        updateCompletion()
         if let pill {
             grow(panel, outOf: pill, to: target)
         } else {
@@ -294,6 +295,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         searchWork?.cancel()
         previewWork?.cancel()
         historyIndex = -1
+        hideSuggestions()
+        root?.completion = nil
         closeQuickLook()
         clearPreview()
 
@@ -350,6 +353,13 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             closeQuickLook()
             return
         }
+        if suggestionsShown {
+            let visible = suggestionsVisible
+            hideSuggestions()
+            if visible {
+                return
+            }
+        }
         guard let root else { return }
         if !root.field.stringValue.isEmpty {
             root.field.stringValue = ""
@@ -389,6 +399,12 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         storeSize()
     }
 
+    func windowDidResize(_: Notification) {
+        if suggestionsVisible {
+            positionSuggestions()
+        }
+    }
+
     // MARK: Field
 
     func controlTextDidChange(_: Notification) {
@@ -399,9 +415,27 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     func control(_: NSControl, textView _: NSTextView, doCommandBy selector: Selector) -> Bool {
         switch selector {
         case #selector(NSResponder.moveDown(_:)):
+            if suggestionsVisible {
+                if suggestionIndex < suggestionCount - 1 {
+                    highlightSuggestion(suggestionIndex + 1)
+                    return true
+                }
+                // Past the last one, on into the results as in the window.
+                hideSuggestions()
+            }
             moveSelection(by: 1)
         case #selector(NSResponder.moveUp(_:)):
+            if suggestionsVisible {
+                if suggestionIndex > 0 {
+                    highlightSuggestion(suggestionIndex - 1)
+                } else {
+                    hideSuggestions()
+                }
+                return true
+            }
             moveSelection(by: -1)
+        case #selector(NSResponder.moveRight(_:)):
+            return completeNextWord()
         case #selector(NSResponder.moveDownAndModifySelection(_:)):
             moveSelection(by: 1, extend: true)
         case #selector(NSResponder.moveUpAndModifySelection(_:)):
@@ -417,7 +451,11 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         case #selector(NSResponder.insertNewline(_:)):
             _ = performReturn(modifiers: [])
         case #selector(NSResponder.insertTab(_:)):
-            drillIn()
+            if let suggestion = inlineSuggestion {
+                complete(to: suggestion)
+            } else {
+                drillIn()
+            }
         case #selector(NSResponder.insertBacktab(_:)):
             drillOut()
         case #selector(NSResponder.cancelOperation(_:)), #selector(NSResponder.complete(_:)):
@@ -433,6 +471,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     func queryEdited(_ text: String) {
         setListFocused(false)
         historyIndex = -1
+        suggestionIndex = -1
         if !FUZZY.showLiveIndex {
             FUZZY.suppressNextSearch = true
         }
@@ -453,6 +492,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         } else {
             FUZZY.performSearch()
         }
+        updateCompletion()
     }
 
     /// Sheets and alerts need Cling active to take the keyboard; the bar alone never activates it.
@@ -466,6 +506,10 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         guard listFocused != focused else { return }
         listFocused = focused
         results.strongSelection = focused
+        if focused {
+            suggestionsShown = false
+        }
+        updateCompletion()
         updateHints()
     }
 
@@ -511,6 +555,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         }
         FUZZY.query = text
         FUZZY.performSearch()
+        updateCompletion()
     }
 
     /// Tab: search inside the selected folder, the way → does in the window's table.
@@ -555,7 +600,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             }
             hints.append(.init(id: .showInFinder, key: keys.showInFinder, title: "Show in Finder"))
             hints.append(.init(id: .quickLook, key: listFocused ? "␣" : keys.quickLook, title: "QuickLook"))
-            if sel.count == 1, let path = sel.first, FilePathBackgroundTasks.shared.knownIsDir(path) == true {
+            // ⇥ takes the ghost completion while there is one.
+            if sel.count == 1, root.completion == nil, let path = sel.first, FilePathBackgroundTasks.shared.knownIsDir(path) == true {
                 hints.append(.init(id: .drill, key: "⇥", title: "Search in folder"))
             }
             hints.append(.init(id: .copy, key: keys.copy, title: "Copy"))
@@ -686,6 +732,13 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     private var cursorScreenFrame: NSRect?
     private var followWork: DispatchWorkItem?
 
+    // MARK: Past searches
+
+    /// The ⌘↓ list is open, even while nothing matches the query.
+    private var suggestionsShown = false
+    private var suggestionIndex = -1
+    private var suggestionsPanel: SearchBarSuggestionsPanel?
+
     private var showsPreview: Bool {
         Defaults[.searchBarShowPreview]
     }
@@ -712,6 +765,35 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             keys += symbol
         }
         return keys + Defaults[.showAppKey].character
+    }
+
+    private var suggestionsVisible: Bool {
+        suggestionsPanel?.isVisible == true
+    }
+
+    private var suggestionCount: Int {
+        suggestionsPanel?.list.items.count ?? 0
+    }
+
+    /// The latest past search the query starts, drawn after it: ⇥ takes it all, → a word at a time.
+    private var inlineSuggestion: String? {
+        guard let root, !listFocused, historyIndex < 0 else { return nil }
+        if let editor = root.field.currentEditor() as? NSTextView, editor.hasMarkedText() {
+            return nil
+        }
+        let query = root.field.stringValue
+        guard !query.isEmpty else { return nil }
+        let lower = query.lowercased()
+        return SearchHistory.shared.entries.first { $0.count > query.count && $0.lowercased().hasPrefix(lower) }
+    }
+
+    /// Past searches matching the query for the ⌘↓ list, most recent first.
+    private var historySuggestions: [String] {
+        let query = root?.field.stringValue ?? ""
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        return SearchHistory.shared.suggestions(for: query)
+            .filter { $0.trimmingCharacters(in: .whitespaces) != trimmed }
+            .prefix(8).map(\.self)
     }
 
     /// The `in:` query the window's → builds: home shortened to `~`, quoted when it has spaces.
@@ -1195,12 +1277,21 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
 
         switch kc {
         case 125 where mods == .command: // ⌘↓
-            selectEdge(last: true)
+            // From the field, past searches like the window's; from the list, the last result.
+            if !listFocused, !SearchHistory.shared.entries.isEmpty {
+                toggleSuggestions()
+            } else {
+                selectEdge(last: true)
+            }
             return nil
         case 126 where mods == .command: // ⌘↑
             selectEdge(last: false)
             return nil
         case 36, 76: // Return
+            if mods.isEmpty, suggestionsVisible {
+                pickSuggestion(at: max(suggestionIndex, 0))
+                return nil
+            }
             if mods.isEmpty || mods == [.command, .shift], performReturn(modifiers: mods) {
                 return nil
             }
@@ -1569,6 +1660,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     private func restyle() {
         pillView?.restyle()
         root?.background.rebuild()
+        suggestionsPanel?.background.rebuild()
     }
 
     private func fontScaleChanged() {
@@ -1578,6 +1670,132 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         results.tableView.rowHeight = SearchBarRowStyle.shared.rowHeight
         results.tableView.reloadData()
         root.hintBar.needsDisplay = true
+    }
+
+    private func updateCompletion() {
+        guard let root else { return }
+        let query = root.field.stringValue
+        let completion = inlineSuggestion.map { suggestion in
+            let suffix = String(suggestion.dropFirst(query.count))
+            var hints = ["tab to complete"]
+            if suffix.contains(" ") {
+                hints.append("→ word by word")
+            }
+            hints.append("⌘↓ suggestions")
+            return SearchBarCompletion(typed: query, suffix: suffix, hints: hints)
+        }
+        let hadCompletion = root.completion != nil
+        root.completion = completion
+        if hadCompletion != (completion != nil) {
+            updateHints()
+        }
+        updateSuggestions()
+    }
+
+    private func toggleSuggestions() {
+        suggestionsShown.toggle()
+        suggestionIndex = -1
+        updateSuggestions()
+    }
+
+    private func hideSuggestions() {
+        suggestionsShown = false
+        suggestionIndex = -1
+        updateSuggestions()
+    }
+
+    private func highlightSuggestion(_ index: Int) {
+        suggestionIndex = index
+        suggestionsPanel?.list.highlighted = index
+    }
+
+    private func pickSuggestion(at index: Int) {
+        guard let items = suggestionsPanel?.list.items, items.indices.contains(index) else { return }
+        hideSuggestions()
+        complete(to: items[index])
+    }
+
+    /// Puts `text` in the field as if typed, with the caret at its end.
+    private func complete(to text: String) {
+        guard let root else { return }
+        root.field.stringValue = text
+        if root.field.currentEditor() == nil {
+            panel?.makeFirstResponder(root.field)
+        }
+        root.field.currentEditor()?.selectedRange = NSRange(location: (text as NSString).length, length: 0)
+        queryEdited(text)
+    }
+
+    /// → at the end of the query takes the ghost completion's next word; anywhere else it moves the caret.
+    private func completeNextWord() -> Bool {
+        guard let root, let suggestion = inlineSuggestion, let editor = root.field.currentEditor() as? NSTextView else { return false }
+        let selected = editor.selectedRange()
+        guard selected.length == 0, selected.location == (editor.string as NSString).length else { return false }
+        let query = root.field.stringValue
+        let suffix = suggestion.dropFirst(query.count)
+        var end = suffix.startIndex
+        while end < suffix.endIndex, suffix[end] == " " {
+            end = suffix.index(after: end)
+        }
+        while end < suffix.endIndex, suffix[end] != " " {
+            end = suffix.index(after: end)
+        }
+        complete(to: query + suffix[suffix.startIndex ..< end])
+        return true
+    }
+
+    private func updateSuggestions() {
+        let items = suggestionsShown && isExpanded && historyIndex < 0 && !listFocused ? historySuggestions : []
+        guard let panel, !items.isEmpty else {
+            if let list = suggestionsPanel, list.isVisible {
+                list.parent?.removeChildWindow(list)
+                list.orderOut(nil)
+            }
+            return
+        }
+        let list = suggestionsPanel ?? makeSuggestionsPanel()
+        if suggestionIndex >= items.count {
+            suggestionIndex = -1
+        }
+        list.list.items = items
+        list.list.highlighted = suggestionIndex
+        positionSuggestions()
+        if !list.isVisible {
+            list.background.rebuild()
+            list.level = panel.level
+            list.collectionBehavior = panel.collectionBehavior
+            panel.addChildWindow(list, ordered: .above)
+            list.orderFront(nil)
+            // Its shadow follows the rounded background, which only exists once it has drawn.
+            DispatchQueue.main.async { list.invalidateShadow() }
+        }
+    }
+
+    private func makeSuggestionsPanel() -> SearchBarSuggestionsPanel {
+        let list = SearchBarSuggestionsPanel()
+        list.list.onPick = { [weak self] index in
+            self?.pickSuggestion(at: index)
+        }
+        list.list.onHover = { [weak self] index in
+            self?.highlightSuggestion(index)
+        }
+        suggestionsPanel = list
+        return list
+    }
+
+    /// Under the search row, with its text lined up with the query's.
+    private func positionSuggestions() {
+        guard let panel, let root, let list = suggestionsPanel else { return }
+        let field = panel.convertToScreen(root.convert(root.field.frame, to: nil))
+        let rowBottom = panel.convertPoint(toScreen: root.convert(NSPoint(x: 0, y: min(root.searchRowHeight, root.bounds.height)), to: nil)).y
+        let x = field.minX + 2 - SearchBarSuggestionsView.textInset
+        let size = list.list.fittingSize(maxWidth: max(panel.frame.maxX - 12 - x, 220))
+        let frame = NSRect(x: x, y: rowBottom - size.height + 2, width: size.width, height: size.height)
+        guard frame != list.frame else { return }
+        list.setFrame(frame, display: true)
+        if list.isVisible {
+            DispatchQueue.main.async { list.invalidateShadow() }
+        }
     }
 
     private func stepHistory(back: Bool) -> Bool {
