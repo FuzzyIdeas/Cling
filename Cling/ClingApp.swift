@@ -207,11 +207,15 @@ class AppDelegate: LowtechProAppDelegate {
             .removeDuplicates()
             .dropFirst()
             .debounce(for: .seconds(1), scheduler: RunLoop.main)
-            .sink { _ in
-                FUZZY.syncScopeEngines()
-                // The card written at launch predates the licence check, and agents read its `pro`.
-                MCPInstaller.writeServerCard()
-            }
+            .sink { _ in FUZZY.syncScopeEngines() }
+            .store(in: &observers)
+        // The card written at launch predates the licence check, and agents read its `pro`. No `dropFirst`
+        // here: a licence that is already active when this subscribes must reach the card too.
+        pro.$productActivated.combineLatest(pro.$onTrial)
+            .map { $0 || $1 }
+            .removeDuplicates()
+            .debounce(for: .seconds(1), scheduler: RunLoop.main)
+            .sink { _ in MCPInstaller.writeServerCard() }
             .store(in: &observers)
         if !SWIFTUI_PREVIEW {
             pro.checkProLicense()
