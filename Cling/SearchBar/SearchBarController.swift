@@ -319,11 +319,14 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         }
     }
 
-    /// ⌃⇥ in the bar: the same search in the window, for what the bar doesn't do.
+    /// ⌃⇥ in the bar: the same search in the window, for what the bar doesn't do. The switch sticks: the hotkey, the
+    /// Dock and menu bar icons and launch bring up the window from now on, as if it was picked in Settings > Style.
     func switchToWindow() {
         guard isExpanded else { return }
         // Focus stays with Cling, which the window takes next.
         collapse(focusLost: true)
+        ownsHotkey = false
+        Defaults[.hotkeyTarget] = .window
         if let app = AppDelegate.shared, app.mainWindow == nil {
             app.pendingDisplay = app.displayForMainWindow()
         }
@@ -331,11 +334,13 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// ⌃⇥ in the window: the same search in the bar.
+    /// ⌃⇥ in the window: the same search in the bar, which then stays the one Cling brings up.
     func switchFromWindow() {
         if let app = AppDelegate.shared, let main = app.mainWindow {
             app.hideOrCloseMainWindow(main)
         }
+        ownsHotkey = true
+        Defaults[.hotkeyTarget] = .searchBar
         expand()
     }
 

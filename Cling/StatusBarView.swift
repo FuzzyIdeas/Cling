@@ -87,6 +87,13 @@ struct StatusBarView: View {
                 Text("double tap **`\(rowsToggleSymbol)`** to \(toolbarRowsHidden ? "show" : "hide") actions")
                 Divider().frame(height: 10)
             }
+            Button {
+                SB.switchFromWindow()
+            } label: {
+                Text("**`⌃⇥`** to switch to the search bar")
+            }
+            .buttonStyle(.text(borderColor: .clear))
+            Divider().frame(height: 10)
             Text("**`\(showHideShortcut)`** to show/hide Cling").padding(.trailing, 2)
 
             Button {
