@@ -52,6 +52,12 @@ struct QuerySyntaxCheatsheet: View {
             Item(syntax: "!name/", desc: "Hide a folder", example: "!Backups/"),
             Item(syntax: "!/", desc: "Files only (hide folders)", example: nil),
         ]),
+        Group(title: "Escapes", icon: "character.cursor.ibeam", tint: .teal, items: [
+            Item(syntax: "\\r \\n \\t", desc: "Return, newline or tab in a name", example: "Icon\\r$ finds custom folder icons, with Everything on"),
+            Item(syntax: "\\xHH", desc: "Any byte, in hex", example: "Icon\\x0D$"),
+            Item(syntax: "\\uHHHH", desc: "Any character, by its code", example: "\\u202F, the narrow space in screenshot names"),
+            Item(syntax: "\\ \\' \\! \\$", desc: "A space or operator as plain text", example: "50\\$ finds price 50$.pdf"),
+        ]),
     ]
 
     var body: some View {

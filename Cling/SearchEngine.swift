@@ -568,8 +568,14 @@ private func tokenizeQuery(_ s: String) -> [String] {
     var cur = ""
     var inQuote = false
     var has = false
+    var escaped = false
     for ch in s {
-        if ch == "\"" {
+        if escaped {
+            // Kept as typed, a space or quote included, and decoded with the rest of the token.
+            cur.append(ch); escaped = false
+        } else if ch == "\\" {
+            cur.append(ch); has = true; escaped = true
+        } else if ch == "\"" {
             inQuote.toggle(); has = true
         } else if ch == " ", !inQuote {
             if has {
@@ -583,6 +589,82 @@ private func tokenizeQuery(_ s: String) -> [String] {
         tokens.append(cur)
     }
     return tokens
+}
+
+/// Escapes for what a query can't otherwise hold: `\r`, `\n` and `\t` (a custom folder icon is a file named `Icon\r`),
+/// `\xHH` for any byte and `\uHHHH` for any character, and a backslash before a space, a quote, a backslash or an
+/// operator character (`\ `, `\"`, `\'`, `\!`, `\^`, `\$`, `\\`) for that character as plain text. Any other backslash
+/// stays as typed, so a query that already had one means what it did before.
+///
+/// The token comes from the lowercased query and goes back lowercased, as `\x41` decodes to an uppercase A.
+private func decodeQueryEscapes(_ token: String) -> String {
+    guard token.utf8.contains(0x5C) else { return token }
+    let src = Array(token.utf8)
+    var out: [UInt8] = []
+    out.reserveCapacity(src.count)
+
+    @inline(__always) func hexValue(_ b: UInt8) -> UInt32? {
+        switch b {
+        case 0x30 ... 0x39: UInt32(b - 0x30)
+        case 0x61 ... 0x66: UInt32(b - 0x61 + 10)
+        case 0x41 ... 0x46: UInt32(b - 0x41 + 10)
+        default: nil
+        }
+    }
+    /// The value of `count` hex digits starting at `at`, when they are all there.
+    func hex(at start: Int, count: Int) -> UInt32? {
+        guard start + count <= src.count else { return nil }
+        var v: UInt32 = 0
+        for k in start ..< start + count {
+            guard let d = hexValue(src[k]) else { return nil }
+            v = v << 4 | d
+        }
+        return v
+    }
+
+    var i = 0
+    while i < src.count {
+        guard src[i] == 0x5C, i + 1 < src.count else {
+            out.append(src[i]); i += 1
+            continue
+        }
+        switch src[i + 1] {
+        case UInt8(ascii: "r"):
+            out.append(0x0D); i += 2
+        case UInt8(ascii: "n"):
+            out.append(0x0A); i += 2
+        case UInt8(ascii: "t"):
+            out.append(0x09); i += 2
+        case UInt8(ascii: " "), UInt8(ascii: "\""), UInt8(ascii: "'"), UInt8(ascii: "!"),
+             UInt8(ascii: "^"), UInt8(ascii: "$"), UInt8(ascii: "\\"):
+            out.append(src[i + 1]); i += 2
+        case UInt8(ascii: "x"):
+            if let byte = hex(at: i + 2, count: 2) {
+                out.append(UInt8(byte)); i += 4
+            } else {
+                out.append(src[i]); i += 1
+            }
+        case UInt8(ascii: "u"):
+            if let code = hex(at: i + 2, count: 4), let scalar = Unicode.Scalar(code) {
+                out.append(contentsOf: Array(String(Character(scalar)).utf8)); i += 6
+            } else {
+                out.append(src[i]); i += 1
+            }
+        default:
+            out.append(src[i]); i += 1
+        }
+    }
+    return String(decoding: out, as: UTF8.self).lowercased()
+}
+
+/// Whether the last character of a token is escaped: an odd run of backslashes right before it.
+private func lastIsEscaped(_ token: String) -> Bool {
+    var backslashes = 0
+    for b in token.utf8.dropLast().reversed() {
+        guard b == 0x5C else { break }
+        backslashes += 1
+    }
+    return backslashes % 2 == 1
 }
 
 // MARK: - SearchResult
@@ -2782,7 +2864,7 @@ final class SearchEngine: @unchecked Sendable {
 
             // Folder-scope / depth tokens (positive only)
             if !negate, t.hasPrefix("in:"), t.count > 3 {
-                var path = String(t.dropFirst(3))
+                var path = decodeQueryEscapes(String(t.dropFirst(3)))
                 if path.hasPrefix("~") {
                     path = homePath + path.dropFirst()
                 }
@@ -2813,7 +2895,7 @@ final class SearchEngine: @unchecked Sendable {
 
             // Anchor sigils: trailing '$' (end), leading '^'/single-segment '/' (start), leading '\'' (quote).
             var anchorEnd = false
-            if t.hasSuffix("$"), t.count > 1 {
+            if t.hasSuffix("$"), t.count > 1, !lastIsEscaped(t) {
                 anchorEnd = true; t = String(t.dropLast())
             }
             var anchorStart = false
@@ -2835,11 +2917,13 @@ final class SearchEngine: @unchecked Sendable {
             if t.isEmpty {
                 continue
             }
+            // The operators above are read from the token as typed, so an escaped character is only ever text.
             let body = t
+            let text = decodeQueryEscapes(body)
 
             if anchorStart || anchorEnd {
                 if anchorStart {
-                    let b = opNeedle("/" + body)
+                    let b = opNeedle("/" + text)
                     if negate {
                         negAnchorStarts.append(b)
                     } else {
@@ -2847,7 +2931,7 @@ final class SearchEngine: @unchecked Sendable {
                     }
                 }
                 if anchorEnd {
-                    let b = opNeedle(body)
+                    let b = opNeedle(text)
                     if negate {
                         negAnchorEnds.append(b)
                     } else {
@@ -2861,14 +2945,14 @@ final class SearchEngine: @unchecked Sendable {
             // operator always treats it as plain text (e.g. "'.tar", "'photos/").
             if !quoted, body.hasPrefix("."), body.count > 1 {
                 if negate {
-                    negExtStrings.append(body)
+                    negExtStrings.append(text)
                 } else {
-                    extStrings.append(body)
+                    extStrings.append(text)
                 }
                 continue
             }
             if !quoted, body.hasPrefix("*."), body.count > 2 {
-                let ext = "." + body.dropFirst(2)
+                let ext = "." + text.dropFirst(2)
                 if negate {
                     negExtStrings.append(ext)
                 } else {
@@ -2878,9 +2962,9 @@ final class SearchEngine: @unchecked Sendable {
             }
             if !quoted, body.hasSuffix("/"), body.count > 1 {
                 if negate {
-                    negSubstrings.append(opNeedle(body))
+                    negSubstrings.append(opNeedle(text))
                 } else {
-                    dirSegStrings.append(body)
+                    dirSegStrings.append(text)
                 }
                 continue
             }
@@ -2888,9 +2972,9 @@ final class SearchEngine: @unchecked Sendable {
             // flips whichever mode is NOT the default, so under literalDefault a bareword is the
             // literal one and 'foo is the fuzzy escape hatch (like fzf's --exact).
             if negate {
-                negSubstrings.append(opNeedle(body))
+                negSubstrings.append(opNeedle(text))
             } else if literalDefault != quoted {
-                litSubstrings.append(opNeedle(body))
+                litSubstrings.append(opNeedle(text))
                 // A bareword under literalDefault also feeds the fuzzy scorer: the substring gate
                 // above decides WHICH paths match, the score only ranks them. Without it a literal
                 // query loses every ranking signal (basename hit, prefix, tightness) and falls back
@@ -2898,10 +2982,10 @@ final class SearchEngine: @unchecked Sendable {
                 // this never widens the result set. Explicit 'foo keeps its pure-gate semantics
                 // (order-independent across several quoted words) untouched.
                 if literalDefault {
-                    fuzzyTokens.append(body)
+                    fuzzyTokens.append(text)
                 }
             } else {
-                fuzzyTokens.append(body)
+                fuzzyTokens.append(text)
             }
         }
 
