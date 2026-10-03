@@ -71,7 +71,6 @@ final class SearchBarRowStyle {
     private(set) var nameLineHeight: CGFloat = 16
     private(set) var detailLineHeight: CGFloat = 14
     private(set) var metaWidth: CGFloat = 150
-    private(set) var stashTagWidth: CGFloat = 30
     private(set) var scale: Double = 1
 
     /// Bumped whenever sizes or fonts change, so rows drawn with the old ones know to redraw.
@@ -218,10 +217,8 @@ final class SearchBarRowStyle {
 
         let nameFont = NSFont.systemFont(ofSize: FontScale.size(13), weight: .medium)
         let detailFont = NSFont.systemFont(ofSize: FontScale.size(11))
-        let tagFont = NSFont.systemFont(ofSize: FontScale.size(9.5), weight: .semibold)
         nameLineHeight = ceil(nameFont.ascender - nameFont.descender + nameFont.leading)
         detailLineHeight = ceil(detailFont.ascender - detailFont.descender + detailFont.leading)
-        stashTagWidth = ceil(("Stash" as NSString).size(withAttributes: [.font: tagFont]).width)
         SearchBarTextCache.shared.reset()
         generation += 1
     }
@@ -235,7 +232,7 @@ final class SearchBarRowStyle {
 @MainActor
 final class SearchBarTextCache {
     enum Style: Int {
-        case name, detail, meta, tag
+        case name, detail, meta
         case hintKey, hintTitle, status, flash
     }
 
@@ -302,7 +299,6 @@ final class SearchBarTextCache {
         case .name: .systemFont(ofSize: FontScale.size(13), weight: .medium)
         case .detail: .systemFont(ofSize: FontScale.size(11))
         case .meta: .monospacedDigitSystemFont(ofSize: FontScale.size(10.5), weight: .regular)
-        case .tag: .systemFont(ofSize: FontScale.size(9.5), weight: .semibold)
         case .hintKey: .systemFont(ofSize: FontScale.size(10, .chrome), weight: .semibold)
         case .hintTitle: .systemFont(ofSize: FontScale.size(11, .chrome))
         case .status: .monospacedDigitSystemFont(ofSize: FontScale.size(11, .chrome), weight: .regular)
@@ -348,12 +344,16 @@ final class SearchBarRowView: NSTableRowView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        addSubview(stashView)
         addSubview(selectionView)
         addSubview(iconView)
         addSubview(content)
+        addSubview(stashHeader)
+        addSubview(stashDivider)
         selectionView.isHidden = true
-        stashView.isHidden = true
+        stashHeader.isHidden = true
+        stashDivider.isHidden = true
+        stashHeader.textColor = .secondaryLabelColor
+        stashHeader.setAccessibilityElement(false)
     }
 
     @available(*, unavailable)
@@ -361,8 +361,19 @@ final class SearchBarRowView: NSTableRowView {
         fatalError()
     }
 
+    static let stashDividerHeight: CGFloat = 9
+
+    /// Room above the first stashed file for the section's title, and below the last one for the line that
+    /// separates it from the results.
+    static var stashHeaderHeight: CGFloat {
+        FontScale.length(24, .chrome)
+    }
+
     override var isOpaque: Bool {
         false
+    }
+    override var isFlipped: Bool {
+        true
     }
     override var allowsVibrancy: Bool {
         false
@@ -381,7 +392,8 @@ final class SearchBarRowView: NSTableRowView {
     let content = SearchBarRowContent()
     let iconView = SearchBarIconView()
     let selectionView = SearchBarSelectionView()
-    let stashView = SearchBarStashView()
+    let stashHeader = NSTextField(labelWithString: "Stash")
+    let stashDivider = SearchBarDividerView()
 
     var path: FilePath? {
         get { content.path }
@@ -391,13 +403,14 @@ final class SearchBarRowView: NSTableRowView {
         }
     }
 
-    /// Where the row sits in the stashed files at the top of the list: they share one panel, labelled on its first row.
-    var stashPlace: SearchBarStashPlace = .none {
+    /// The first stashed file carries the section's title above it, and the last one the line below it when results
+    /// follow.
+    var stashRole = SearchBarStashRole() {
         didSet {
-            guard stashPlace != oldValue else { return }
-            content.isStashed = stashPlace == .first || stashPlace == .only
-            stashView.place = stashPlace
-            stashView.isHidden = stashPlace == .none
+            guard stashRole != oldValue else { return }
+            stashHeader.isHidden = !stashRole.header
+            stashDivider.isHidden = !stashRole.divider
+            needsLayout = true
         }
     }
 
@@ -415,10 +428,21 @@ final class SearchBarRowView: NSTableRowView {
     override func layout() {
         super.layout()
         let side = SearchBarRowStyle.shared.iconSide
-        selectionView.frame = bounds.insetBy(dx: SearchBarMetrics.inset, dy: 1)
-        stashView.frame = bounds.insetBy(dx: SearchBarMetrics.inset - 2, dy: 0)
-        iconView.frame = NSRect(x: SearchBarRowStyle.iconX, y: ((bounds.height - side) / 2).rounded(), width: side, height: side)
-        content.frame = bounds
+        let top = stashRole.header ? Self.stashHeaderHeight : 0
+        let bottom = stashRole.divider ? Self.stashDividerHeight : 0
+        let file = NSRect(x: 0, y: top, width: bounds.width, height: max(bounds.height - top - bottom, 0))
+        selectionView.frame = file.insetBy(dx: SearchBarMetrics.inset, dy: 1)
+        iconView.frame = NSRect(x: SearchBarRowStyle.iconX, y: (file.minY + (file.height - side) / 2).rounded(), width: side, height: side)
+        content.frame = file
+        if stashRole.header {
+            stashHeader.font = .systemFont(ofSize: FontScale.size(11, .chrome), weight: .semibold)
+            let height = ceil(stashHeader.intrinsicContentSize.height)
+            stashHeader.frame = NSRect(x: SearchBarMetrics.inset + 8, y: (top - height).rounded() - 2, width: bounds.width / 2, height: height)
+        }
+        if stashRole.divider {
+            let line = 1 / (window?.backingScaleFactor ?? 2)
+            stashDivider.frame = NSRect(x: SearchBarMetrics.inset + 8, y: file.maxY + (bottom - line) / 2, width: max(bounds.width - SearchBarMetrics.inset * 2 - 16, 0), height: line)
+        }
     }
 
     override func viewDidChangeBackingProperties() {
@@ -491,14 +515,17 @@ final class SearchBarIconView: NSView {
     }
 }
 
-// MARK: - SearchBarStashPlace
+// MARK: - SearchBarStashRole
 
-enum SearchBarStashPlace { case none, first, middle, last, only }
+struct SearchBarStashRole: Equatable {
+    var header = false
+    var divider = false
+}
 
-// MARK: - SearchBarStashView
+// MARK: - SearchBarDividerView
 
-/// A slice of the panel behind the stashed files, rounded at the block's ends so the rows read as one section.
-final class SearchBarStashView: NSView {
+/// The faint line under the stashed files, where the results start.
+final class SearchBarDividerView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -516,33 +543,13 @@ final class SearchBarStashView: NSView {
         false
     }
 
-    var place: SearchBarStashPlace = .none {
-        didSet {
-            guard place != oldValue else { return }
-            needsDisplay = true
-        }
-    }
-
     override func hitTest(_: NSPoint) -> NSView? {
         nil
     }
 
     override func updateLayer() {
-        guard let layer else { return }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            layer.backgroundColor = NSColor.systemOrange.withAlphaComponent(dark ? 0.1 : 0.08).cgColor
-        }
-        layer.cornerRadius = SearchBarMetrics.rowRadius + 2
-        layer.cornerCurve = .continuous
-        // The view isn't flipped, so its layer's minY corners are the bottom ones.
-        let top: CACornerMask = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-        let bottom: CACornerMask = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        switch place {
-        case .first: layer.maskedCorners = top
-        case .last: layer.maskedCorners = bottom
-        case .only, .none: layer.maskedCorners = top.union(bottom)
-        case .middle: layer.maskedCorners = []
+            layer?.backgroundColor = NSColor.separatorColor.cgColor
         }
     }
 }
@@ -620,13 +627,6 @@ final class SearchBarRowContent: NSView {
         }
     }
 
-    var isStashed = false {
-        didSet {
-            guard isStashed != oldValue else { return }
-            needsDisplay = true
-        }
-    }
-
     override func hitTest(_: NSPoint) -> NSView? {
         nil
     }
@@ -671,17 +671,7 @@ final class SearchBarRowContent: NSView {
         }
         let metaX = bounds.width - metaWidth - 16
         let kind = style.kind(of: path, isDir: FilePathBackgroundTasks.shared.knownIsDir(path))
-        if isStashed {
-            let tagWidth = style.stashTagWidth
-            text.draw("Stash", style: .tag, in: NSRect(x: metaX, y: top + 2, width: metaWidth, height: style.nameLineHeight), color: .systemOrange)
-            text.draw(
-                kind, style: .meta,
-                in: NSRect(x: metaX + tagWidth + 6, y: top + 1, width: max(metaWidth - tagWidth - 6, 10), height: style.nameLineHeight),
-                color: .tertiaryLabelColor, alignRight: true
-            )
-        } else {
-            text.draw(kind, style: .meta, in: NSRect(x: metaX, y: top + 1, width: metaWidth, height: style.nameLineHeight), color: .tertiaryLabelColor, alignRight: true)
-        }
+        text.draw(kind, style: .meta, in: NSRect(x: metaX, y: top + 1, width: metaWidth, height: style.nameLineHeight), color: .tertiaryLabelColor, alignRight: true)
         let meta = metaLine(path)
         drawnMeta = meta
         text.draw(
@@ -828,37 +818,38 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
         } else if let first = selection.first {
             tableView.scrollRowToVisible(first)
         }
-        // A row kept across the change can now start, end or leave the stash block.
+        // A row kept across the change can now start, end or leave the stash section, which changes its height.
+        let span = items.prefix { stashed.contains($0) }.count + 1
+        let changed = min(max(span, stashSpan), items.count)
+        stashSpan = span
+        if changed > 0 {
+            tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0 ..< changed))
+        }
         forEachVisibleRow { row, view in
-            view.stashPlace = stashPlace(row)
+            view.stashRole = stashRole(row)
         }
         onSelectionChange?()
     }
 
-    /// The list's height for `rows` rows, with its insets.
-    func listHeight(rows: Int) -> CGFloat {
-        CGFloat(rows) * tableView.rowHeight + scrollView.contentInsets.top + scrollView.contentInsets.bottom
+    /// The list's height for the stashed files alone, with the section's title and the list's insets.
+    func stashListHeight(rows: Int) -> CGFloat {
+        CGFloat(rows) * tableView.rowHeight + SearchBarRowView.stashHeaderHeight + scrollView.contentInsets.top + scrollView.contentInsets.bottom
     }
 
     /// Same paths, fresher icons, sizes or dates: redraw the rows on screen whose look changed.
     func refreshVisibleRows() {
         forEachVisibleRow { row, view in
-            view.stashPlace = stashPlace(row)
+            view.stashRole = stashRole(row)
             view.refresh()
         }
     }
 
-    /// Stashed files lead the list as one block.
-    func stashPlace(_ row: Int) -> SearchBarStashPlace {
-        guard stashed.contains(items[row]) else { return .none }
+    /// Stashed files lead the list as one section.
+    func stashRole(_ row: Int) -> SearchBarStashRole {
+        guard stashed.contains(items[row]) else { return SearchBarStashRole() }
         let above = row > 0 && stashed.contains(items[row - 1])
-        let below = row + 1 < items.count && stashed.contains(items[row + 1])
-        switch (above, below) {
-        case (false, false): return .only
-        case (false, true): return .first
-        case (true, true): return .middle
-        case (true, false): return .last
-        }
+        let below = row + 1 < items.count
+        return SearchBarStashRole(header: !above, divider: below && !stashed.contains(items[row + 1]))
     }
 
     func select(row: Int, extend: Bool = false) {
@@ -903,7 +894,7 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
             view = SearchBarRowView()
         }
         view.path = path
-        view.stashPlace = stashPlace(row)
+        view.stashRole = stashRole(row)
         view.strongSelection = strongSelection
         return view
     }
@@ -923,8 +914,11 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
         nil
     }
 
-    func tableView(_: NSTableView, heightOfRow _: Int) -> CGFloat {
-        SearchBarRowStyle.shared.rowHeight
+    func tableView(_: NSTableView, heightOfRow row: Int) -> CGFloat {
+        let base = SearchBarRowStyle.shared.rowHeight
+        guard row < items.count, !stashed.isEmpty else { return base }
+        let role = stashRole(row)
+        return base + (role.header ? SearchBarRowView.stashHeaderHeight : 0) + (role.divider ? SearchBarRowView.stashDividerHeight : 0)
     }
 
     func tableViewSelectionDidChange(_: Notification) {
@@ -937,6 +931,9 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
     }
 
     private static let maxPooledRows = 64
+
+    /// The rows the stash section took last time, whose heights may need redoing.
+    private var stashSpan = 0
 
     private var suppressSelectionCallback = false
     private var freeRows: [FilePath: SearchBarRowView] = [:]

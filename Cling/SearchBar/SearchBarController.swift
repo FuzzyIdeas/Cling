@@ -804,7 +804,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     /// Search row, stashed files and hint bar, when the stash is all the bar shows; nil otherwise.
     private var stashOnlyHeight: CGFloat? {
         guard emptyBeforeTyping, !STASH.files.isEmpty, let root else { return nil }
-        let height = root.searchRowHeight + results.listHeight(rows: min(STASH.files.count, 8)) + root.hintBarHeight
+        let height = root.searchRowHeight + results.stashListHeight(rows: min(STASH.files.count, 8)) + root.hintBarHeight
         return min(height.rounded(.up), storedSize.height)
     }
 
