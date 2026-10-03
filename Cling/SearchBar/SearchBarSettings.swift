@@ -6,7 +6,6 @@
 //
 
 import Defaults
-import KeyboardShortcuts
 import SwiftUI
 
 // MARK: - HotkeyTarget
@@ -57,11 +56,6 @@ extension Defaults.Keys {
     static let searchBarPosition = Key<[Double]>("searchBarPosition", default: [])
 }
 
-extension KeyboardShortcuts.Name {
-    /// A real global hotkey, unlike the `cl_` action names which are dispatched window-locally.
-    static let clSearchBar = Self("cl_searchBar")
-}
-
 // MARK: - SearchBarSettingsSection
 
 /// Lives in Settings > General; the choice between the bar and the window is in Settings > Style. Labels only: what
@@ -69,11 +63,6 @@ extension KeyboardShortcuts.Name {
 struct SearchBarSettingsSection: View {
     var body: some View {
         Section("Search bar") {
-            LabeledContent("Search bar hotkey") {
-                ShortcutRecorder(name: .clSearchBar, label: "Search bar hotkey")
-            }
-            .labeledContentStyle(ShortcutRowStyle())
-
             Toggle("Pin to desktop", isOn: $pinned)
             if pinned {
                 Toggle("Keep above windows", isOn: $aboveWindows)

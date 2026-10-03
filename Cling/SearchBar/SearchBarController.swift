@@ -145,13 +145,17 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         minQueryLength = Defaults[.minQueryLength]
         pinned = Defaults[.searchBarPinned]
 
-        KeyboardShortcuts.onKeyDown(for: .clSearchBar) { [weak self] in
-            self?.toggle()
-        }
-
         pub(.hotkeyTarget).sink { [weak self] change in
-            mainAsync { self?.ownsHotkey = change.newValue == .searchBar }
+            mainAsync {
+                self?.ownsHotkey = change.newValue == .searchBar
+                self?.updatePillHotkey()
+            }
         }.store(in: &observers)
+        for key: Defaults._AnyKey in [.enableGlobalHotkey, .triggerKeys, .showAppKey] {
+            Defaults.publisher(keys: key).sink { [weak self] _ in
+                mainAsync { self?.updatePillHotkey() }
+            }.store(in: &observers)
+        }
         pub(.minQueryLength).sink { [weak self] change in
             mainAsync { self?.minQueryLength = change.newValue }
         }.store(in: &observers)
@@ -221,9 +225,11 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         }
 
         let wasExpanded = isExpanded
+        let pill = !wasExpanded && pinned ? pillPanel.flatMap { $0.isVisible ? $0 : nil } : nil
+        let target = frameForExpanded()
         if !wasExpanded {
             placingPanel = true
-            panel.setFrame(frameForExpanded(), display: false)
+            panel.setFrame(pill?.frame ?? target, display: false)
             placingPanel = false
         }
 
@@ -252,9 +258,16 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         if root.field.currentEditor() == nil {
             panel.makeFirstResponder(root.field)
         }
+        if let pill {
+            panel.alphaValue = 0
+        }
         panel.makeKeyAndOrderFront(nil)
         root.field.currentEditor()?.selectAll(nil)
-        pillPanel?.orderOut(nil)
+        if let pill {
+            grow(panel, outOf: pill, to: target)
+        } else if !morphing {
+            pillPanel?.orderOut(nil)
+        }
         // After this turn's commit, so tearing the hidden window's content down doesn't hold up the
         // bar's first frame.
         DispatchQueue.main.async { [weak self] in
@@ -278,12 +291,13 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         WM.searchBarActive = false
         FUZZY.cancelPendingSearch()
         EVERYTHING.windowHidden()
-        panel?.orderOut(nil)
+        if pinned, let panel {
+            shrink(panel)
+        } else {
+            panel?.orderOut(nil)
+        }
         if focusLost {
             lastFocusLossCollapse = Date()
-        }
-        if pinned {
-            showPill()
         }
         restoreMainContentWhenIdle()
         if activatedApp {
@@ -582,6 +596,10 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         MainActor.assumeIsolated { quickLookItems[safe: index] as NSURL? }
     }
 
+    /// Starts gently, so the first frames still look like the field, and settles slowly.
+    private static let growTiming = CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
+    private static let shrinkTiming = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
+
     private var hintKeys = HintKeys()
     private var restoreMainContentWork: DispatchWorkItem?
     private var pillPanel: SearchBarPillPanel?
@@ -609,6 +627,13 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     private var pinned = false
     private var lastFocusLossCollapse: Date?
 
+    // MARK: Pill
+
+    /// While the bar grows out of the compact field or shrinks back into it.
+    private var morphing = false
+    /// Tells a morph's completion whether a newer one took over.
+    private var morphGeneration = 0
+
     private var showsPreview: Bool {
         Defaults[.searchBarShowPreview]
     }
@@ -622,6 +647,19 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     /// The expanded height before typing when the bar shows only its field.
     private var fieldOnlyBeforeTyping: Bool {
         FUZZY.noQuery && FUZZY.volumeFilter == nil && Defaults[.searchBarBeforeTyping] == .fieldOnly
+    }
+
+    /// Cling's hotkey, shown on the compact field while it's the bar that the hotkey brings up, in
+    /// the usual ⌃⌥⇧⌘ order.
+    private var pillHotkey: String? {
+        guard Defaults[.hotkeyTarget] == .searchBar, Defaults[.enableGlobalHotkey] else { return nil }
+        let triggers = Defaults[.triggerKeys]
+        let flags = triggers.map(\.sideIndependentModifier).reduce(NSEvent.ModifierFlags()) { $0.union($1) }
+        var keys = triggers.contains(.fn) ? "fn" : ""
+        for (flag, symbol) in [(NSEvent.ModifierFlags.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")] where flags.contains(flag) {
+            keys += symbol
+        }
+        return keys + Defaults[.showAppKey].character
     }
 
     /// The `in:` query the window's → builds: home shortened to `~`, quoted when it has spaces.
@@ -639,7 +677,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
 
     /// Shrinks the bar to its search row, or grows it back to the stored size, keeping its top edge where it is.
     private func fitPanelHeight() {
-        guard let panel, let root else { return }
+        guard let panel, let root, !morphing else { return }
         let height = root.fieldOnly ? root.searchRowHeight : storedSize.height
         guard panel.frame.height != height else { return }
         var frame = panel.frame
@@ -689,8 +727,9 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         panel.isOpaque = false
         panel.hasShadow = true
         panel.animationBehavior = .none
-        // Down to the search row, which is all the bar shows before typing. Resizing by hand keeps to minSize.
-        panel.minSize = NSSize(width: Self.minSize.width, height: 40)
+        // Down to the compact field, which the bar grows out of and shrinks back into. Resizing by hand keeps to the
+        // resize overlay's minSize.
+        panel.minSize = NSSize(width: 40, height: 20)
         panel.depthLimit = .twentyfourBitRGB
 
         let root = SearchBarRootView(results: results)
@@ -730,20 +769,30 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     }
 
     /// Unpinned: where it was left on the display Settings > General picks, Spotlight's spot at
-    /// first. Pinned: grown out of the compact field, downwards when there's room, else upwards.
+    /// first. Pinned: grown out of the compact field, with its search row on the field's midline,
+    /// downwards when there's room, else upwards. Sideways it grows away from the closer screen edge:
+    /// rightwards from a field in the left third, leftwards from one in the right third, and evenly
+    /// from one in the middle.
     private func frameForExpanded() -> NSRect {
         var size = storedSize
+        let rowHeight = root?.searchRowHeight ?? 54
         if fieldOnlyBeforeTyping, let root {
             root.fieldOnly = true
-            size.height = root.searchRowHeight
+            size.height = rowHeight
         }
         if pinned, let pillPanel {
             let pillFrame = pillPanel.frame
             let screen = NSScreen.screens.first { $0.frame.intersects(pillFrame) } ?? NSScreen.main
             let area = screen?.visibleFrame ?? pillFrame
-            var origin = NSPoint(x: pillFrame.minX - 10, y: pillFrame.maxY - size.height)
+            let across = area.width > 0 ? (pillFrame.midX - area.minX) / area.width : 0.5
+            let x = switch across {
+            case ..<(1 / 3): pillFrame.minX - 10
+            case (2 / 3)...: pillFrame.maxX + 10 - size.width
+            default: pillFrame.midX - size.width / 2
+            }
+            var origin = NSPoint(x: x, y: pillFrame.midY + rowHeight / 2 - size.height)
             if origin.y < area.minY {
-                origin.y = pillFrame.minY
+                origin.y = pillFrame.midY - rowHeight / 2
             }
             return clamp(NSRect(origin: origin, size: size), in: area)
         }
@@ -1164,7 +1213,63 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         return nil
     }
 
-    // MARK: Pill
+    /// The bar starts over the compact field and takes its size, fading in while the field fades out under it.
+    private func grow(_ panel: NSPanel, outOf pill: NSPanel, to target: NSRect) {
+        morphGeneration += 1
+        let generation = morphGeneration
+        morphing = true
+        placingPanel = true
+        // The bar covers the field within the first few frames, while it's still about the field's size.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.1
+            panel.animator().alphaValue = 1
+            pill.animator().alphaValue = 0
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.34
+            context.timingFunction = Self.growTiming
+            panel.animator().setFrame(target, display: true)
+        } completionHandler: { [weak self] in
+            mainAsync {
+                guard let self, generation == self.morphGeneration else { return }
+                self.morphing = false
+                self.placingPanel = false
+                pill.orderOut(nil)
+                pill.alphaValue = 1
+                panel.invalidateShadow()
+                // Typing during the animation may have changed what the bar shows.
+                self.fitPanelHeight()
+            }
+        }
+    }
+
+    /// The reverse of `grow`: the bar shrinks into the compact field's frame and fades out over it.
+    private func shrink(_ panel: NSPanel) {
+        let pill = ensurePill()
+        applyPillLevel()
+        pill.alphaValue = 0
+        pill.orderFrontRegardless()
+        morphGeneration += 1
+        let generation = morphGeneration
+        morphing = true
+        placingPanel = true
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.22
+            context.timingFunction = Self.shrinkTiming
+            panel.animator().setFrame(pill.frame, display: true)
+            panel.animator().alphaValue = 0
+            pill.animator().alphaValue = 1
+        } completionHandler: { [weak self] in
+            mainAsync {
+                guard let self, generation == self.morphGeneration else { return }
+                self.morphing = false
+                self.placingPanel = false
+                panel.orderOut(nil)
+                panel.alphaValue = 1
+                pill.invalidateShadow()
+            }
+        }
+    }
 
     private func showPill() {
         let panel = ensurePill()
@@ -1179,7 +1284,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         if let pillPanel {
             return pillPanel
         }
-        let size = SearchBarPillView.fittingSize
+        let hotkey = pillHotkey
+        let size = SearchBarPillView.fittingSize(hotkey: hotkey)
         let panel = SearchBarPillPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -1198,6 +1304,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
 
         let view = SearchBarPillView(frame: NSRect(origin: .zero, size: size))
         view.autoresizingMask = [.width, .height]
+        view.hotkey = hotkey
         view.onClick = { [weak self] in self?.expand() }
         view.onMoved = { [weak self] origin in
             Defaults[.searchBarPillOrigin] = [origin.x, origin.y]
@@ -1208,6 +1315,20 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         pillPanel = panel
         pillView = view
         return panel
+    }
+
+    private func updatePillHotkey() {
+        guard let pillPanel, let pillView else { return }
+        let hotkey = pillHotkey
+        guard pillView.hotkey != hotkey else { return }
+        pillView.hotkey = hotkey
+        // Grown or shrunk from its left edge, then kept on its display.
+        var frame = NSRect(origin: pillPanel.frame.origin, size: SearchBarPillView.fittingSize(hotkey: hotkey))
+        if let area = (pillPanel.screen ?? NSScreen.main)?.visibleFrame {
+            frame = clamp(frame, in: area)
+        }
+        pillPanel.setFrame(frame, display: true)
+        pillPanel.invalidateShadow()
     }
 
     private func storedPillOrigin(size: NSSize) -> NSPoint {

@@ -47,15 +47,15 @@ final class SearchBarPillView: NSView {
     static let text = "Search files…"
     static let fontSize: CGFloat = 12
 
-    /// Text plus the magnifier glyph and padding: the smallest field that still reads as a field.
-    static var fittingSize: NSSize {
-        let font = NSFont.systemFont(ofSize: fontSize)
-        let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
-        return NSSize(width: textWidth + 12 + 6 + 24, height: 24)
-    }
+    static let hotkeyFontSize: CGFloat = 11
 
     var onClick: (() -> Void)?
     var onMoved: ((NSPoint) -> Void)?
+
+    var hotkey: String? {
+        get { label.hotkey }
+        set { label.hotkey = newValue }
+    }
 
     override func acceptsFirstMouse(for _: NSEvent?) -> Bool {
         true
@@ -94,6 +94,23 @@ final class SearchBarPillView: NSView {
         addCursorRect(bounds, cursor: .pointingHand)
     }
 
+    /// Text plus the magnifier glyph and padding: the smallest field that still reads as a field. The hotkey, when
+    /// it's shown, sits in a keycap after the text.
+    static func fittingSize(hotkey: String?) -> NSSize {
+        let font = NSFont.systemFont(ofSize: fontSize)
+        let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
+        var width = textWidth + 12 + 6 + 24
+        if let hotkey {
+            width += hotkeyCapWidth(hotkey) + 8 - 6
+        }
+        return NSSize(width: width, height: 24)
+    }
+
+    static func hotkeyCapWidth(_ hotkey: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: hotkeyFontSize, weight: .medium)
+        return ceil((hotkey as NSString).size(withAttributes: [.font: font]).width) + 10
+    }
+
     func restyle() {
         background.rebuild()
         background.cornerRadius = bounds.height / 2
@@ -124,6 +141,13 @@ private final class PillLabel: NSView {
         false
     }
 
+    var hotkey: String? {
+        didSet {
+            guard hotkey != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
     override func hitTest(_: NSPoint) -> NSView? {
         nil
     }
@@ -148,5 +172,17 @@ private final class PillLabel: NSView {
         let text = SearchBarPillView.text as NSString
         let size = text.size(withAttributes: attrs)
         text.draw(at: NSPoint(x: x, y: (bounds.height - size.height) / 2), withAttributes: attrs)
+
+        guard let hotkey else { return }
+        let capWidth = SearchBarPillView.hotkeyCapWidth(hotkey)
+        let cap = NSRect(x: bounds.maxX - 4 - capWidth, y: 4, width: capWidth, height: bounds.height - 8)
+        (NSColor(cgColor: NSColor.labelColor.withAlphaComponent(0.08).cgColor) ?? .quaternaryLabelColor).setFill()
+        NSBezierPath(roundedRect: cap, xRadius: cap.height / 2, yRadius: cap.height / 2).fill()
+        let keyAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: SearchBarPillView.hotkeyFontSize, weight: .medium),
+            .foregroundColor: NSColor.tertiaryLabelColor,
+        ]
+        let keySize = (hotkey as NSString).size(withAttributes: keyAttrs)
+        (hotkey as NSString).draw(at: NSPoint(x: cap.midX - keySize.width / 2, y: cap.midY - keySize.height / 2), withAttributes: keyAttrs)
     }
 }

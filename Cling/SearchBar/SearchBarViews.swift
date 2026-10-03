@@ -602,7 +602,10 @@ final class SearchBarRootView: NSView {
         super.layout()
         let w = bounds.width
         let h = bounds.height
-        let rowHeight = searchRowHeight
+        // Below the row's height only while growing out of the compact field or shrinking back into it: the row stays
+        // centred and the corners round off at half the height.
+        let rowHeight = min(searchRowHeight, h)
+        background.cornerRadius = min(SearchBarMetrics.windowRadius, h / 2)
         let hintHeight = FontScale.length(SearchBarMetrics.modern ? 34 : 30, .chrome)
         let inset = SearchBarMetrics.inset
 
