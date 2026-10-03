@@ -2432,13 +2432,16 @@ class FuzzyClient {
             _ = self.liveUpdater?.takeChanges()
             self.lastLiveSave = Date()
             await Task.detached {
+                // An unchanged engine already matches its file, which it may be reading straight from.
                 for (scope, eng) in scopes {
                     let file = scopeIndexFile(scope)
+                    guard eng.hasUnsavedChanges || !file.exists else { continue }
                     eng.saveBinaryIndex(to: file.url)
                 }
                 ScopeIndexState.save(positions, rules: rules)
                 for (volume, eng) in volumes {
                     let file = volumeIndexFile(volume)
+                    guard eng.hasUnsavedChanges || !file.exists else { continue }
                     eng.saveBinaryIndex(to: file.url)
                 }
             }.value

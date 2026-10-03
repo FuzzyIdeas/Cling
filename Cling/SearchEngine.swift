@@ -910,8 +910,23 @@ final class SearchEngine: @unchecked Sendable {
 
     static let sectionAlignment = 16384
 
+    /// Whether v4 files are memory-mapped (the default) or read into the heap. Mapped, an index costs the app almost
+    /// nothing until searched, and the system takes the pages back under memory pressure and reads them in again when
+    /// needed.
+    nonisolated(unsafe) static var mapIndexFiles = true
+
     var count: Int {
-        lock.withLock { entries.count - free.count }
+        lock.withLock { liveCount }
+    }
+
+    /// Whether anything was added or removed since the last save (or load).
+    var hasUnsavedChanges: Bool {
+        lock.withLock { changes != savedChanges }
+    }
+
+    /// Whether the index is read from a mapped file rather than held in the heap.
+    var isMapped: Bool {
+        lock.withLock { masks.storage.isMapped }
     }
 
     // MARK: - FTS Filesystem Walker
@@ -987,7 +1002,7 @@ final class SearchEngine: @unchecked Sendable {
     func allPaths() -> [String] {
         lock.withLock {
             var paths: [String] = []
-            paths.reserveCapacity(entries.count - free.count)
+            paths.reserveCapacity(liveCount)
             for i in 0 ..< entries.count where byteLengths[i] > 0 {
                 paths.append(path(i))
             }
@@ -1199,6 +1214,8 @@ final class SearchEngine: @unchecked Sendable {
             extIDs.removeAll()
             // The extension IDs are shared by every engine, so they stay registered.
             free.removeAll()
+            liveCount = 0
+            mappedCount = 0
             pathTable.removeAll()
             pathIndexBuilt = false
             sortedByPath = nil
@@ -1206,16 +1223,22 @@ final class SearchEngine: @unchecked Sendable {
     }
 
     /// Writes the index as v4 to a temporary file and renames it into place, so a crash or a full disk mid-write leaves
-    /// the previous file whole. Removed entries, and the bytes they left in `allBytes`, are dropped on the way out, and
-    /// everything streams through a small buffer instead of a copy the size of the file.
+    /// the previous file whole. Everything streams through a small buffer instead of a copy the size of the file, and
+    /// the bytes removed paths left in `allBytes` are dropped.
+    ///
+    /// Removed entries stay as zeroed slots so ids don't move, unless `compacting`, which renumbers the entries and is
+    /// only for an engine nobody holds ids from yet (one being loaded). With mapping on, the engine then maps the file
+    /// it just wrote, which turns everything changed since the last save back into clean file pages.
     @discardableResult
-    func saveBinaryIndex(to url: URL) -> Bool {
+    func saveBinaryIndex(to url: URL, compacting: Bool = false) -> Bool {
         let t0 = CFAbsoluteTimeGetCurrent()
         guard let out = AtomicFileWriter(destination: url.path) else {
             slog.error("saveBinaryIndex: can't create \(url.path).saving")
             return false
         }
         lock.lock()
+        defer { lock.unlock() }
+        let savingChanges = changes
         let n = entries.count
         var live = 0, liveBytes = 0
         var maxExt: UInt16 = 0
@@ -1228,6 +1251,8 @@ final class SearchEngine: @unchecked Sendable {
             }
             i &+= 1
         }
+        let keep = !compacting
+        let count = keep ? n : live
         let caseWords = (liveBytes + 63) / 64
         let extNames: [String] = Self.extLock.withLock {
             (0 ..< Int(maxExt)).map { Self.globalIdToExt[UInt16($0 + 1)] ?? "" }
@@ -1238,7 +1263,7 @@ final class SearchEngine: @unchecked Sendable {
             nameBytes.append(0)
         }
 
-        let lengths: [Int] = [live * 8, live * 8, live * 8, live * 4, live * 2, live * 4, live * 2, liveBytes, caseWords * 8, nameBytes.count]
+        let lengths: [Int] = [count * 8, count * 8, count * 8, count * 4, count * 2, count * 4, count * 2, liveBytes, caseWords * 8, nameBytes.count]
         var sectionOffsets: [Int] = []
         var pos = Self.sectionAlignment
         for length in lengths {
@@ -1249,7 +1274,7 @@ final class SearchEngine: @unchecked Sendable {
         out.write(Self.binaryMagicV4)
         out.write(Self.binaryVersionV4)
         out.write(UInt32(Section.allCases.count))
-        out.write(UInt64(live))
+        out.write(UInt64(count))
         out.write(UInt64(liveBytes))
         out.write(UInt64(caseWords))
         out.write(UInt64(maxExt))
@@ -1264,29 +1289,35 @@ final class SearchEngine: @unchecked Sendable {
             out.align(to: Self.sectionAlignment)
             assert(out.position == sectionOffsets[s.rawValue], "section \(s) at \(out.position), expected \(sectionOffsets[s.rawValue])")
         }
-        /// Runs of live entries go out in one write each: with nothing removed, that's the whole column at once.
-        func writeLiveRuns(_ base: UnsafeRawPointer, stride: Int) {
+        /// Runs of live slots go out in one write each (with nothing removed, the whole column at once); removed slots
+        /// are written as zeros when kept.
+        func writeColumn(_ base: UnsafeRawPointer, stride: Int) {
             var i = 0
             while i < n {
-                guard byteLengths[i] > 0 else { i &+= 1; continue }
-                var j = i
-                while j < n, byteLengths[j] > 0 {
+                let isLive = byteLengths[i] > 0
+                var j = i &+ 1
+                while j < n, (byteLengths[j] > 0) == isLive {
                     j &+= 1
                 }
-                out.write(base + i * stride, count: (j - i) * stride)
+                if isLive {
+                    out.write(base + i * stride, count: (j - i) * stride)
+                } else if keep {
+                    out.write(zeros: (j - i) * stride)
+                }
                 i = j
             }
         }
 
         section(.masks)
-        writeLiveRuns(masks.storage.base, stride: 8)
+        writeColumn(masks.storage.base, stride: 8)
         section(.bnMasks)
-        writeLiveRuns(bnMasks.storage.base, stride: 8)
+        writeColumn(bnMasks.storage.base, stride: 8)
         section(.bnBoundaries)
-        writeLiveRuns(bnBoundaries.storage.base, stride: 8)
+        writeColumn(bnBoundaries.storage.base, stride: 8)
 
         // Where each live entry's bytes start once the gaps are closed, and the runs of bytes that move together.
-        var newOffsets = [UInt32](repeating: 0, count: live)
+        let newOffsets = ScratchBuffer<UInt32>(zeroed: count)
+        defer { newOffsets.release() }
         var runs: [(from: Int, to: Int, length: Int)] = []
         var next = 0, k = 0
         i = 0
@@ -1294,7 +1325,7 @@ final class SearchEngine: @unchecked Sendable {
             let len = byteLengths[i]
             if len > 0 {
                 let off = byteOffsets[i]
-                newOffsets[k] = UInt32(next)
+                newOffsets.base[keep ? i : k] = UInt32(next)
                 if let last = runs.last, last.from + last.length == off, last.to + last.length == next {
                     runs[runs.count - 1].length += len
                 } else {
@@ -1306,37 +1337,42 @@ final class SearchEngine: @unchecked Sendable {
             i &+= 1
         }
         section(.byteOffsets)
-        newOffsets.withUnsafeBytes { out.write($0.baseAddress!, count: $0.count) }
+        out.write(newOffsets.base, count: count * 4)
         section(.byteLengths)
-        writeLiveRuns(byteLengths.storage.base, stride: 2)
+        writeColumn(byteLengths.storage.base, stride: 2)
         section(.entries)
-        writeLiveRuns(entries.storage.base, stride: 4)
+        writeColumn(entries.storage.base, stride: 4)
         section(.extIDs)
-        writeLiveRuns(extIDs.storage.base, stride: 2)
+        writeColumn(extIDs.storage.base, stride: 2)
         section(.allBytes)
         for run in runs {
             out.write(allBytes.storage.base + run.from, count: run.length)
         }
         section(.caseBits)
-        var newBits = [UInt64](repeating: 0, count: caseWords)
-        newBits.withUnsafeMutableBufferPointer { dst in
-            for run in runs {
-                copyBits(from: caseBits.storage.base, at: run.from, to: dst.baseAddress!, at: run.to, count: run.length)
-            }
+        let newBits = ScratchBuffer<UInt64>(zeroed: caseWords)
+        defer { newBits.release() }
+        for run in runs {
+            copyBits(from: caseBits.storage.base, at: run.from, to: newBits.base, at: run.to, count: run.length)
         }
-        newBits.withUnsafeBytes { out.write($0.baseAddress!, count: $0.count) }
+        out.write(newBits.base, count: caseWords * 8)
         section(.extNames)
         nameBytes.withUnsafeBytes { out.write($0.baseAddress!, count: $0.count) }
         out.align(to: Self.sectionAlignment)
-        lock.unlock()
 
         let size = out.position
         guard out.commit() else {
             slog.error("saveBinaryIndex: writing \(url.path) failed")
             return false
         }
+        savedChanges = savingChanges
+        let writeMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+        var remapped = false
+        if Self.mapIndexFiles, let columns = readV4(url, trusted: true) {
+            install(columns, keepingIDs: keep)
+            remapped = true
+        }
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-        slog.info("saveBinaryIndex: \(live) of \(n) entries, \(size / 1_048_576)MB in \(ms, format: .fixed(precision: 1))ms")
+        slog.info("saveBinaryIndex: \(live) of \(n) entries, \(size / 1_048_576)MB written in \(writeMs, format: .fixed(precision: 1))ms\(remapped ? ", mapped" : "") in \(ms, format: .fixed(precision: 1))ms")
         return true
     }
 
@@ -1354,24 +1390,38 @@ final class SearchEngine: @unchecked Sendable {
             slog.error("loadBinaryIndex: \(url.path) is too short")
             return false
         }
-        let loaded: Bool
+        let columns: LoadedColumns?
         switch magic {
-        case Self.binaryMagicV4: loaded = loadV4(url, progress: progress)
-        case Self.binaryMagic: loaded = loadV3(url, progress: progress)
+        case Self.binaryMagicV4: columns = readV4(url, trusted: false, progress: progress)
+        case Self.binaryMagic: columns = readV3(url, progress: progress)
         default:
             slog.error("loadBinaryIndex: bad magic in \(url.path)")
             return false
         }
+        guard let columns else { return false }
+        let n = columns.entries.count
+        lock.withLock { install(columns, keepingIDs: false) }
+
+        if Self.mapIndexFiles {
+            if magic == Self.binaryMagic {
+                // A v3 file from before this version: written as v4 and mapped from then on.
+                saveBinaryIndex(to: url, compacting: true)
+            } else if n - columns.live > max(1024, n / 20) {
+                // Removed entries are kept as holes while Cling runs; a load with many of them is when they go.
+                saveBinaryIndex(to: url, compacting: true)
+            }
+        }
+        progress?(n)
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-        let n = lock.withLock { entries.count }
-        slog.info("loadBinaryIndex: \(n) entries from \(url.lastPathComponent) in \(ms, format: .fixed(precision: 1))ms")
-        return loaded
+        let mapped = isMapped
+        slog.info("loadBinaryIndex: \(columns.live) entries from \(url.lastPathComponent)\(mapped ? ", mapped" : "") in \(ms, format: .fixed(precision: 1))ms")
+        return true
     }
 
     /// Build pathToID from entries (call after bulk load to enable add/remove)
     func buildPathIndex() {
         let t0 = CFAbsoluteTimeGetCurrent()
-        pathTable.reset(capacityFor: entries.count - free.count)
+        pathTable.reset(capacityFor: liveCount)
         for i in 0 ..< entries.count where byteLengths[i] > 0 {
             pathTable.insert(id: i, hash: entryHash(i), rehash: entryHash)
         }
@@ -2091,6 +2141,20 @@ final class SearchEngine: @unchecked Sendable {
         var segmentMatches = 0
     }
 
+    /// Columns read from a file, not yet installed.
+    private struct LoadedColumns {
+        let entries = Column<Entry>()
+        let masks = Column<UInt64>()
+        let bnMasks = Column<UInt64>()
+        let bnBoundaries = Column<UInt64>()
+        let byteOffsets = IntColumn<UInt32>()
+        let byteLengths = IntColumn<UInt16>()
+        let extIDs = Column<UInt16>()
+        let allBytes = Column<UInt8>()
+        let caseBits = Column<UInt64>()
+        var live = 0
+    }
+
     // MARK: - Binary persistence
 
     /// v4 ("CLINGIX4"): a 16 KB header, then one section per column, each starting on a 16 KB boundary and laid out
@@ -2134,6 +2198,14 @@ final class SearchEngine: @unchecked Sendable {
     private static var globalIdToExt: [UInt16: String] = [:]
     private static var globalNextExtID: UInt16 = 1
     private static let extLock = NSLock()
+
+    /// Entries that hold a path. Removed ones stay behind as holes until the next save.
+    private var liveCount = 0
+    /// Entries below this id sit in pages mapped from the index file: a removal there only zeroes the two values search
+    /// checks, and the slot isn't reused, so the fewest pages get copied.
+    private var mappedCount = 0
+    private var changes = 0
+    private var savedChanges = 0
 
     private let entries = Column<Entry>()
 
@@ -2356,30 +2428,42 @@ final class SearchEngine: @unchecked Sendable {
         return lower.withUnsafeBufferPointer { PathTable.hash($0.baseAddress!, $0.count) }
     }
 
-    /// Reads each section straight into its column.
-    private func loadV4(_ url: URL, progress: ((Int) -> Void)?) -> Bool {
+    /// Maps each section of a v4 file into its column (or reads it there when mapping is off), checks every entry
+    /// against the file's own counts unless the file was just written by this engine, and brings extension IDs into
+    /// this process's numbering.
+    private func readV4(_ url: URL, trusted: Bool, progress: ((Int) -> Void)? = nil) -> LoadedColumns? {
         let fd = open(url.path, O_RDONLY)
-        guard fd >= 0 else { return false }
+        guard fd >= 0 else { return nil }
         defer { close(fd) }
         var st = stat()
-        guard fstat(fd, &st) == 0 else { return false }
+        guard fstat(fd, &st) == 0 else { return nil }
         let fileSize = Int(st.st_size)
-        adviseSequentialRead(url.path)
+        if !trusted {
+            adviseSequentialRead(url.path)
+        }
 
         var headerBuf = [UInt8](repeating: 0, count: V4Header.size)
         guard fileSize >= V4Header.size, pread(fd, &headerBuf, V4Header.size, 0) == V4Header.size,
               let header = headerBuf.withUnsafeBytes({ V4Header.read($0.baseAddress!, fileSize: fileSize) })
         else {
             slog.error("loadBinaryIndex: bad v4 header in \(url.path)")
-            return false
+            return nil
         }
         let n = header.entryCount
 
-        /// Fills `storage` with section `s`, leaving headroom after it.
-        func read(_ s: Section, into storage: inout ColumnStorage<some Any>, count: Int, headroom: Int) -> Bool {
+        /// Maps section `s` into `storage`, or reads it there when mapping is off or fails, leaving headroom after it.
+        func read<T>(_ s: Section, into storage: inout ColumnStorage<T>, count: Int, headroom: Int) -> Bool {
+            let (off, length) = header.sections[s.rawValue]
+            let page = ColumnStorage<T>.pageSize
+            if Self.mapIndexFiles, off + (length + page - 1) / page * page <= fileSize,
+               let mapped = ColumnStorage<T>.mapped(fd: fd, offset: off, length: length, count: count, capacity: count + headroom)
+            {
+                storage.release()
+                storage = mapped
+                return true
+            }
             storage.reserve(count + headroom)
             storage.setCount(count)
-            let (off, length) = header.sections[s.rawValue]
             let dst = UnsafeMutableRawPointer(storage.base)
             var done = 0
             while done < length {
@@ -2390,108 +2474,104 @@ final class SearchEngine: @unchecked Sendable {
             return true
         }
 
-        let newMasks = Column<UInt64>(), newBnMasks = Column<UInt64>(), newBounds = Column<UInt64>()
-        let newOffsets = IntColumn<UInt32>(), newLengths = IntColumn<UInt16>()
-        let newEntries = Column<Entry>(), newExtIDs = Column<UInt16>()
-        let newBytes = Column<UInt8>(), newCase = Column<UInt64>()
-        let extra = Self.headroom(n), byteExtra = Self.headroom(header.allBytesCount, minimum: 65536)
-        guard read(.masks, into: &newMasks.storage, count: n, headroom: extra),
-              read(.bnMasks, into: &newBnMasks.storage, count: n, headroom: extra),
-              read(.bnBoundaries, into: &newBounds.storage, count: n, headroom: extra),
-              read(.byteOffsets, into: &newOffsets.storage, count: n, headroom: extra),
-              read(.byteLengths, into: &newLengths.storage, count: n, headroom: extra),
-              read(.entries, into: &newEntries.storage, count: n, headroom: extra),
-              read(.extIDs, into: &newExtIDs.storage, count: n, headroom: extra),
-              read(.allBytes, into: &newBytes.storage, count: header.allBytesCount, headroom: byteExtra),
-              read(.caseBits, into: &newCase.storage, count: header.caseWords, headroom: byteExtra / 64 + 1)
+        // Room to double before a column has to move, which costs address space only: a page counts once it's written.
+        var c = LoadedColumns()
+        let extra = max(Self.headroom(n), n), byteExtra = max(Self.headroom(header.allBytesCount, minimum: 65536), header.allBytesCount)
+        guard read(.masks, into: &c.masks.storage, count: n, headroom: extra),
+              read(.bnMasks, into: &c.bnMasks.storage, count: n, headroom: extra),
+              read(.bnBoundaries, into: &c.bnBoundaries.storage, count: n, headroom: extra),
+              read(.byteOffsets, into: &c.byteOffsets.storage, count: n, headroom: extra),
+              read(.byteLengths, into: &c.byteLengths.storage, count: n, headroom: extra),
+              read(.entries, into: &c.entries.storage, count: n, headroom: extra),
+              read(.extIDs, into: &c.extIDs.storage, count: n, headroom: extra),
+              read(.allBytes, into: &c.allBytes.storage, count: header.allBytesCount, headroom: byteExtra),
+              read(.caseBits, into: &c.caseBits.storage, count: header.caseWords, headroom: byteExtra / 64 + 1)
         else {
             slog.error("loadBinaryIndex: short read in \(url.path)")
-            return false
+            return nil
         }
         progress?(n / 2)
 
         // The scorer and the path rebuild read allBytes[off ..< off + len] unchecked, so a corrupt entry must not get in.
         var i = 0
-        while i < n {
-            let len = newLengths[i]
-            if newOffsets[i] &+ len > header.allBytesCount || newEntries[i].bnStart > len || Int(newExtIDs[i]) > header.extCount {
-                slog.error("loadBinaryIndex: entry \(i) out of bounds in \(url.path)")
-                return false
+        var live = 0
+        if trusted {
+            while i < n {
+                if c.byteLengths[i] > 0 {
+                    live &+= 1
+                }
+                i &+= 1
             }
-            i &+= 1
+        } else {
+            while i < n {
+                let len = c.byteLengths[i]
+                if c.byteOffsets[i] &+ len > header.allBytesCount || c.entries[i].bnStart > len || Int(c.extIDs[i]) > header.extCount {
+                    slog.error("loadBinaryIndex: entry \(i) out of bounds in \(url.path)")
+                    return nil
+                }
+                if len > 0 {
+                    live &+= 1
+                }
+                i &+= 1
+            }
         }
+        c.live = live
 
         // Extension IDs are this process's: map the file's onto them, which costs nothing when they already agree.
         let (namesOff, namesLen) = header.sections[Section.extNames.rawValue]
         var names = [UInt8](repeating: 0, count: namesLen)
-        guard namesLen == 0 || pread(fd, &names, namesLen, off_t(namesOff)) == namesLen else { return false }
+        guard namesLen == 0 || pread(fd, &names, namesLen, off_t(namesOff)) == namesLen else { return nil }
         let extNames = names.split(separator: 0, omittingEmptySubsequences: false).prefix(header.extCount).map { String(decoding: $0, as: UTF8.self) }
         guard extNames.count == header.extCount else {
             slog.error("loadBinaryIndex: extension names truncated in \(url.path)")
-            return false
+            return nil
         }
         let map = Self.registerExtensions(extNames)
         if map.enumerated().contains(where: { $0.offset != Int($0.element) }) {
-            newExtIDs.withUnsafeMutableBufferPointer { ids in
+            c.extIDs.withUnsafeMutableBufferPointer { ids in
                 for j in ids.indices {
                     ids[j] = map[Int(ids[j])]
                 }
             }
         }
-
-        lock.withLock {
-            install(
-                entries: newEntries,
-                masks: newMasks,
-                bnMasks: newBnMasks,
-                bnBoundaries: newBounds,
-                byteOffsets: newOffsets,
-                byteLengths: newLengths,
-                extIDs: newExtIDs,
-                allBytes: newBytes,
-                caseBits: newCase
-            )
-        }
-        progress?(n)
-        return true
+        return c
     }
 
-    /// Reads a v3 file: the per-entry path strings become case bits and a flag for paths beyond ASCII.
-    private func loadV3(_ url: URL, progress: ((Int) -> Void)?) -> Bool {
+    /// Reads a v3 file into the heap: the per-entry path strings become case bits and a flag for paths beyond ASCII.
+    private func readV3(_ url: URL, progress: ((Int) -> Void)?) -> LoadedColumns? {
         adviseSequentialRead(url.path)
         guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
             slog.error("loadBinaryIndex: failed to read \(url.path)")
-            return false
+            return nil
         }
-        return data.withUnsafeBytes { buf -> Bool in
+        return data.withUnsafeBytes { buf -> LoadedColumns? in
             let ptr = buf.baseAddress!
             let totalLen = buf.count
-            guard totalLen > 24 else { return false }
+            guard totalLen > 24 else { return nil }
             let rawN = ptr.load(fromByteOffset: 8, as: UInt64.self)
             let rawAllBytes = ptr.load(fromByteOffset: 16, as: UInt64.self)
             guard let (n, allBytesCount) = Self.binaryHeaderBounds(rawN: rawN, rawAllBytes: rawAllBytes, totalLen: totalLen) else {
                 slog.error("loadBinaryIndex: truncated index, n=\(rawN) allBytes=\(rawAllBytes) file=\(totalLen)B")
-                return false
+                return nil
             }
             let extra = Self.headroom(n), byteExtra = Self.headroom(allBytesCount, minimum: 65536)
             func column(_ c: Column<some Any>, _ src: UnsafeRawPointer, _ count: Int, _ headroom: Int) {
                 c.reserveCapacity(count + headroom)
                 c.append(raw: src, count: count)
             }
+            var c = LoadedColumns()
             var offset = 24
-            let newMasks = Column<UInt64>(), newBnMasks = Column<UInt64>(), newBounds = Column<UInt64>()
-            column(newMasks, ptr + offset, n, extra)
+            column(c.masks, ptr + offset, n, extra)
             offset += n * 8
-            column(newBnMasks, ptr + offset, n, extra)
+            column(c.bnMasks, ptr + offset, n, extra)
             offset += n * 8
-            column(newBounds, ptr + offset, n, extra)
+            column(c.bnBoundaries, ptr + offset, n, extra)
             offset += n * 8
-            let newOffsets = IntColumn<UInt32>(), newLengths = IntColumn<UInt16>()
-            newOffsets.reserveCapacity(n + extra)
-            newOffsets.append(raw: ptr + offset, count: n)
+            c.byteOffsets.reserveCapacity(n + extra)
+            c.byteOffsets.append(raw: ptr + offset, count: n)
             offset += n * 4
-            newLengths.reserveCapacity(n + extra)
-            newLengths.append(raw: ptr + offset, count: n)
+            c.byteLengths.reserveCapacity(n + extra)
+            c.byteLengths.append(raw: ptr + offset, count: n)
             offset += n * 2
             let bnStartsOffset = offset
             offset += n * 2
@@ -2503,14 +2583,13 @@ final class SearchEngine: @unchecked Sendable {
 
             var i = 0
             while i < n {
-                if newOffsets[i] &+ newLengths[i] > allBytesCount {
+                if c.byteOffsets[i] &+ c.byteLengths[i] > allBytesCount {
                     slog.error("loadBinaryIndex: entry byte range outside allBytes, \(url.path)")
-                    return false
+                    return nil
                 }
                 i &+= 1
             }
-            let newBytes = Column<UInt8>()
-            column(newBytes, ptr + offset, allBytesCount, byteExtra)
+            column(c.allBytes, ptr + offset, allBytesCount, byteExtra)
             offset += allBytesCount
             progress?(n / 2)
 
@@ -2518,94 +2597,83 @@ final class SearchEngine: @unchecked Sendable {
             // so its start is the running sum of lengths + 1 and its NUL must sit right after it.
             let strBase = (ptr + offset).assumingMemoryBound(to: UInt8.self)
             let strEnd = totalLen - offset
-            let newCase = Column<UInt64>()
-            newCase.reserveCapacity((allBytesCount + byteExtra) / 64 + 1)
-            newCase.append(repeating: 0, count: (allBytesCount + 63) / 64)
-            let newEntries = Column<Entry>()
-            newEntries.reserveCapacity(n + extra)
-            let bits = newCase.storage.base
+            c.caseBits.reserveCapacity((allBytesCount + byteExtra) / 64 + 1)
+            c.caseBits.append(repeating: 0, count: (allBytesCount + 63) / 64)
+            c.entries.reserveCapacity(n + extra)
+            let bits = c.caseBits.storage.base
             var strOff = 0
+            var live = 0
             i = 0
             while i < n {
-                let len = newLengths[i]
+                let len = c.byteLengths[i]
                 guard strOff + len < strEnd, strBase[strOff + len] == 0 else {
                     slog.error("loadBinaryIndex: path strings truncated at entry \(i)/\(n), \(url.path)")
-                    return false
+                    return nil
                 }
-                let at = newOffsets[i]
+                let at = c.byteOffsets[i]
                 var nonASCII = false
                 var k = 0
                 while k < len {
-                    let c = strBase[strOff + k]
-                    if c &- 0x41 < 26 {
+                    let ch = strBase[strOff + k]
+                    if ch &- 0x41 < 26 {
                         let bit = at + k
                         bits[bit >> 6] |= 1 << UInt64(bit & 63)
-                    } else if c >= 0x80 {
+                    } else if ch >= 0x80 {
                         nonASCII = true
                     }
                     k &+= 1
                 }
-                newEntries.append(Entry(
+                c.entries.append(Entry(
                     bnStart: Int(ptr.loadUnaligned(fromByteOffset: bnStartsOffset + i * 2, as: UInt16.self)),
                     segCount: Int((ptr + segCountsOffset + i).load(as: UInt8.self)),
                     isDir: (ptr + isDirsOffset + i).load(as: UInt8.self) != 0,
                     nonASCII: nonASCII
                 ))
+                if len > 0 {
+                    live &+= 1
+                }
                 strOff += len + 1
                 i &+= 1
             }
+            c.live = live
             progress?(n * 3 / 4)
 
-            let newExtIDs = Column<UInt16>()
-            newExtIDs.reserveCapacity(n + extra)
-            newExtIDs.append(repeating: 0, count: n)
-            newBytes.withUnsafeBufferPointer { b in
+            c.extIDs.reserveCapacity(n + extra)
+            c.extIDs.append(repeating: 0, count: n)
+            c.allBytes.withUnsafeBufferPointer { b in
                 let base = b.baseAddress!
                 var i = 0
                 while i < n {
-                    if newLengths[i] > 0 {
-                        newExtIDs[i] = extID(for: base + newOffsets[i], len: newLengths[i], bnStart: newEntries[i].bnStart)
+                    if c.byteLengths[i] > 0 {
+                        c.extIDs[i] = extID(for: base + c.byteOffsets[i], len: c.byteLengths[i], bnStart: c.entries[i].bnStart)
                     }
                     i &+= 1
                 }
             }
-            lock.withLock {
-                install(
-                    entries: newEntries,
-                    masks: newMasks,
-                    bnMasks: newBnMasks,
-                    bnBoundaries: newBounds,
-                    byteOffsets: newOffsets,
-                    byteLengths: newLengths,
-                    extIDs: newExtIDs,
-                    allBytes: newBytes,
-                    caseBits: newCase
-                )
-            }
-            progress?(n)
-            return true
+            return c
         }
     }
 
-    /// Swaps freshly loaded columns in. Caller holds the lock.
-    private func install(
-        entries e: Column<Entry>, masks m: Column<UInt64>, bnMasks bm: Column<UInt64>, bnBoundaries bb: Column<UInt64>,
-        byteOffsets bo: IntColumn<UInt32>, byteLengths bl: IntColumn<UInt16>, extIDs x: Column<UInt16>,
-        allBytes a: Column<UInt8>, caseBits c: Column<UInt64>
-    ) {
-        swap(&entries.storage, &e.storage)
-        swap(&masks.storage, &m.storage)
-        swap(&bnMasks.storage, &bm.storage)
-        swap(&bnBoundaries.storage, &bb.storage)
-        swap(&byteOffsets.storage, &bo.storage)
-        swap(&byteLengths.storage, &bl.storage)
-        swap(&extIDs.storage, &x.storage)
-        swap(&allBytes.storage, &a.storage)
-        swap(&caseBits.storage, &c.storage)
+    /// Swaps loaded columns in. Kept ids (a save that mapped what it wrote) leave the path index and sorted order
+    /// valid; otherwise they are rebuilt on first need. Caller holds the lock.
+    private func install(_ c: LoadedColumns, keepingIDs: Bool) {
+        swap(&entries.storage, &c.entries.storage)
+        swap(&masks.storage, &c.masks.storage)
+        swap(&bnMasks.storage, &c.bnMasks.storage)
+        swap(&bnBoundaries.storage, &c.bnBoundaries.storage)
+        swap(&byteOffsets.storage, &c.byteOffsets.storage)
+        swap(&byteLengths.storage, &c.byteLengths.storage)
+        swap(&extIDs.storage, &c.extIDs.storage)
+        swap(&allBytes.storage, &c.allBytes.storage)
+        swap(&caseBits.storage, &c.caseBits.storage)
+        liveCount = c.live
+        mappedCount = masks.storage.isMapped ? entries.count : 0
         free.removeAll()
-        pathTable.removeAll()
-        pathIndexBuilt = false
-        sortedByPath = nil
+        if !keepingIDs {
+            pathTable.removeAll()
+            pathIndexBuilt = false
+            sortedByPath = nil
+        }
     }
 
     private func searchCore(
@@ -3475,17 +3543,22 @@ final class SearchEngine: @unchecked Sendable {
             let filterProcs = max(ProcessInfo.processInfo.activeProcessorCount, 1)
             let filterChunkSize = (n + filterProcs - 1) / filterProcs
             let filterChunks = (n + filterChunkSize - 1) / filterChunkSize
-            let candStore = UnsafeMutablePointer<[Int]>.allocate(capacity: max(filterChunks, 1))
-            candStore.initialize(repeating: [], count: max(filterChunks, 1))
-            defer { candStore.deinitialize(count: max(filterChunks, 1)); candStore.deallocate() }
+            let candStore = UnsafeMutablePointer<ScratchBuffer<Int>?>.allocate(capacity: max(filterChunks, 1))
+            candStore.initialize(repeating: nil, count: max(filterChunks, 1))
+            defer {
+                for ci in 0 ..< max(filterChunks, 1) {
+                    candStore[ci]?.release()
+                }
+                candStore.deinitialize(count: max(filterChunks, 1))
+                candStore.deallocate()
+            }
 
             masks.withUnsafeBufferPointer { maskBuf in
                 let maskPtr = maskBuf.baseAddress!
                 DispatchQueue.concurrentPerform(iterations: filterChunks) { chunk in
                     let lo = chunk * filterChunkSize
                     let hi = min(lo + filterChunkSize, n)
-                    var local = [Int]()
-                    local.reserveCapacity((hi - lo) / 10)
+                    var local = ScratchBuffer<Int>(capacity: hi - lo)
 
                     var i = lo
                     while i < hi {
@@ -3587,10 +3660,15 @@ final class SearchEngine: @unchecked Sendable {
             }
 
             // Merge chunk results
-            var ci = 0
-            while ci < filterChunks {
-                cands.append(contentsOf: candStore[ci])
-                ci &+= 1
+            var total = 0
+            for ci in 0 ..< filterChunks {
+                total &+= candStore[ci]?.count ?? 0
+            }
+            cands.reserveCapacity(total)
+            for ci in 0 ..< filterChunks {
+                if let local = candStore[ci] {
+                    cands.append(contentsOf: local.buffer)
+                }
             }
         }
         // Apply fzf-style operators (negation, literal, anchors, files-only) in one SIMD pass
@@ -3757,9 +3835,15 @@ final class SearchEngine: @unchecked Sendable {
         let nProcs = max(ProcessInfo.processInfo.activeProcessorCount, 1)
         let chunkSize = max(nCands / nProcs, 512)
         let nChunks = nCands == 0 ? 0 : (nCands + chunkSize - 1) / chunkSize
-        let chunkStore = UnsafeMutablePointer<[ScoredEntry]>.allocate(capacity: max(nChunks, 1))
-        chunkStore.initialize(repeating: [], count: max(nChunks, 1))
-        defer { chunkStore.deinitialize(count: max(nChunks, 1)); chunkStore.deallocate() }
+        let chunkStore = UnsafeMutablePointer<ScratchBuffer<ScoredEntry>?>.allocate(capacity: max(nChunks, 1))
+        chunkStore.initialize(repeating: nil, count: max(nChunks, 1))
+        defer {
+            for ci in 0 ..< max(nChunks, 1) {
+                chunkStore[ci]?.release()
+            }
+            chunkStore.deinitialize(count: max(nChunks, 1))
+            chunkStore.deallocate()
+        }
 
         allBytes.withUnsafeBufferPointer { allBuf in
             let allBase = allBuf.baseAddress!
@@ -3769,8 +3853,7 @@ final class SearchEngine: @unchecked Sendable {
                     DispatchQueue.concurrentPerform(iterations: nChunks) { chunk in
                         let lo = chunk * chunkSize
                         let hi = min(lo + chunkSize, nCands)
-                        var local = [ScoredEntry]()
-                        local.reserveCapacity(hi - lo)
+                        var local = ScratchBuffer<ScoredEntry>(capacity: hi - lo)
                         // Scratch for the reordered token pass, allocated per chunk rather than per
                         // candidate so the scoring loop stays allocation-free.
                         let tokenCount = tokenBytes?.count ?? 0
@@ -4170,44 +4253,74 @@ final class SearchEngine: @unchecked Sendable {
             }
         }
         let scoreMs = (CFAbsoluteTimeGetCurrent() - t2) * 1000
-        var scored = [ScoredEntry]()
         var totalScored = 0
         for i in 0 ..< nChunks {
-            totalScored &+= chunkStore[i].count
-        }
-        scored.reserveCapacity(min(totalScored, maxResults * 4))
-        for i in 0 ..< nChunks {
-            scored.append(contentsOf: chunkStore[i])
+            totalScored &+= chunkStore[i]?.count ?? 0
         }
 
         if isCancelled() {
             return []
         }
 
+        // The pool is the first maxResults * 4 of all scored entries in key order, ties in chunk then id order (what a
+        // stable sort of the chunks one after another gives), after a quality floor set by the top entry. Each chunk
+        // filters and sorts its own entries in place and only its first pool-size reach the final sort, instead of
+        // copying every scored entry into one array (twice, with the floor) and sorting it all.
         let t3 = CFAbsoluteTimeGetCurrent()
-        scored.sort { $0.key < $1.key }
-        let sortMs = (CFAbsoluteTimeGetCurrent() - t3) * 1000
-
-        if !scored.isEmpty {
-            let topQ = scored[0].quality
-            let minQ = max(topQ * 4 / 10, qBytes.count * scoreMatch / 2)
+        let poolSize = maxResults * 4
+        var top: ScoredEntry?
+        for ci in 0 ..< nChunks {
+            guard let local = chunkStore[ci] else { continue }
+            for e in local.buffer where top == nil || e.key < top!.key {
+                top = e
+            }
+        }
+        var pool: [ScoredEntry] = []
+        if let top {
+            let minQ = max(top.quality * 4 / 10, qBytes.count * scoreMatch / 2)
             // Basename matches are exempt from the density floor (like FuzzyClient.mergeResults):
             // an NFC-stored CJK basename match scores on the smaller NFC byte scale and would
             // otherwise be dropped whenever NFD-stored path matches set a high topQ.
-            let filtered = scored.filter { $0.quality >= minQ || $0.hasBase }
+            let passes = { (e: ScoredEntry) in e.quality >= minQ || e.hasBase }
             // If the strict density-based floor kills every match (typical for
             // a dense single-token query like "prvskyl" that legitimately spans
             // multiple path segments — quality = pathScore * qLen / window
             // collapses with wide windows), fall back to the unfiltered set so
             // the user sees low-density matches instead of zero results.
-            if !filtered.isEmpty {
-                scored = filtered
+            var anyPasses = false
+            for ci in 0 ..< nChunks where !anyPasses {
+                anyPasses = chunkStore[ci]?.buffer.contains(where: passes) ?? false
+            }
+            DispatchQueue.concurrentPerform(iterations: nChunks) { ci in
+                guard var local = chunkStore[ci] else { return }
+                let buf = local.buffer
+                if anyPasses {
+                    var kept = 0
+                    for j in 0 ..< buf.count where passes(buf[j]) {
+                        buf[kept] = buf[j]
+                        kept &+= 1
+                    }
+                    local.truncate(to: kept)
+                }
+                var sorted = local.buffer
+                sorted.sort { $0.key < $1.key }
+                local.truncate(to: poolSize)
+                chunkStore[ci] = local
+            }
+            for ci in 0 ..< nChunks {
+                if let local = chunkStore[ci] {
+                    pool.append(contentsOf: local.buffer)
+                }
+            }
+            pool.sort { $0.key < $1.key }
+            if pool.count > poolSize {
+                pool.removeLast(pool.count - poolSize)
             }
         }
+        let sortMs = (CFAbsoluteTimeGetCurrent() - t3) * 1000
 
         // Keep a wider pool (4x maxResults) then sort by rank to ensure high-scoring
         // path matches aren't eclipsed by lower-scoring basename matches
-        let pool = scored.prefix(maxResults * 4)
         var results = pool.map { s in
             let e = entries[s.id]
             let credit = extCredits.map { $0[s.id < extIDs.count ? extIDs[s.id] : 0] ?? 0 } ?? 0
@@ -4230,7 +4343,7 @@ final class SearchEngine: @unchecked Sendable {
         let totalMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
         slog
             .debug(
-                "search: q=\"\(query)\" \(n) entries, \(cands.count) cands, \(scored.count) scored, \(results.count) results in \(totalMs, format: .fixed(precision: 1))ms (filter=\(filterMs, format: .fixed(precision: 1))ms score=\(scoreMs, format: .fixed(precision: 1))ms sort=\(sortMs, format: .fixed(precision: 1))ms)"
+                "search: q=\"\(query)\" \(n) entries, \(cands.count) cands, \(totalScored) scored, \(results.count) results in \(totalMs, format: .fixed(precision: 1))ms (filter=\(filterMs, format: .fixed(precision: 1))ms score=\(scoreMs, format: .fixed(precision: 1))ms sort=\(sortMs, format: .fixed(precision: 1))ms)"
             )
         return results
     }
@@ -4485,6 +4598,8 @@ final class SearchEngine: @unchecked Sendable {
         }
 
         let entry = Entry(bnStart: bnStart, segCount: segCount, isDir: isDir, nonASCII: nonASCII)
+        liveCount &+= 1
+        changes &+= 1
         let id: Int
         if let f = free.popLast() {
             id = f
@@ -4516,15 +4631,21 @@ final class SearchEngine: @unchecked Sendable {
 
     /// Caller must hold the lock.
     private func _removeID(_ id: Int) {
+        guard byteLengths[id] > 0 else { return }
         if pathIndexBuilt {
             pathTable.remove(id: id, hash: entryHash(id))
         }
-        entries[id] = Entry(bnStart: 0, segCount: 0, isDir: false, nonASCII: false)
+        liveCount &-= 1
+        changes &+= 1
+        // A zero mask and length are all search and the other passes look at, so in a mapped file that is two pages
+        // copied at most, and the slot stays a hole until the next save.
         masks[id] = 0
+        byteLengths[id] = 0
+        guard id >= mappedCount else { return }
+        entries[id] = Entry(bnStart: 0, segCount: 0, isDir: false, nonASCII: false)
         bnMasks[id] = 0
         bnBoundaries[id] = 0
         byteOffsets[id] = 0
-        byteLengths[id] = 0
         extIDs[id] = 0
         free.append(id)
     }

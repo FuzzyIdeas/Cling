@@ -132,24 +132,73 @@ final class AtomicFileWriter {
 
 // MARK: - ColumnStorage
 
-/// The memory behind a column: plain values (nothing reference-counted inside) in one contiguous block that grows by
-/// doubling. Freed explicitly by its owner.
+/// The memory behind a column: plain values (nothing reference-counted inside) in one contiguous run of pages the
+/// storage maps itself, so freeing it gives the pages straight back to the system (freed malloc blocks this size linger
+/// in the allocator's cache and keep counting toward the app's memory).
+///
+/// Read from an index file, the first pages are the file's, mapped copy-on-write, and the rest is anonymous memory to
+/// grow into. File pages are clean: they don't count toward the app's memory until written, and the system can drop
+/// them under pressure and read them back when needed. Only the pages written to get copied. Freed explicitly by its
+/// owner with `release()`.
 struct ColumnStorage<T> {
     init() {
-        base = UnsafeMutablePointer<T>.allocate(capacity: 1)
-        capacity = 1
+        self.init(anonymousCapacity: 1)
+    }
+
+    private init(anonymousCapacity: Int) {
+        let length = Self.pages(Swift.max(anonymousCapacity, 1) * MemoryLayout<T>.stride)
+        guard let p = mmap(nil, length, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0), p != MAP_FAILED else {
+            fatalError("ColumnStorage: can't map \(length) bytes")
+        }
+        base = p.assumingMemoryBound(to: T.self)
+        capacity = length / MemoryLayout<T>.stride
+        self.length = length
+        isMapped = false
+    }
+
+    private init(base: UnsafeMutablePointer<T>, count: Int, length: Int) {
+        self.base = base
+        self.count = count
+        capacity = length / MemoryLayout<T>.stride
+        self.length = length
+        isMapped = true
+    }
+
+    /// Sections of index files start on this boundary, which is a whole number of pages everywhere.
+    static var pageSize: Int {
+        16384
     }
 
     private(set) var base: UnsafeMutablePointer<T>
     private(set) var count = 0
     private(set) var capacity: Int
+    /// Whether the first values are an index file's pages.
+    private(set) var isMapped: Bool
+
+    /// A column whose first `count` values are the `length` bytes of `fd` at `offset` (page-aligned), with room for
+    /// `capacity` values before it has to move.
+    static func mapped(fd: Int32, offset: Int, length: Int, count: Int, capacity: Int) -> ColumnStorage<T>? {
+        let fileBytes = pages(length)
+        let total = Swift.max(fileBytes, pages(Swift.max(capacity, count, 1) * MemoryLayout<T>.stride)) + pageSize
+        guard let start = mmap(nil, total, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0), start != MAP_FAILED else {
+            return nil
+        }
+        if fileBytes > 0 {
+            guard mmap(start, fileBytes, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE, fd, off_t(offset)) == start else {
+                munmap(start, total)
+                return nil
+            }
+        }
+        return ColumnStorage(base: start.assumingMemoryBound(to: T.self), count: count, length: total)
+    }
 
     mutating func reserve(_ minimumCapacity: Int) {
         guard minimumCapacity > capacity else { return }
-        let bytes = minimumCapacity * MemoryLayout<T>.stride
-        guard let grown = realloc(base, bytes) else { fatalError("ColumnStorage: out of memory growing to \(bytes) bytes") }
-        base = grown.assumingMemoryBound(to: T.self)
-        capacity = minimumCapacity
+        var bigger = ColumnStorage(anonymousCapacity: minimumCapacity)
+        memcpy(bigger.base, base, count * MemoryLayout<T>.stride)
+        bigger.count = count
+        release()
+        self = bigger
     }
 
     @inline(__always) mutating func append(_ value: T) {
@@ -189,7 +238,13 @@ struct ColumnStorage<T> {
     }
 
     func release() {
-        free(base)
+        munmap(base, length)
+    }
+
+    private var length: Int
+
+    private static func pages(_ bytes: Int) -> Int {
+        (bytes + pageSize - 1) / pageSize * pageSize
     }
 }
 
@@ -420,5 +475,66 @@ struct PathTable {
         slots[s] = value
         live += 1
         used += 1
+    }
+}
+
+// MARK: - ScratchBuffer
+
+/// Per-search working memory that goes back to the system the moment it's freed. Freed malloc blocks this size stay in
+/// the allocator's cache and keep counting toward the app's memory, so a broad search over millions of entries used to
+/// leave hundreds of megabytes behind. Reserves address space for `capacity` values; only the pages written cost
+/// anything. Freed explicitly with `release()`.
+struct ScratchBuffer<T> {
+    init(capacity: Int) {
+        let bytes = Swift.max(capacity, 1) * MemoryLayout<T>.stride
+        let page = Int(vm_page_size)
+        length = (bytes + page - 1) / page * page
+        guard let p = mmap(nil, length, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0), p != MAP_FAILED else {
+            fatalError("ScratchBuffer: can't reserve \(length) bytes")
+        }
+        base = p.assumingMemoryBound(to: T.self)
+        self.capacity = length / MemoryLayout<T>.stride
+    }
+
+    /// `count` values, all bits zero.
+    init(zeroed count: Int) {
+        self.init(capacity: count)
+        self.count = count
+    }
+
+    private(set) var base: UnsafeMutablePointer<T>
+    private(set) var count = 0
+    private(set) var capacity: Int
+
+    var buffer: UnsafeMutableBufferPointer<T> {
+        UnsafeMutableBufferPointer(start: base, count: count)
+    }
+
+    @inline(__always) mutating func append(_ value: T) {
+        if count == capacity {
+            grow()
+        }
+        (base + count).initialize(to: value)
+        count &+= 1
+    }
+
+    /// Keeps the first `n` values.
+    mutating func truncate(to n: Int) {
+        count = Swift.min(count, n)
+    }
+
+    func release() {
+        munmap(base, length)
+    }
+
+    private var length: Int
+
+    private mutating func grow() {
+        let bigger = ScratchBuffer(capacity: capacity * 2)
+        memcpy(bigger.base, base, count * MemoryLayout<T>.stride)
+        munmap(base, length)
+        base = bigger.base
+        capacity = bigger.capacity
+        length = bigger.length
     }
 }
