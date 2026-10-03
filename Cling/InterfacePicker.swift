@@ -20,23 +20,34 @@ final class DesktopWallpaper {
     private(set) var image: NSImage?
 
     func load() {
-        guard let screen = NSScreen.screens.first, var url = NSWorkspace.shared.desktopImageURL(for: screen) else { return }
+        var url = NSScreen.screens.first.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }
         #if SEARCHBAR_BENCH
             if let path = UserDefaults.standard.string(forKey: "searchBarShowcaseWallpaper") {
                 url = URL(fileURLWithPath: path)
             }
         #endif
-        guard url != loadedURL else { return }
+        guard image == nil || url != loadedURL else { return }
         loadedURL = url
         Task.detached(priority: .userInitiated) {
-            let image = Self.thumbnail(of: url)
+            let image = url.flatMap { Self.thumbnail(of: $0) } ?? Self.systemDefaults.lazy.compactMap { Self.thumbnail(of: URL(fileURLWithPath: $0)) }.first
             await MainActor.run { self.image = image }
         }
     }
 
+    /// Pictures that ship with macOS, for when the wallpaper can't be read: the default aerial's still where the
+    /// system has one, then a release's own picture.
+    private nonisolated static let systemDefaults = [
+        "/System/Library/Wallpapers/.default/DefaultAerial.heic",
+        "/System/Library/Wallpapers/.default/DefaultAerial.jpg",
+        "/System/Library/Desktop Pictures/Sonoma.heic",
+        "/System/Library/Desktop Pictures/Ventura Graphic.madesktop",
+        "/System/Library/Desktop Pictures/Monterey Graphic.madesktop",
+    ]
+
     private var loadedURL: URL?
 
-    /// Nil for a file that is gone (macOS keeps showing a deleted wallpaper) or isn't a still image.
+    /// Nil for a file that is gone (macOS keeps showing a deleted wallpaper) or isn't a still image, like an aerial's
+    /// video.
     private nonisolated static func thumbnail(of url: URL) -> NSImage? {
         var url = url
         // The system wallpapers are .madesktop plists that point at a downloaded asset and a preview of it.
