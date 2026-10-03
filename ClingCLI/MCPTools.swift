@@ -204,7 +204,11 @@ extension MCPServer {
     static func opt(_ args: [String: Any], _ flag: String, _ key: String) -> [String] {
         guard let value = args[key], !(value is NSNull) else { return [] }
         let string = argument(value)
-        return string.isEmpty && !(value is String) ? [] : ["\(flag)=\(string)"]
+        guard !string.isEmpty else {
+            // ArgumentParser reads `--flag=` as a missing value, but takes an empty separate argument.
+            return value is String ? [flag, ""] : []
+        }
+        return ["\(flag)=\(string)"]
     }
 
     static func flag(_ args: [String: Any], _ key: String, _ flag: String) -> [String] {
