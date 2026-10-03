@@ -94,7 +94,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     static let shared = SearchBarController()
 
     static let minSize = NSSize(width: 560, height: 320)
-    static let defaultSize = NSSize(width: 860, height: 500)
+    static let defaultSize = NSSize(width: 750, height: 500)
 
     private(set) var state = State.hidden
 
@@ -149,6 +149,9 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             mainAsync {
                 self?.ownsHotkey = change.newValue == .searchBar
                 self?.updatePillHotkey()
+                if change.oldValue != change.newValue {
+                    self?.interfaceChanged(to: change.newValue)
+                }
             }
         }.store(in: &observers)
         for key: Defaults._AnyKey in [.enableGlobalHotkey, .triggerKeys, .showAppKey] {
@@ -174,8 +177,11 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         pub(.searchBarShowPreview).sink { [weak self] _ in
             mainAsync { self?.updatePreviewVisibility() }
         }.store(in: &observers)
-        pub(.searchBarBeforeTyping).sink { [weak self] _ in
+        pub(.searchBarDefaultResults).sink { [weak self] change in
             mainAsync {
+                if change.newValue == .recentFiles {
+                    FUZZY.updateDefaultResults()
+                }
                 guard let self, self.isExpanded else { return }
                 self.observationGeneration += 1
                 self.observe()
@@ -234,6 +240,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         }
 
         state = .expanded
+        updateCursorFollowing()
         WM.searchBarActive = true
         EVERYTHING.windowShown()
         FUZZY.refreshDefaultResultsIfNeeded()
@@ -265,8 +272,11 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         root.field.currentEditor()?.selectAll(nil)
         if let pill {
             grow(panel, outOf: pill, to: target)
-        } else if !morphing {
-            pillPanel?.orderOut(nil)
+        } else {
+            if !morphing {
+                pillPanel?.orderOut(nil)
+            }
+            refreshShadow()
         }
         // After this turn's commit, so tearing the hidden window's content down doesn't hold up the
         // bar's first frame.
@@ -300,12 +310,33 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             lastFocusLossCollapse = Date()
         }
         restoreMainContentWhenIdle()
+        updateCursorFollowing()
         if activatedApp {
             activatedApp = false
             if !focusLost {
                 APP_MANAGER.lastFrontmostApp?.activate()
             }
         }
+    }
+
+    /// ⌃⇥ in the bar: the same search in the window, for what the bar doesn't do.
+    func switchToWindow() {
+        guard isExpanded else { return }
+        // Focus stays with Cling, which the window takes next.
+        collapse(focusLost: true)
+        if let app = AppDelegate.shared, app.mainWindow == nil {
+            app.pendingDisplay = app.displayForMainWindow()
+        }
+        WM.open("main")
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// ⌃⇥ in the window: the same search in the bar.
+    func switchFromWindow() {
+        if let app = AppDelegate.shared, let main = app.mainWindow {
+            app.hideOrCloseMainWindow(main)
+        }
+        expand()
     }
 
     /// Esc: closes QuickLook, then clears the query, then puts the bar away.
@@ -525,6 +556,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             hints.append(.init(id: .copy, key: keys.copy, title: "Copy"))
         }
         hints.append(.init(id: .actions, key: "⌘K", title: "Actions"))
+        hints.append(.init(id: .window, key: "⌃⇥", title: "Window"))
         root.hintBar.hints = hints
     }
 
@@ -596,9 +628,10 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         MainActor.assumeIsolated { quickLookItems[safe: index] as NSURL? }
     }
 
-    /// Starts gently, so the first frames still look like the field, and settles slowly.
-    private static let growTiming = CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
     private static let shrinkTiming = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
+
+    /// Response 0.22 s, damping 0.86: a step response that is within a tenth of a percent after `springDuration`.
+    private static let springDuration: CFTimeInterval = 0.28
 
     private var hintKeys = HintKeys()
     private var restoreMainContentWork: DispatchWorkItem?
@@ -634,6 +667,20 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     /// Tells a morph's completion whether a newer one took over.
     private var morphGeneration = 0
 
+    private var springLink: CADisplayLink?
+    private var springFrom = NSRect.zero
+    private var springTo = NSRect.zero
+    private var springStart: CFTimeInterval = 0
+    private var springCompletion: (() -> Void)?
+
+    // MARK: Following the cursor's display
+
+    private var cursorMonitors: [Any] = []
+    private var screenFrames: [NSRect] = []
+    /// The display the cursor was last seen on, so a move within it costs one rectangle test.
+    private var cursorScreenFrame: NSRect?
+    private var followWork: DispatchWorkItem?
+
     private var showsPreview: Bool {
         Defaults[.searchBarShowPreview]
     }
@@ -646,7 +693,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
 
     /// The expanded height before typing when the bar shows only its field.
     private var fieldOnlyBeforeTyping: Bool {
-        FUZZY.noQuery && FUZZY.volumeFilter == nil && Defaults[.searchBarBeforeTyping] == .fieldOnly
+        FUZZY.noQuery && FUZZY.volumeFilter == nil && Defaults[.searchBarDefaultResults] == .empty
     }
 
     /// Cling's hotkey, shown on the compact field while it's the bar that the hotkey brings up, in
@@ -675,6 +722,27 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         return shown.contains(" ") ? "in:\"\(shown)\"" : "in:\(shown)"
     }
 
+    private static func springProgress(_ t: Double) -> Double {
+        let omega = 2 * Double.pi / 0.22
+        let zeta = 0.86
+        let damped = omega * (1 - zeta * zeta).squareRoot()
+        return 1 - exp(-zeta * omega * t) * (cos(damped * t) + zeta * omega / damped * sin(damped * t))
+    }
+
+    // MARK: Bar and window
+
+    /// Settings > Style switched between the bar and the window: the one no longer picked goes away.
+    private func interfaceChanged(to target: HotkeyTarget) {
+        switch target {
+        case .searchBar:
+            if let app = AppDelegate.shared, let main = app.mainWindow, main.isVisible, main.alphaValue > 0 {
+                app.hideOrCloseMainWindow(main)
+            }
+        case .window:
+            collapse(focusLost: true)
+        }
+    }
+
     /// Shrinks the bar to its search row, or grows it back to the stored size, keeping its top edge where it is.
     private func fitPanelHeight() {
         guard let panel, let root, !morphing else { return }
@@ -689,14 +757,26 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         placingPanel = true
         panel.setFrame(frame, display: true)
         placingPanel = false
-        panel.invalidateShadow()
+        refreshShadow()
     }
 
+    /// Only sizes set by hand: animations and the bar's own placement go through `placingPanel`, and the field-only
+    /// height isn't one to keep.
     private func storeSize() {
-        guard let panel, root?.fieldOnly != true else { return }
+        guard let panel, root?.fieldOnly != true, !placingPanel, !morphing else { return }
         Defaults[.searchBarSize] = [panel.frame.width, panel.frame.height]
-        // A borderless window's shadow follows its content, which changed shape.
-        panel.invalidateShadow()
+        refreshShadow()
+    }
+
+    /// A borderless window's shadow is worked out from what it has drawn and then kept. One taken before the rounded
+    /// background drew, or before a resize, stays a rectangle and shows under the rounded corners, so it's redone
+    /// after the next draw.
+    private func refreshShadow() {
+        DispatchQueue.main.async { [weak self] in
+            guard let panel = self?.panel, panel.isVisible else { return }
+            panel.displayIfNeeded()
+            panel.invalidateShadow()
+        }
     }
 
     private func ensurePanel() -> SearchBarPanel {
@@ -856,14 +936,14 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     private func readInputs() -> Inputs {
         let fuzzy = FUZZY
         let defaultList = fuzzy.noQuery && fuzzy.volumeFilter == nil
-        let beforeTyping = Defaults[.searchBarBeforeTyping]
+        let defaultResults = Defaults[.searchBarDefaultResults]
         let list: [FilePath] = if !defaultList {
             fuzzy.results
         } else {
-            switch beforeTyping {
-            case .fieldOnly: []
-            case .recents: fuzzy.sortField == .score ? fuzzy.recents : fuzzy.sortedRecents
-            case .runHistory: Array(RH.mostRun.prefix(Defaults[.maxResultsCount]))
+            switch defaultResults {
+            case .empty: []
+            case .recentFiles: fuzzy.sortField == .score ? fuzzy.recentFiles : fuzzy.sortedResults(results: fuzzy.recentFiles)
+            case .runHistory: RH.topResults(limit: Defaults[.maxResultsCount])
             }
         }
 
@@ -889,7 +969,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             scopeIcon: scope?.icon,
             scopeHue: scope?.color.hue,
             everything: EVERYTHING.enabled,
-            fieldOnly: defaultList && beforeTyping == .fieldOnly
+            fieldOnly: defaultList && defaultResults == .empty
         )
     }
 
@@ -1119,6 +1199,9 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             if mods.isEmpty || mods == [.command, .shift], performReturn(modifiers: mods) {
                 return nil
             }
+        case 48 where mods == .control: // ⌃⇥
+            switchToWindow()
+            return nil
         case 49 where mods.isEmpty && listFocused: // Space
             toggleQuickLook()
             return nil
@@ -1139,6 +1222,10 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             switch chars {
             case "k":
                 showActionsMenu()
+                return nil
+            case "x" where listFocused:
+                // As in the window, where ⌘X runs a script unless the search field has the keyboard.
+                showActionsMenu(.scripts)
                 return nil
             case "i":
                 if let path = selection.first {
@@ -1213,7 +1300,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         return nil
     }
 
-    /// The bar starts over the compact field and takes its size, fading in while the field fades out under it.
+    /// The bar starts over the compact field and springs to its size, fading in while the field fades out under it.
     private func grow(_ panel: NSPanel, outOf pill: NSPanel, to target: NSRect) {
         morphGeneration += 1
         let generation = morphGeneration
@@ -1221,26 +1308,59 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         placingPanel = true
         // The bar covers the field within the first few frames, while it's still about the field's size.
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.1
+            context.duration = 0.07
             panel.animator().alphaValue = 1
             pill.animator().alphaValue = 0
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.34
-            context.timingFunction = Self.growTiming
-            panel.animator().setFrame(target, display: true)
-        } completionHandler: { [weak self] in
-            mainAsync {
-                guard let self, generation == self.morphGeneration else { return }
-                self.morphing = false
-                self.placingPanel = false
-                pill.orderOut(nil)
-                pill.alphaValue = 1
-                panel.invalidateShadow()
-                // Typing during the animation may have changed what the bar shows.
-                self.fitPanelHeight()
-            }
+        spring(panel, to: target) { [weak self] in
+            guard let self, generation == morphGeneration else { return }
+            morphing = false
+            placingPanel = false
+            pill.orderOut(nil)
+            pill.alphaValue = 1
+            refreshShadow()
+            // Typing during the animation may have changed what the bar shows.
+            fitPanelHeight()
         }
+    }
+
+    /// Moves the bar's frame along a spring, driven by the display, as NSAnimationContext only has curves: a start
+    /// with no lag, a settle in about a quarter of a second and a half-percent overshoot.
+    private func spring(_ panel: NSPanel, to target: NSRect, completion: @escaping () -> Void) {
+        springLink?.invalidate()
+        springFrom = panel.frame
+        springTo = target
+        springStart = CACurrentMediaTime()
+        springCompletion = completion
+        let link = panel.displayLink(target: self, selector: #selector(springStep(_:)))
+        link.add(to: .main, forMode: .common)
+        springLink = link
+    }
+
+    @objc private func springStep(_ link: CADisplayLink) {
+        guard let panel else {
+            link.invalidate()
+            return
+        }
+        let t = CACurrentMediaTime() - springStart
+        let done = t >= Self.springDuration
+        let p = done ? 1 : Self.springProgress(t)
+        func mix(_ a: CGFloat, _ b: CGFloat) -> CGFloat {
+            (a + (b - a) * p).rounded()
+        }
+        let frame = done
+            ? springTo
+            : NSRect(
+                x: mix(springFrom.minX, springTo.minX), y: mix(springFrom.minY, springTo.minY),
+                width: mix(springFrom.width, springTo.width), height: mix(springFrom.height, springTo.height)
+            )
+        panel.setFrame(frame, display: true)
+        guard done else { return }
+        link.invalidate()
+        springLink = nil
+        let completion = springCompletion
+        springCompletion = nil
+        completion?()
     }
 
     /// The reverse of `grow`: the bar shrinks into the compact field's frame and fades out over it.
@@ -1254,7 +1374,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         morphing = true
         placingPanel = true
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.22
+            context.duration = 0.18
             context.timingFunction = Self.shrinkTiming
             panel.animator().setFrame(pill.frame, display: true)
             panel.animator().alphaValue = 0
@@ -1275,8 +1395,69 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         let panel = ensurePill()
         applyPillLevel()
         panel.orderFrontRegardless()
+        followCursorDisplay()
+        updateCursorFollowing()
         // The shadow follows the capsule's alpha, which only exists once it has drawn.
         DispatchQueue.main.async { panel.invalidateShadow() }
+    }
+
+    /// The compact field stays on the display with the cursor. It listens to the mouse only while the field is up and
+    /// there's more than one display, so it costs nothing at rest, and moves half a second after the cursor reaches
+    /// another display, so crossing one on the way doesn't drag it along.
+    private func updateCursorFollowing() {
+        let wanted = state == .compact && pinned && NSScreen.screens.count > 1
+        guard wanted != !cursorMonitors.isEmpty else { return }
+        if wanted {
+            screenFrames = NSScreen.screens.map(\.frame)
+            cursorScreenFrame = nil
+            let global = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in
+                MainActor.assumeIsolated { self?.cursorMoved() }
+            }
+            let local = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
+                MainActor.assumeIsolated { self?.cursorMoved() }
+                return event
+            }
+            cursorMonitors = [global, local].compactMap(\.self)
+        } else {
+            cursorMonitors.forEach(NSEvent.removeMonitor)
+            cursorMonitors = []
+            followWork?.cancel()
+            followWork = nil
+        }
+    }
+
+    private func cursorMoved() {
+        let mouse = NSEvent.mouseLocation
+        if let frame = cursorScreenFrame, NSMouseInRect(mouse, frame, false) {
+            return
+        }
+        cursorScreenFrame = screenFrames.first { NSMouseInRect(mouse, $0, false) }
+        followWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.followCursorDisplay() }
+        }
+        followWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    private func followCursorDisplay() {
+        let mouse = NSEvent.mouseLocation
+        guard let pillPanel, let target = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) else { return }
+        let pillFrame = pillPanel.frame
+        let current = NSScreen.screens.first { $0.frame.contains(NSPoint(x: pillFrame.midX, y: pillFrame.midY)) }
+        guard current?.frame != target.frame else { return }
+        // The same spot in the other display's usable area, in one step: it leaves one display and shows on the other
+        // in the same frame.
+        let from = current?.visibleFrame ?? target.visibleFrame
+        let to = target.visibleFrame
+        let fx = from.width > pillFrame.width ? (pillFrame.minX - from.minX) / (from.width - pillFrame.width) : 0.5
+        let fy = from.height > pillFrame.height ? (pillFrame.minY - from.minY) / (from.height - pillFrame.height) : 1
+        let origin = NSPoint(
+            x: (to.minX + min(max(fx, 0), 1) * (to.width - pillFrame.width)).rounded(),
+            y: (to.minY + min(max(fy, 0), 1) * (to.height - pillFrame.height)).rounded()
+        )
+        pillPanel.setFrameOrigin(origin)
+        Defaults[.searchBarPillOrigin] = [origin.x, origin.y]
     }
 
     @discardableResult
@@ -1364,11 +1545,15 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             if state == .compact {
                 state = .hidden
             }
+            updateCursorFollowing()
         }
     }
 
     /// Keeps the compact field on a display: one that was unplugged takes it back to the default spot.
     private func screensChanged() {
+        screenFrames = NSScreen.screens.map(\.frame)
+        cursorScreenFrame = nil
+        updateCursorFollowing()
         guard let pillPanel else { return }
         let frame = pillPanel.frame
         if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) {

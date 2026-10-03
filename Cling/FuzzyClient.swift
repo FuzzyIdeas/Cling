@@ -478,6 +478,8 @@ class FuzzyClient {
     var operation = ""
     var scoredResults: [FilePath] = []
     var recents: [FilePath] = [] // Merged default results (live index + MDQuery)
+    /// The recent files whatever the window's default results are, for a search bar set to show them.
+    var recentFiles: [FilePath] = []
     var sortedRecents: [FilePath] = [] // Same, sorted by current sort field
     @ObservationIgnored var mdQueryRecents: [FilePath] = [] // Raw MDQuery results (filtered)
     var commonOpenWithApps: [URL] = []
@@ -3329,11 +3331,14 @@ class FuzzyClient {
 
     private func performUpdateDefaultResults() {
         defaultResultsDirty = false
-        let defaults: [FilePath] = switch Defaults[.defaultResultsMode] {
-        case .recentFiles: computeDefaultResults()
+        let mode = Defaults[.defaultResultsMode]
+        let files = mode == .recentFiles || Defaults[.searchBarDefaultResults] == .recentFiles ? computeDefaultResults() : []
+        let defaults: [FilePath] = switch mode {
+        case .recentFiles: files
         case .runHistory: RH.topResults(limit: Defaults[.maxResultsCount])
         case .empty: []
         }
+        recentFiles = files
         recents = defaults
         sortedRecents = sortedResults(results: defaults)
         // `isDir` is a stat per path and Spotlight can fire this on every recents update, so on a

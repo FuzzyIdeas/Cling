@@ -37,7 +37,7 @@ extension SearchBarController {
         case .quickLook:
             toggleQuickLook()
         case .openWith:
-            showActionsMenu(openWithOnly: true)
+            showActionsMenu(.openWith)
         case .openInTerminal:
             guard let terminal = Defaults[.terminalApp].existingFilePath?.url else { return }
             RH.trackRun(sel)
@@ -115,6 +115,7 @@ extension SearchBarController {
         case .copy: perform(.copy)
         case .drill: drillIn()
         case .actions: showActionsMenu()
+        case .window: switchToWindow()
         }
     }
 
@@ -167,10 +168,23 @@ extension SearchBarController {
         sortMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 4), in: button)
     }
 
-    /// ⌘K and the Actions hint. Pops up over the selected row when it's on screen, else at the hint.
-    func showActionsMenu(openWithOnly: Bool = false) {
+    enum ActionsMenu { case all, openWith, scripts }
+
+    /// ⌘K and the Actions hint, ⌘O for Open With and ⌘X for scripts. Pops up over the selected row when it's on
+    /// screen, else at the hint.
+    func showActionsMenu(_ kind: ActionsMenu = .all) {
         guard let root else { return }
-        let menu = openWithOnly ? openWithMenu() : actionsMenu()
+        let menu: NSMenu
+        switch kind {
+        case .all: menu = actionsMenu()
+        case .openWith: menu = openWithMenu()
+        case .scripts:
+            guard let scripts = scriptsMenu() else {
+                NSSound.beep()
+                return
+            }
+            menu = scripts
+        }
         let table = results.tableView
         let row = table.selectedRowIndexes.first ?? -1
         if row >= 0, table.visibleRect.intersects(table.rect(ofRow: row)) {
@@ -182,6 +196,28 @@ extension SearchBarController {
     }
 
     // MARK: Menus
+
+    /// The scripts that take the selection, Pro only as in the window; nil when there are none.
+    func scriptsMenu() -> NSMenu? {
+        let sel = selection
+        guard proactive, !sel.isEmpty else { return nil }
+        let scripts = SM.scriptURLs.filter { SM.isEligible($0, forPaths: sel) }
+        guard !scripts.isEmpty else { return nil }
+        let menu = NSMenu()
+        for script in scripts {
+            let scriptItem = item(script.deletingPathExtension().lastPathComponent, enabled: SM.process == nil) { controller in
+                let paths = controller.selection
+                RH.trackRun(paths)
+                SM.run(script: script, args: paths.map(\.string))
+            }
+            if let key = SM.scriptShortcuts[script] {
+                scriptItem.keyEquivalent = String(key)
+                scriptItem.keyEquivalentModifierMask = [.command, .control]
+            }
+            menu.addItem(scriptItem)
+        }
+        return menu
+    }
 
     func actionsMenu() -> NSMenu {
         let menu = NSMenu()
@@ -218,26 +254,10 @@ extension SearchBarController {
             controller.paste(controller.selection, inTerminal: APP_MANAGER.frontmostAppIsTerminal)
         })
 
-        if proactive, hasSelection {
-            let scripts = SM.scriptURLs.filter { SM.isEligible($0, forPaths: sel) }
-            if !scripts.isEmpty {
-                let scriptsItem = NSMenuItem(title: "Scripts", action: nil, keyEquivalent: "")
-                let submenu = NSMenu()
-                for script in scripts {
-                    let scriptItem = item(script.deletingPathExtension().lastPathComponent, enabled: SM.process == nil) { controller in
-                        let paths = controller.selection
-                        RH.trackRun(paths)
-                        SM.run(script: script, args: paths.map(\.string))
-                    }
-                    if let key = SM.scriptShortcuts[script] {
-                        scriptItem.keyEquivalent = String(key)
-                        scriptItem.keyEquivalentModifierMask = [.command, .control]
-                    }
-                    submenu.addItem(scriptItem)
-                }
-                scriptsItem.submenu = submenu
-                menu.addItem(scriptsItem)
-            }
+        if let submenu = scriptsMenu() {
+            let scriptsItem = NSMenuItem(title: "Scripts", action: nil, keyEquivalent: "")
+            scriptsItem.submenu = submenu
+            menu.addItem(scriptsItem)
         }
 
         menu.addItem(.separator())
@@ -409,7 +429,7 @@ extension SearchBarController {
         let group = FUZZY.openWithAppShortcuts.filter { $0.value == ch }.map(\.key)
         guard group.count == 1 else {
             if group.count > 1 {
-                showActionsMenu(openWithOnly: true)
+                showActionsMenu(.openWith)
                 return true
             }
             return false

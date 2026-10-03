@@ -191,7 +191,7 @@ final class SearchBarIconButton: NSButton {
 
 struct SearchBarHint: Equatable {
     enum ID: Equatable {
-        case open, paste, showInFinder, quickLook, copy, drill, actions
+        case open, paste, showInFinder, quickLook, copy, drill, actions, window
     }
 
     let id: ID
@@ -239,11 +239,23 @@ final class SearchBarHintBar: NSView {
         }
     }
 
+    /// Drawn only on request, so a new size has to ask: otherwise the old drawing is stretched over it, and the next
+    /// one lands on top of that.
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize != frame.size
+        super.setFrameSize(newSize)
+        if changed {
+            needsDisplay = true
+        }
+    }
+
     override func acceptsFirstMouse(for _: NSEvent?) -> Bool {
         true
     }
 
     override func draw(_: NSRect) {
+        NSColor.clear.setFill()
+        bounds.fill(using: .copy)
         let text = SearchBarTextCache.shared
         var rects: [(SearchBarHint.ID, NSRect)] = []
 
@@ -260,7 +272,17 @@ final class SearchBarHintBar: NSView {
         let limit = statusX - 12
         let capHeight = round(bounds.height * 0.6)
         let capFill = NSColor.labelColor.withAlphaComponent(0.08)
-        for hint in hints {
+        func width(_ hint: SearchBarHint) -> CGFloat {
+            max(text.size(hint.key, style: .hintKey).width + 8, capHeight) + 5 + text.size(hint.title, style: .hintTitle).width
+        }
+        // What doesn't fit goes, least needed first, instead of whatever happens to come last.
+        var shown = hints
+        while !shown.isEmpty, x + shown.map { width($0) + 16 }.reduce(0, +) - 16 > limit,
+              let drop = Self.dropOrder.lazy.compactMap({ id in shown.firstIndex { $0.id == id } }).first
+        {
+            shown.remove(at: drop)
+        }
+        for hint in shown {
             let keySize = text.size(hint.key, style: .hintKey)
             let titleSize = text.size(hint.title, style: .hintTitle)
             let capWidth = max(keySize.width + 8, capHeight)
@@ -316,6 +338,8 @@ final class SearchBarHintBar: NSView {
             self?.needsDisplay = true
         }
     }
+
+    private static let dropOrder: [SearchBarHint.ID] = [.copy, .drill, .showInFinder, .quickLook, .window, .actions, .paste, .open]
 
     private var hintRects: [(SearchBarHint.ID, NSRect)] = []
     private var flashText: String?

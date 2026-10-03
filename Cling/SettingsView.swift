@@ -349,9 +349,16 @@ private struct InterfaceSettingsPane: View {
         Form {
             Section("Interface") {
                 InterfacePicker()
-                Picker("Before typing", selection: $beforeTyping) {
-                    ForEach(SearchBarBeforeTyping.allCases, id: \.self) { option in
-                        Text(option.label).tag(option)
+                // The picked interface's own: the bar's, or the window's from Settings > Search.
+                Picker("Default results", selection: hotkeyTarget == .searchBar ? $searchBarDefaultResults : $defaultResultsMode) {
+                    ForEach(DefaultResultsMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                if hotkeyTarget == .searchBar {
+                    Toggle("Pin to desktop", isOn: $searchBarPinned)
+                    if searchBarPinned {
+                        Toggle("Keep above windows", isOn: $searchBarAboveWindows)
                     }
                 }
             }
@@ -547,7 +554,11 @@ private struct InterfaceSettingsPane: View {
 
     // MARK: Part A — knob state
 
-    @Default(.searchBarBeforeTyping) private var beforeTyping
+    @Default(.hotkeyTarget) private var hotkeyTarget
+    @Default(.searchBarDefaultResults) private var searchBarDefaultResults
+    @Default(.defaultResultsMode) private var defaultResultsMode
+    @Default(.searchBarPinned) private var searchBarPinned
+    @Default(.searchBarAboveWindows) private var searchBarAboveWindows
     @Default(.showActionRow) private var showActionRow
     @Default(.showOpenWithRow) private var showOpenWithRow
     @Default(.rowsToggleModifier) private var rowsToggleModifier
@@ -756,8 +767,6 @@ private struct GeneralSettingsPane: View {
                     .opacity(enableGlobalHotkey ? 1 : 0.5)
                 }
             }
-
-            SearchBarSettingsSection()
 
             Section("Privacy") {
                 SentryToggleRow(

@@ -1786,6 +1786,12 @@ struct ContentView: View {
             let kc = event.keyCode
             let chars = (event.charactersIgnoringModifiers ?? "").lowercased()
 
+            // ⌃⇥ → the same search in the search bar, and back from there with the same keys.
+            if kc == 48, mods == .control {
+                SB.switchFromWindow()
+                return nil
+            }
+
             // ⌘+ / ⌘- / ⌘0 → text size. ⌘= carries the plus without Shift, and the keypad
             // sends its own keycodes, so all four spellings land here.
             if mods == .command || mods == [.command, .shift] {
