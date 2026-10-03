@@ -1697,7 +1697,7 @@ class FuzzyClient {
         let homePrefix = HOME.string + "/"
         // Snapshot main-actor state; the filesystem checks below all run off the main actor.
         let (entries, fsignoreFile, fsignoreStr, volumes, liveChanges) = await MainActor.run {
-            (recentsEngine.entries, fsignore, fsignoreString, enabledVolumes, liveIndexChanges.map(\.path))
+            (recentsEngine.allPaths(), fsignore, fsignoreString, enabledVolumes, liveIndexChanges.map(\.path))
         }
 
         let ignoreFile: String? = fsignoreFile.exists ? fsignoreStr : nil
@@ -1723,7 +1723,7 @@ class FuzzyClient {
             return volumeFsignores.contains { path.hasPrefix($0.prefix) && path.isIgnored(in: $0.fsignore) }
         }
 
-        let toRemove = entries.map(\.path).filter(shouldRemove)
+        let toRemove = entries.filter(shouldRemove)
         let liveToRemove = Set(liveChanges.filter(shouldRemove))
 
         await MainActor.run {
