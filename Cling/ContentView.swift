@@ -1620,70 +1620,26 @@ struct ContentView: View {
     }
 
     private func handleFolderFilterDismiss() {
-        guard !folderFilterID.isEmpty, !folderFilterFolders.isEmpty else {
-            folderFilterID = ""; folderFilterFolders = []
-            return
-        }
-        fuzzy.suppressNextSearch = true
-        fuzzy.query = ""
-        saveFolderFilter(id: folderFilterID, folders: folderFilterFolders, key: folderFilterKey)
+        finishFolderFilterDraft(id: folderFilterID, folders: folderFilterFolders, key: folderFilterKey)
         folderFilterID = ""; folderFilterFolders = []; folderFilterKey = .escape
     }
 
     private func handleQuickFilterDismiss() {
-        let f = filterDraft.asFilter
-        let hasContent = f.extensions != nil || f.exclude != nil || f.match != .both || f.folders?.isEmpty == false || f.rawQuery != nil
-        guard !filterDraft.name.trimmed.isEmpty, hasContent else {
-            filterDraft = QuickFilterDraft()
-            return
-        }
-        fuzzy.suppressNextSearch = true
-        fuzzy.query = ""
-        saveQuickFilter(draft: filterDraft, originalID: "")
+        finishQuickFilterDraft(filterDraft)
         filterDraft = QuickFilterDraft()
     }
 
     private func prefillQuickFilter() {
-        let q = fuzzy.query.trimmingCharacters(in: .whitespaces)
-        let tokens = q.split(separator: " ")
-        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
-
-        // Parse extension tokens (.swift, *.pdf, etc.)
-        let extTokens = tokens.filter { $0.hasPrefix(".") || $0.hasPrefix("*.") }
-        // Parse in: folder tokens
-        let inTokens: [FilePath] = tokens.compactMap { token in
-            guard token.hasPrefix("in:"), token.count > 3 else { return nil }
-            var path = String(token.dropFirst(3))
-            if path.hasPrefix("~") {
-                path = homePath + path.dropFirst()
-            }
-            return path.filePath
-        }
-        let fuzzyTokens = tokens.filter { !$0.hasPrefix(".") && !$0.hasPrefix("*.") && !$0.hasPrefix("in:") }
-
-        // If ONLY in: tokens, show FolderFilter sheet (unchanged).
-        if !inTokens.isEmpty, extTokens.isEmpty, fuzzyTokens.isEmpty {
-            folderFilterID = inTokens.count == 1 ? inTokens[0].name.string.prefix(1).uppercased() + inTokens[0].name.string.dropFirst() : ""
-            folderFilterFolders = inTokens
-            folderFilterKey = getFilterKey(id: folderFilterID)
+        switch FilterDraftFromQuery(query: fuzzy.query) {
+        case let .folder(id, folders, key):
+            folderFilterID = id
+            folderFilterFolders = folders
+            folderFilterKey = key
             isAddingFolderFilter = true
-            return
+        case let .quick(draft):
+            filterDraft = draft
+            isAddingQuickFilter = true
         }
-
-        // Always open in structured mode: extensions/folders/match map to fields, and any
-        // free-text or operator tokens go into Prepend so nothing is lost.
-        filterDraft = QuickFilterDraft()
-        filterDraft.extensions = extTokens.map { $0.hasPrefix("*.") ? "." + $0.dropFirst(2) : String($0) }.joined(separator: " ")
-        filterDraft.match = q.hasSuffix("/") ? .folders : .both
-        filterDraft.folders = inTokens
-        filterDraft.prepend = fuzzyTokens.joined(separator: " ")
-
-        let nameSource = fuzzyTokens.isEmpty ? extTokens : fuzzyTokens
-        let name = nameSource.map(String.init).joined(separator: " ")
-        filterDraft.name = name.prefix(1).uppercased() + name.dropFirst()
-        filterDraft.hotkey = getFilterKey(id: filterDraft.name)
-
-        isAddingQuickFilter = true
     }
 
     private func installContentShortcutMonitor() {

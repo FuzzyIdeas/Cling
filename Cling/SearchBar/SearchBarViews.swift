@@ -191,7 +191,7 @@ final class SearchBarIconButton: NSButton {
 
 struct SearchBarHint: Equatable {
     enum ID: Equatable {
-        case open, paste, showInFinder, quickLook, copy, drill, actions, window
+        case open, paste, showInFinder, quickLook, copy, drill, actions, window, syntax
     }
 
     let id: ID

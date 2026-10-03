@@ -441,6 +441,74 @@ func saveQuickFilter(draft: QuickFilterDraft, originalID: String = "") {
     FUZZY.quickFilter = filter
 }
 
+// MARK: - FilterDraftFromQuery
+
+/// What ⌘S makes of a query in the window or the bar: a folder filter when it is only `in:` folders, otherwise a quick
+/// filter with its extensions, folders and match taken from the query, and any other words kept as the text put before
+/// it so nothing is lost.
+enum FilterDraftFromQuery {
+    case quick(QuickFilterDraft)
+    case folder(id: String, folders: [FilePath], key: SauceKey)
+
+    init(query: String) {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        let tokens = q.split(separator: " ")
+        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+
+        // Parse extension tokens (.swift, *.pdf, etc.)
+        let extTokens = tokens.filter { $0.hasPrefix(".") || $0.hasPrefix("*.") }
+        // Parse in: folder tokens
+        let inTokens: [FilePath] = tokens.compactMap { token in
+            guard token.hasPrefix("in:"), token.count > 3 else { return nil }
+            var path = String(token.dropFirst(3))
+            if path.hasPrefix("~") {
+                path = homePath + path.dropFirst()
+            }
+            return path.filePath
+        }
+        let fuzzyTokens = tokens.filter { !$0.hasPrefix(".") && !$0.hasPrefix("*.") && !$0.hasPrefix("in:") }
+
+        if !inTokens.isEmpty, extTokens.isEmpty, fuzzyTokens.isEmpty {
+            let id = inTokens.count == 1 ? inTokens[0].name.string.prefix(1).uppercased() + inTokens[0].name.string.dropFirst() : ""
+            self = .folder(id: id, folders: inTokens, key: getFilterKey(id: id))
+            return
+        }
+
+        var draft = QuickFilterDraft()
+        draft.extensions = extTokens.map { $0.hasPrefix("*.") ? "." + $0.dropFirst(2) : String($0) }.joined(separator: " ")
+        draft.match = q.hasSuffix("/") ? .folders : .both
+        draft.folders = inTokens
+        draft.prepend = fuzzyTokens.joined(separator: " ")
+
+        let nameSource = fuzzyTokens.isEmpty ? extTokens : fuzzyTokens
+        let name = nameSource.map(String.init).joined(separator: " ")
+        draft.name = name.prefix(1).uppercased() + name.dropFirst()
+        draft.hotkey = getFilterKey(id: draft.name)
+        self = .quick(draft)
+    }
+}
+
+/// Saves a quick filter drafted from the query when its sheet closes, if it has a name and narrows something, and
+/// clears the query it came from since the filter now does that job.
+@MainActor
+func finishQuickFilterDraft(_ draft: QuickFilterDraft) {
+    let f = draft.asFilter
+    let hasContent = f.extensions != nil || f.exclude != nil || f.match != .both || f.folders?.isEmpty == false || f.rawQuery != nil
+    guard !draft.name.trimmed.isEmpty, hasContent else { return }
+    FUZZY.suppressNextSearch = true
+    FUZZY.query = ""
+    saveQuickFilter(draft: draft, originalID: "")
+}
+
+/// The folder filter counterpart of `finishQuickFilterDraft`.
+@MainActor
+func finishFolderFilterDraft(id: String, folders: [FilePath], key: SauceKey) {
+    guard !id.isEmpty, !folders.isEmpty else { return }
+    FUZZY.suppressNextSearch = true
+    FUZZY.query = ""
+    saveFolderFilter(id: id, folders: folders, key: key)
+}
+
 @MainActor
 func saveFolderFilter(
     id: String, folders: [FilePath], key: SauceKey, originalID: String = "",

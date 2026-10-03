@@ -11,6 +11,7 @@ import Defaults
 import KeyboardShortcuts
 import Lowtech
 import OSLog
+import SwiftUI
 import System
 
 private let log = Logger(subsystem: clingSubsystem, category: "SearchBarActions")
@@ -116,6 +117,57 @@ extension SearchBarController {
         case .drill: drillIn()
         case .actions: showActionsMenu()
         case .window: switchToWindow()
+        case .syntax: toggleSyntaxReference()
+        }
+    }
+
+    /// ⌘S: the window's editor for a quick filter, or a folder filter when the query is only `in:` folders, filled in
+    /// from the query.
+    /// As in the window: with a query and Pro. Otherwise ⌘S is left to Shelve, which it is bound to by default.
+    var canSaveQueryAsFilter: Bool {
+        proactive && !FUZZY.query.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    func saveQueryAsFilter() {
+        guard canSaveQueryAsFilter else { return }
+        activateForModal()
+        SearchBarSheets.shared.saveQueryAsFilter(FUZZY.query)
+    }
+
+    /// ⌘/: the window's search syntax reference, hanging under the search row.
+    func toggleSyntaxReference() {
+        if let popover = syntaxPopover, popover.isShown {
+            popover.performClose(nil)
+            return
+        }
+        guard let root else { return }
+        let hosting = NSHostingController(rootView: QuerySyntaxCheatsheet())
+        hosting.sizingOptions = .preferredContentSize
+        let popover = NSPopover()
+        popover.contentViewController = hosting
+        popover.behavior = .transient
+        popover.animates = false
+        syntaxPopover = popover
+        // Centred on the query's first 380 points, the reference's width, so it hangs from where the text starts. The
+        // root is flipped, so the row's bottom edge is its maxY.
+        let anchor = NSRect(x: root.field.frame.minX, y: root.searchRowHeight - 1, width: min(380, root.field.frame.width), height: 1)
+        popover.show(relativeTo: anchor, of: root, preferredEdge: .maxY)
+    }
+
+    /// Files Duplicate or Compress just made: at the top of the results, as the window puts them, and selected.
+    func showCreatedFiles(_ paths: [FilePath]) {
+        let created = Set(paths)
+        FUZZY.results = paths + FUZZY.results.filter { !created.contains($0) }
+        FUZZY.recents = paths + FUZZY.recents.filter { !created.contains($0) }
+        FUZZY.sortedRecents = paths + FUZZY.sortedRecents.filter { !created.contains($0) }
+        guard isExpanded else { return }
+        // After the list picks up the change, which lands on the next turn of the run loop.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let rows = IndexSet(results.items.indices.filter { created.contains(self.results.items[$0]) })
+            guard let first = rows.first else { return }
+            results.tableView.selectRowIndexes(rows, byExtendingSelection: false)
+            results.tableView.scrollRowToVisible(first)
         }
     }
 
@@ -225,7 +277,9 @@ extension SearchBarController {
         let sel = selection
         let hasSelection = !sel.isEmpty
 
-        menu.addItem(item("Open", enabled: hasSelection, keyEquivalent: "\r", modifiers: []) { $0.perform(.open) })
+        // No Return key equivalent: while the menu is open, Return must pick the highlighted item, and a bare Return
+        // equivalent would run Open whatever the highlight.
+        menu.addItem(item("Open", enabled: hasSelection) { $0.perform(.open) })
         menu.addItem(item(action: .showInFinder, enabled: hasSelection))
         menu.addItem(item(action: .quickLook, enabled: hasSelection))
         menu.addItem(item("Get Info", enabled: hasSelection, keyEquivalent: "i", modifiers: .command) { controller in
@@ -262,13 +316,39 @@ extension SearchBarController {
 
         menu.addItem(.separator())
         menu.addItem(item(action: .rename, title: "Rename\(sel.count > 1 ? " (batch)..." : "...")", enabled: hasSelection))
+        menu.addItem(item("Duplicate", enabled: hasSelection) { SelectionCommands.duplicate($0.selection) })
+        menu.addItem(item("Compress", enabled: hasSelection) { SelectionCommands.compress($0.selection) })
+
+        menu.addItem(.separator())
         menu.addItem(item(action: .copy, enabled: hasSelection))
-        menu.addItem(item(action: .copyPaths, enabled: hasSelection))
+        menu.addItem(submenu("Copy Paths", enabled: hasSelection, SelectionCommands.ListStyle.allCases.map { style in
+            item(style.title, enabled: true) { controller in
+                SelectionCommands.copyPaths(controller.selection, style)
+                controller.root?.hintBar.flash("Copied")
+            }
+        }))
+        menu.addItem(submenu("Copy Filenames", enabled: hasSelection, SelectionCommands.ListStyle.allCases.map { style in
+            item(style.title, enabled: true) { controller in
+                SelectionCommands.copyFilenames(controller.selection, style)
+                controller.root?.hintBar.flash("Copied")
+            }
+        }))
+        menu.addItem(submenu("Export Results List", enabled: hasSelection, SelectionCommands.ExportFormat.allCases.map { format in
+            item(format.title, enabled: true) { controller in
+                controller.activateForModal()
+                SelectionCommands.export(controller.selection, as: format)
+            }
+        }))
+
+        menu.addItem(.separator())
         menu.addItem(item("Copy Files To...", enabled: hasSelection) { controller in
             controller.activateForModal()
             SearchBarSheets.shared.request = .copyTo(controller.selection)
         })
         menu.addItem(item(action: .moveTo, title: "Move Files To...", enabled: hasSelection))
+        menu.addItem(item(action: .shelve, enabled: hasSelection))
+        menu.addItem(item(action: .dropToFocusedElement, enabled: hasSelection))
+        menu.addItem(item(action: .dropToZone, enabled: hasSelection))
 
         menu.addItem(.separator())
         let allStashed = hasSelection && sel.allSatisfy { STASH.contains($0) }
@@ -279,7 +359,35 @@ extension SearchBarController {
 
         menu.addItem(.separator())
         menu.addItem(item(action: .trash, title: "Move to Trash", enabled: hasSelection && !sel.contains(where: \.isOnReadOnlyVolume)))
+
+        menu.addItem(.separator())
+        menu.addItem(item("Exclude from Index...", enabled: hasSelection) { controller in
+            controller.activateForModal()
+            SearchBarSheets.shared.request = .exclude(controller.selection)
+        })
+        if let source = SelectionCommands.sourceIndex(of: sel) {
+            menu.addItem(.sectionHeader(title: "Source: \(source)"))
+            menu.addItem(item("Reindex \(source)", enabled: true) { _ in FUZZY.reindexSource(source) })
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(item("Save current query as a Quick Filter…", enabled: canSaveQueryAsFilter, keyEquivalent: "s", modifiers: .command) { controller in
+            controller.saveQueryAsFilter()
+        })
+        menu.addItem(item("Search syntax reference", enabled: true, keyEquivalent: "/", modifiers: .command) { controller in
+            controller.toggleSyntaxReference()
+        })
         return menu
+    }
+
+    private func submenu(_ title: String, enabled: Bool, _ items: [NSMenuItem]) -> NSMenuItem {
+        let entry = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        items.forEach(menu.addItem)
+        entry.submenu = menu
+        entry.isEnabled = enabled
+        return entry
     }
 
     func openWithMenu() -> NSMenu {

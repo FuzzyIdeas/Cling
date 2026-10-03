@@ -110,6 +110,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     var root: SearchBarRootView?
     var panel: SearchBarPanel?
     var activatedApp = false
+    var syntaxPopover: NSPopover?
     var quickLookItems: [URL] = []
     var quickLookIndex = 0
     var listFocused = false
@@ -215,6 +216,11 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
                 self.observe()
             }
         }.store(in: &observers)
+        NotificationCenter.default.publisher(for: .clingDidCreateFiles)
+            .sink { [weak self] notification in
+                guard let paths = notification.object as? [FilePath], !paths.isEmpty else { return }
+                mainAsync { self?.showCreatedFiles(paths) }
+            }.store(in: &observers)
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .sink { [weak self] _ in
                 mainAsync { self?.screensChanged() }
@@ -327,6 +333,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         hideSuggestions()
         root?.completion = nil
         closeQuickLook()
+        syntaxPopover?.close()
         clearPreview()
 
         state = pinned ? .compact : .hidden
@@ -380,6 +387,10 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     func escape() {
         if quickLookVisible {
             closeQuickLook()
+            return
+        }
+        if let popover = syntaxPopover, popover.isShown {
+            popover.performClose(nil)
             return
         }
         if suggestionsShown {
@@ -656,6 +667,9 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             hints.append(.init(id: .copy, key: keys.copy, title: "Copy"))
         }
         hints.append(.init(id: .actions, key: "⌘K", title: "Actions"))
+        if sel.isEmpty {
+            hints.append(.init(id: .syntax, key: "⌘/", title: "Syntax"))
+        }
         hints.append(.init(id: .window, key: "⌃ Tab", title: "Window"))
         root.hintBar.hints = hints
     }
@@ -1387,6 +1401,12 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             switch chars {
             case "k":
                 showActionsMenu()
+                return nil
+            case "s" where canSaveQueryAsFilter:
+                saveQueryAsFilter()
+                return nil
+            case "/":
+                toggleSyntaxReference()
                 return nil
             case "x" where listFocused:
                 // As in the window, where ⌘X runs a script unless the search field has the keyboard.
