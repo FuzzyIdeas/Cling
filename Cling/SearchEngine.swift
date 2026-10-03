@@ -1095,6 +1095,36 @@ final class SearchEngine: @unchecked Sendable {
         return (real, shown)
     }
 
+    /// Folders right in Home that are symlinks to a deeper folder, like `~/.ssh` kept in a dotfiles folder. Walks
+    /// don't follow links, so their files are indexed where the links point, and results show them under the link,
+    /// the path people know. A link to a folder no deeper than itself (`~/.go` to `~/go`) is left alone. Read again
+    /// at most once a minute.
+    static func homeFolderLinks() -> [(real: String, shown: String)] {
+        homeLinksLock.lock()
+        defer { homeLinksLock.unlock() }
+        let now = CFAbsoluteTimeGetCurrent()
+        if now - homeLinksCache.at < 60 {
+            return homeLinksCache.links
+        }
+        let home = NSHomeDirectory()
+        var links: [(real: String, shown: String)] = []
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: home)) ?? [] {
+            let path = home + "/" + name
+            var info = stat()
+            guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFLNK else { continue }
+            var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
+            guard realpath(path, &buf) != nil else { continue }
+            let real = String(cString: buf)
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: real, isDirectory: &isDir), isDir.boolValue,
+                  real.split(separator: "/").count > path.split(separator: "/").count
+            else { continue }
+            links.append((real, path))
+        }
+        homeLinksCache = (now, links)
+        return links
+    }
+
     /// Every indexed path, in the case it has on disk.
     func allPaths() -> [String] {
         lock.withLock {
@@ -2277,6 +2307,9 @@ final class SearchEngine: @unchecked Sendable {
         var live = 0
     }
 
+    private static let homeLinksLock = NSLock()
+    private nonisolated(unsafe) static var homeLinksCache: (at: CFAbsoluteTime, links: [(real: String, shown: String)]) = (0, [])
+
     // MARK: - Binary persistence
 
     /// v4 ("CLINGIX4"): a 16 KB header, then one section per column, each starting on a 16 KB boundary and laid out
@@ -3297,12 +3330,26 @@ final class SearchEngine: @unchecked Sendable {
         }
         let excludedPrefixBytes: [[UInt8]]? = excludedPrefixes?.map { Array($0.lowercased().utf8) }
         let inAliasPrefixes = inAliases.map { (real: Array(($0.real + "/").utf8), shown: $0.shown + "/") }
+        // Home's folder links, except where the query reaches for the folder a link points to: an `in:` at or below
+        // it, or around it without also taking in the link (`in:~/Dropbox`, not `in:~`).
+        let inFolders = inPrefixes.map { ($0.hasSuffix("/") ? $0 : $0 + "/").lowercased() }
+        let linkPrefixes = Self.homeFolderLinks().compactMap { link -> (real: [UInt8], shown: String)? in
+            let real = (link.real + "/").lowercased()
+            let shown = (link.shown + "/").lowercased()
+            if inFolders.contains(where: { $0.hasPrefix(real) || (real.hasPrefix($0) && !shown.hasPrefix($0)) }) {
+                return nil
+            }
+            return (Array((link.real + "/").utf8), link.shown + "/")
+        }
 
-        /// A result's path, under the symlinked `in:` folder it was asked for when it lies in where that points.
+        /// A result's path, under the symlinked folder it was asked for or the Home folder link it lies under.
         func shownPath(_ id: Int) -> String {
             let p = path(id)
             for alias in inAliasPrefixes where p.utf8.starts(with: alias.real) {
                 return alias.shown + String(decoding: p.utf8.dropFirst(alias.real.count), as: UTF8.self)
+            }
+            for link in linkPrefixes where p.utf8.starts(with: link.real) {
+                return link.shown + String(decoding: p.utf8.dropFirst(link.real.count), as: UTF8.self)
             }
             return p
         }
