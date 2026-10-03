@@ -648,7 +648,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             hints.append(.init(id: .copy, key: keys.copy, title: "Copy"))
         }
         hints.append(.init(id: .actions, key: "⌘K", title: "Actions"))
-        hints.append(.init(id: .window, key: "⌃⇥", title: "Window"))
+        hints.append(.init(id: .window, key: "⌃ Tab", title: "Window"))
         root.hintBar.hints = hints
     }
 

@@ -90,7 +90,7 @@ struct StatusBarView: View {
             Button {
                 SB.switchFromWindow()
             } label: {
-                Text("**`⌃⇥`** to switch to the search bar")
+                Text("**`⌃ Tab`** to switch to the search bar")
             }
             .buttonStyle(.text(borderColor: .clear))
             Divider().frame(height: 10)
