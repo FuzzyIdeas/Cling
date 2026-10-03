@@ -91,7 +91,7 @@ final class SearchBarRowStyle {
         if let cached = kinds[ext] {
             return cached
         }
-        let kind = UTType(filenameExtension: ext)?.localizedDescription ?? ext.uppercased()
+        let kind = UTType(filenameExtension: ext)?.localizedDescription.map(Self.capitalizedFirst) ?? ext.uppercased()
         kinds[ext] = kind
         return kind
     }
@@ -137,7 +137,13 @@ final class SearchBarRowStyle {
     private let rasters = NSMapTable<NSImage, Raster>(keyOptions: .weakMemory, valueOptions: .strongMemory)
 
     private var kinds: [String: String] = [:]
-    private let folderKind = UTType.folder.localizedDescription ?? "Folder"
+    private let folderKind = UTType.folder.localizedDescription.map(capitalizedFirst) ?? "Folder"
+
+    /// The type database has some kinds in lower case ("application", "folder"); Finder starts each
+    /// with a capital.
+    private static func capitalizedFirst(_ text: String) -> String {
+        text.prefix(1).uppercased() + text.dropFirst()
+    }
 
     private nonisolated static func render(_ icon: NSImage, side: CGFloat, scale: CGFloat) -> CGImage? {
         let pixels = Int((side * scale).rounded())
@@ -191,7 +197,8 @@ final class SearchBarRowStyle {
         scale = FontScale.current
         rowHeight = FontScale.length(44)
         iconSide = FontScale.length(32)
-        metaWidth = FontScale.length(150)
+        // Fits "999 MB · 30 Sep 2026 at 23:59" untruncated.
+        metaWidth = FontScale.length(168)
 
         let nameFont = NSFont.systemFont(ofSize: FontScale.size(13), weight: .medium)
         let detailFont = NSFont.systemFont(ofSize: FontScale.size(11))
@@ -616,9 +623,10 @@ final class SearchBarRowContent: NSView {
 
     private func metaLine(_ path: FilePath) -> String {
         let isDir = FilePathBackgroundTasks.shared.knownIsDir(path) == true
-        let size = isDir ? "" : path.memoz.humanizedFileSize
+        // The window pads sizes for its aligned column ("38  B"); a run of text doesn't need it.
+        let size = isDir ? "" : path.memoz.humanizedFileSize.replacingOccurrences(of: "  ", with: " ")
         let date = path.memoz.formattedModificationDate
-        return size.isEmpty || size == "—" ? date : "\(size)  ·  \(date)"
+        return size.isEmpty || size == "—" ? date : "\(size) · \(date)"
     }
 }
 
@@ -664,6 +672,20 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         scrollView.borderType = .noBorder
+
+        // The highlight is the accent colour baked into a layer, which doesn't follow a change in
+        // System Settings on its own.
+        NotificationCenter.default.addObserver(forName: NSColor.systemColorsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                for view in self.freeRows.values {
+                    view.selectionView.needsDisplay = true
+                }
+                self.forEachVisibleRow { _, view in
+                    view.selectionView.needsDisplay = true
+                }
+            }
+        }
 
         SearchBarRowStyle.shared.onRastersReady = { [weak self] in
             self?.refreshVisibleRows()

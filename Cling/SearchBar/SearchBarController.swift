@@ -130,6 +130,12 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible
     }
 
+    #if DEBUG || SEARCHBAR_BENCH
+        var benchmarkPillWindow: NSWindow? {
+            pillPanel
+        }
+    #endif
+
     // MARK: Setup
 
     func setup() {

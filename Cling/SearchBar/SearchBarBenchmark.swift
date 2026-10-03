@@ -243,6 +243,10 @@
                 only?.contains(name) ?? true
             }
 
+            if let snapshotPrefix = argument("-searchBarSnapshot") {
+                await snapshots(prefix: snapshotPrefix)
+            }
+
             if wants("idle-baseline") {
                 // The bar never opened, nothing pinned: what the churn costs Cling without the bar.
                 Defaults[.searchBarPinned] = false
@@ -375,18 +379,24 @@
         }
 
         private static func typeAndWait(_ tag: String) async {
-            await setQuery("")
             let word = "readme.md"
+            let rounds = max(UserDefaults.standard.integer(forKey: "searchBarBenchmarkTypeRounds"), 1)
+            await setQuery("")
             let meter = Meter("type-wait", tag)
             var latencies: [Double] = []
-            var typed = ""
-            for ch in word {
-                typed.append(ch)
-                let start = CACurrentMediaTime()
-                typeCharacter(ch)
-                await waitForResults(typed)
-                latencies.append((CACurrentMediaTime() - start) * 1000)
-                await settle(120)
+            for round in 0 ..< rounds {
+                if round > 0 {
+                    await setQuery("")
+                }
+                var typed = ""
+                for ch in word {
+                    typed.append(ch)
+                    let start = CACurrentMediaTime()
+                    typeCharacter(ch)
+                    await waitForResults(typed)
+                    latencies.append((CACurrentMediaTime() - start) * 1000)
+                    await settle(120)
+                }
             }
             meter.finish(extra: "key→results \(stats(latencies))")
         }
@@ -427,6 +437,9 @@
                 log("list-updates: skipped, \(base.count) results")
                 return
             }
+            // Icons fetched for the previous scenario's rows make Cling re-sort its results, which
+            // would replace the lists assigned here.
+            _ = await waitForQuiet()
             let meter = Meter("list-updates", tag)
             let updates = max(UserDefaults.standard.integer(forKey: "searchBarBenchmarkListUpdates"), 30)
             for i in 0 ..< updates {
@@ -441,6 +454,87 @@
 
         /// Files appearing at the top and disappearing further down, the way live index changes
         /// reach a list sorted by date.
+        /// Renders the bar's own layer tree to PNGs, light and dark, over a list of system files that
+        /// exist on every Mac. Offscreen and in-process: materials (glass, vibrancy) composite in the
+        /// window server and come out as the flat fill behind them, everything else as on screen.
+        private static func snapshots(prefix: String) async {
+            let savedAppearance = Defaults[.windowAppearance]
+            let savedPreview = Defaults[.searchBarShowPreview]
+            defer {
+                Defaults[.windowAppearance] = savedAppearance
+                Defaults[.searchBarShowPreview] = savedPreview
+                SB.panel?.appearance = nil
+            }
+            let paths = [
+                "/Applications/Safari.app", "/System/Applications/Utilities/Terminal.app",
+                "/System/Library/CoreServices/Finder.app", "/usr/bin/swift", "/System/Library/Fonts/Helvetica.ttc",
+                "/private/etc/hosts", "/System/Library/Desktop Pictures", "/Library/Application Support",
+                "/System/Library/CoreServices/SystemVersion.plist", "/usr/share/man/man1/ls.1",
+            ].map { FilePath($0) }.filter { FileManager.default.fileExists(atPath: $0.string) }
+
+            let savedPinned = Defaults[.searchBarPinned]
+            Defaults[.windowAppearance] = .opaque
+            AM.update()
+            Defaults[.searchBarPinned] = true
+            SB.collapse()
+            await settle(600)
+            for (name, appearance) in [("light", NSAppearance(named: .aqua)), ("dark", NSAppearance(named: .darkAqua))] {
+                SB.benchmarkPillWindow?.appearance = appearance
+                await settle(400)
+                let file = "\(prefix)-pill-\(name).png"
+                log(render(SB.benchmarkPillWindow, to: file, dark: name == "dark") ? "snapshot: \(file)" : "snapshot failed: \(file)")
+            }
+            SB.benchmarkPillWindow?.appearance = nil
+            Defaults[.searchBarPinned] = savedPinned
+
+            for (theme, preview) in [(WindowAppearance.opaque, false), (.opaque, true), (.vibrant, false)] {
+                Defaults[.windowAppearance] = theme
+                Defaults[.searchBarShowPreview] = preview
+                AM.update()
+                await setQuery("safari")
+                // Twice: icons arriving for the first list make Cling re-sort its own results over it.
+                FUZZY.results = paths
+                await settle(1500)
+                FUZZY.results = paths
+                await settle(300)
+                SB.moveSelection(by: 1)
+                await settle(600)
+                for (name, appearance) in [("light", NSAppearance(named: .aqua)), ("dark", NSAppearance(named: .darkAqua))] {
+                    SB.panel?.appearance = appearance
+                    await settle(500)
+                    let file = "\(prefix)-\(theme.rawValue.lowercased())\(preview ? "-preview" : "")-\(name).png"
+                    log(render(SB.panel, to: file, dark: name == "dark") ? "snapshot: \(file)" : "snapshot failed: \(file)")
+                }
+            }
+        }
+
+        private static func render(_ panel: NSWindow?, to file: String, dark: Bool) -> Bool {
+            guard let panel, let view = panel.contentView, let layer = view.layer,
+                  let space = CGColorSpace(name: CGColorSpace.sRGB) else { return false }
+            view.layoutSubtreeIfNeeded()
+            view.displayIfNeeded()
+            CATransaction.flush()
+            let scale = panel.backingScaleFactor
+            let size = view.bounds.size
+            guard let context = CGContext(
+                data: nil, width: Int(size.width * scale), height: Int(size.height * scale), bitsPerComponent: 8,
+                bytesPerRow: 0, space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+            context.setFillColor(dark ? CGColor(gray: 0.16, alpha: 1) : CGColor(gray: 0.93, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: size.width * scale, height: size.height * scale))
+            context.scaleBy(x: scale, y: scale)
+            if layer.isGeometryFlipped {
+                context.translateBy(x: 0, y: size.height)
+                context.scaleBy(x: 1, y: -1)
+            }
+            layer.render(in: context)
+            guard let image = context.makeImage(),
+                  let destination = CGImageDestinationCreateWithURL(URL(fileURLWithPath: file) as CFURL, "public.png" as CFString, 1, nil)
+            else { return false }
+            CGImageDestinationAddImage(destination, image, nil)
+            return CGImageDestinationFinalize(destination)
+        }
+
         /// Waits until the process used under a tenth of a core for a whole second, at most 90s.
         /// Returns the seconds waited.
         private static func waitForQuiet() async -> Int {
@@ -466,6 +560,9 @@
                 log("list-inserts: skipped, \(base.count) results")
                 return
             }
+            // Icons fetched for the previous scenario's rows make Cling re-sort its results, which
+            // would replace the lists assigned here.
+            _ = await waitForQuiet()
             let meter = Meter("list-inserts", tag)
             var list = base
             for i in 0 ..< 30 {
