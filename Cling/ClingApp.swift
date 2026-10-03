@@ -194,6 +194,14 @@ class AppDelegate: LowtechProAppDelegate {
 
         UM.updater = updateController.updater
         PM.pro = pro
+        // System and Root are only walked, loaded and followed with Pro, so they come and go with it.
+        pro.$productActivated.combineLatest(pro.$onTrial)
+            .map { $0 || $1 }
+            .removeDuplicates()
+            .dropFirst()
+            .debounce(for: .seconds(1), scheduler: RunLoop.main)
+            .sink { _ in FUZZY.syncScopeEngines() }
+            .store(in: &observers)
         if !SWIFTUI_PREVIEW {
             pro.checkProLicense()
             let _ = invalidReq(PRODUCTS, nil)
