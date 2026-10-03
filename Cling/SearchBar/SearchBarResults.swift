@@ -393,7 +393,7 @@ final class SearchBarRowView: NSTableRowView {
         set { content.isStashed = newValue }
     }
 
-    /// Stronger while the keyboard is in the list, lighter while it's typing in the field.
+    /// In the accent colour while the keyboard is in the list, gray while it's typing in the field.
     var strongSelection: Bool {
         get { selectionView.strong }
         set { selectionView.strong = newValue }
@@ -514,7 +514,7 @@ final class SearchBarSelectionView: NSView {
     }
 
     override func updateLayer() {
-        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(strong ? 0.32 : 0.2).cgColor
+        layer?.backgroundColor = (strong ? NSColor.controlAccentColor.withAlphaComponent(0.32) : NSColor.labelColor.withAlphaComponent(0.1)).cgColor
         layer?.cornerRadius = SearchBarMetrics.rowRadius
         layer?.cornerCurve = .continuous
     }

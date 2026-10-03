@@ -351,6 +351,10 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             moveSelection(by: results.visibleRowCount)
         case #selector(NSResponder.pageUp(_:)), #selector(NSResponder.scrollPageUp(_:)):
             moveSelection(by: -results.visibleRowCount)
+        case #selector(NSResponder.scrollToBeginningOfDocument(_:)):
+            selectEdge(last: false)
+        case #selector(NSResponder.scrollToEndOfDocument(_:)):
+            selectEdge(last: true)
         case #selector(NSResponder.insertNewline(_:)):
             _ = performReturn(modifiers: [])
         case #selector(NSResponder.insertTab(_:)):
@@ -416,13 +420,23 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             _ = stepHistory(back: false)
             return
         }
+        let wasFocused = listFocused
         setListFocused(true)
         userNavigated = true
         if results.tableView.selectedRowIndexes.isEmpty {
-            results.select(row: delta > 0 ? 0 : results.items.count - 1)
-        } else {
+            results.select(row: 0)
+        } else if wasFocused || extend || abs(delta) > 1 {
             results.moveSelection(by: delta, extend: extend)
         }
+        // Otherwise the first arrow from the field only moves the keyboard to the list, so the highlighted result is
+        // the one Space and the other keys act on.
+    }
+
+    /// ⌘↑ and Home select the first result, ⌘↓ and End the last.
+    func selectEdge(last: Bool) {
+        setListFocused(true)
+        userNavigated = true
+        results.select(row: last ? results.items.count - 1 : 0)
     }
 
     /// Puts the field and the shared query to `text` without the history and drill bookkeeping.
@@ -996,14 +1010,10 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
 
         switch kc {
         case 125 where mods == .command: // ⌘↓
-            setListFocused(true)
-            userNavigated = true
-            results.select(row: results.items.count - 1)
+            selectEdge(last: true)
             return nil
         case 126 where mods == .command: // ⌘↑
-            setListFocused(true)
-            userNavigated = true
-            results.select(row: 0)
+            selectEdge(last: false)
             return nil
         case 36, 76: // Return
             if mods.isEmpty || mods == [.command, .shift], performReturn(modifiers: mods) {
