@@ -344,15 +344,15 @@ final class SearchBarRowView: NSTableRowView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        addSubview(stashPanel)
         addSubview(selectionView)
         addSubview(iconView)
         addSubview(content)
         addSubview(stashHeader)
-        addSubview(stashDivider)
         selectionView.isHidden = true
         stashHeader.isHidden = true
-        stashDivider.isHidden = true
-        stashHeader.textColor = .secondaryLabelColor
+        stashPanel.isHidden = true
+        stashHeader.textColor = .systemOrange
         stashHeader.setAccessibilityElement(false)
     }
 
@@ -361,10 +361,11 @@ final class SearchBarRowView: NSTableRowView {
         fatalError()
     }
 
-    static let stashDividerHeight: CGFloat = 9
+    static let stashBottomPadding: CGFloat = 4
+    static let stashGap: CGFloat = 8
 
-    /// Room above the first stashed file for the section's title, and below the last one for the line that
-    /// separates it from the results.
+    /// Room above the first stashed file for the section's title, inside the panel's bottom edge under the last
+    /// one, and between the panel and the results.
     static var stashHeaderHeight: CGFloat {
         FontScale.length(24, .chrome)
     }
@@ -393,7 +394,7 @@ final class SearchBarRowView: NSTableRowView {
     let iconView = SearchBarIconView()
     let selectionView = SearchBarSelectionView()
     let stashHeader = NSTextField(labelWithString: "Stash")
-    let stashDivider = SearchBarDividerView()
+    let stashPanel = SearchBarStashPanel()
 
     var path: FilePath? {
         get { content.path }
@@ -403,13 +404,15 @@ final class SearchBarRowView: NSTableRowView {
         }
     }
 
-    /// The first stashed file carries the section's title above it, and the last one the line below it when results
-    /// follow.
+    /// Stashed files share one faint orange panel: the first carries the section's title above it, and the last
+    /// rounds the panel off and leaves a gap before the results.
     var stashRole = SearchBarStashRole() {
         didSet {
             guard stashRole != oldValue else { return }
             stashHeader.isHidden = !stashRole.header
-            stashDivider.isHidden = !stashRole.divider
+            stashPanel.isHidden = !stashRole.stashed
+            stashPanel.roundTop = stashRole.header
+            stashPanel.roundBottom = stashRole.last
             needsLayout = true
         }
     }
@@ -429,8 +432,13 @@ final class SearchBarRowView: NSTableRowView {
         super.layout()
         let side = SearchBarRowStyle.shared.iconSide
         let top = stashRole.header ? Self.stashHeaderHeight : 0
-        let bottom = stashRole.divider ? Self.stashDividerHeight : 0
+        let gap = stashRole.gap ? Self.stashGap : 0
+        let bottom = (stashRole.last ? Self.stashBottomPadding : 0) + gap
         let file = NSRect(x: 0, y: top, width: bounds.width, height: max(bounds.height - top - bottom, 0))
+        if stashRole.stashed {
+            let inset = SearchBarMetrics.inset - 4
+            stashPanel.frame = NSRect(x: inset, y: 0, width: max(bounds.width - inset * 2, 0), height: max(bounds.height - gap, 0))
+        }
         selectionView.frame = file.insetBy(dx: SearchBarMetrics.inset, dy: 1)
         iconView.frame = NSRect(x: SearchBarRowStyle.iconX, y: (file.minY + (file.height - side) / 2).rounded(), width: side, height: side)
         content.frame = file
@@ -438,10 +446,6 @@ final class SearchBarRowView: NSTableRowView {
             stashHeader.font = .systemFont(ofSize: FontScale.size(11, .chrome), weight: .semibold)
             let height = ceil(stashHeader.intrinsicContentSize.height)
             stashHeader.frame = NSRect(x: SearchBarMetrics.inset + 8, y: (top - height).rounded() - 2, width: bounds.width / 2, height: height)
-        }
-        if stashRole.divider {
-            let line = 1 / (window?.backingScaleFactor ?? 2)
-            stashDivider.frame = NSRect(x: SearchBarMetrics.inset + 8, y: file.maxY + (bottom - line) / 2, width: max(bounds.width - SearchBarMetrics.inset * 2 - 16, 0), height: line)
         }
     }
 
@@ -518,39 +522,56 @@ final class SearchBarIconView: NSView {
 // MARK: - SearchBarStashRole
 
 struct SearchBarStashRole: Equatable {
+    var stashed = false
     var header = false
-    var divider = false
+    var last = false
+    /// Results follow the last stashed file.
+    var gap = false
 }
 
-// MARK: - SearchBarDividerView
+// MARK: - SearchBarStashPanel
 
-/// The faint line under the stashed files, where the results start.
-final class SearchBarDividerView: NSView {
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-    }
-
-    @available(*, unavailable)
-    required init?(coder _: NSCoder) {
-        fatalError()
-    }
-
-    override var wantsUpdateLayer: Bool {
+/// One row's slice of the faint orange panel behind the stashed files, rounded where the section starts and ends.
+final class SearchBarStashPanel: NSView {
+    override var isFlipped: Bool {
         true
     }
     override var allowsVibrancy: Bool {
         false
     }
 
+    var roundTop = false {
+        didSet {
+            guard roundTop != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
+    var roundBottom = false {
+        didSet {
+            guard roundBottom != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
     override func hitTest(_: NSPoint) -> NSView? {
         nil
     }
 
-    override func updateLayer() {
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = NSColor.separatorColor.cgColor
+    override func draw(_: NSRect) {
+        // Square ends are drawn past the bounds and clipped, so slices of neighbouring rows meet without a seam.
+        let radius = SearchBarMetrics.rowRadius + 3
+        var rect = bounds
+        if !roundTop {
+            rect.origin.y -= radius
+            rect.size.height += radius
         }
+        if !roundBottom {
+            rect.size.height += radius
+        }
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        NSColor.systemOrange.withAlphaComponent(dark ? 0.1 : 0.08).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
     }
 }
 
@@ -833,7 +854,8 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
 
     /// The list's height for the stashed files alone, with the section's title and the list's insets.
     func stashListHeight(rows: Int) -> CGFloat {
-        CGFloat(rows) * tableView.rowHeight + SearchBarRowView.stashHeaderHeight + scrollView.contentInsets.top + scrollView.contentInsets.bottom
+        CGFloat(rows) * tableView.rowHeight + SearchBarRowView.stashHeaderHeight + SearchBarRowView.stashBottomPadding
+            + scrollView.contentInsets.top + scrollView.contentInsets.bottom
     }
 
     /// Same paths, fresher icons, sizes or dates: redraw the rows on screen whose look changed.
@@ -848,8 +870,8 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
     func stashRole(_ row: Int) -> SearchBarStashRole {
         guard stashed.contains(items[row]) else { return SearchBarStashRole() }
         let above = row > 0 && stashed.contains(items[row - 1])
-        let below = row + 1 < items.count
-        return SearchBarStashRole(header: !above, divider: below && !stashed.contains(items[row + 1]))
+        let last = row + 1 == items.count || !stashed.contains(items[row + 1])
+        return SearchBarStashRole(stashed: true, header: !above, last: last, gap: last && row + 1 < items.count)
     }
 
     func select(row: Int, extend: Bool = false) {
@@ -918,7 +940,8 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
         let base = SearchBarRowStyle.shared.rowHeight
         guard row < items.count, !stashed.isEmpty else { return base }
         let role = stashRole(row)
-        return base + (role.header ? SearchBarRowView.stashHeaderHeight : 0) + (role.divider ? SearchBarRowView.stashDividerHeight : 0)
+        return base + (role.header ? SearchBarRowView.stashHeaderHeight : 0) + (role.last ? SearchBarRowView.stashBottomPadding : 0)
+            + (role.gap ? SearchBarRowView.stashGap : 0)
     }
 
     func tableViewSelectionDidChange(_: Notification) {
