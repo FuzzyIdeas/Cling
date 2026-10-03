@@ -23,9 +23,18 @@ enum CatchUpAgent {
                 switch (Defaults[.updateWhileClosed], service.status) {
                 case (true, .notRegistered), (true, .notFound):
                     try service.register()
+                    registered = current
                     log.info("Catch-up agent registered")
+                case (true, .enabled) where registered != current:
+                    // launchd keeps the job as it was when registered: an update or a moved app is registered again,
+                    // so the agent runs this build's command with this build's schedule.
+                    try service.unregister()
+                    try service.register()
+                    registered = current
+                    log.info("Catch-up agent registered again for \(current)")
                 case (false, .enabled), (false, .requiresApproval):
                     try service.unregister()
+                    registered = nil
                     log.info("Catch-up agent unregistered")
                 default:
                     break
@@ -35,4 +44,15 @@ enum CatchUpAgent {
             }
         #endif
     }
+
+    /// The build and location the agent was last registered from.
+    private static var current: String {
+        "\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "") \(Bundle.main.bundlePath)"
+    }
+
+    private static var registered: String? {
+        get { UserDefaults.standard.string(forKey: "catchUpAgentRegistered") }
+        set { UserDefaults.standard.set(newValue, forKey: "catchUpAgentRegistered") }
+    }
+
 }
