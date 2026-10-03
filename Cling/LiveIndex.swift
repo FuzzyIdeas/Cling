@@ -485,6 +485,7 @@ final class LiveIndexUpdater: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.lowtechguys.Cling.liveIndex", qos: .utility)
     private var pending: [FSChange] = []
     private var flushScheduled = false
+    /// Changes were dropped since this updater started. Only touched on `queue`.
     private var lost = false
     private let started = CFAbsoluteTimeGetCurrent()
     private var _replayed = 0
@@ -510,11 +511,18 @@ final class LiveIndexUpdater: @unchecked Sendable {
         return rules.folder(dir, cache: &folders).added ? nil : dir
     }
 
+    /// Asks for a walk once, and keeps applying what comes after: the walk is held to one an hour, and stopping here
+    /// left the indexes following nothing at all until Cling was relaunched.
+    private func reportLoss() {
+        guard !lost else { return }
+        lost = true
+        historyLost()
+    }
+
     /// What went away is removed through each engine's path index, so only an indexed folder costs a pass over the
     /// entries, then whatever a walk would index is added, skipping what is already there. A file only modified is
     /// already in the index.
     private func apply(_ events: [FSChange]) {
-        guard !lost else { return }
         let t0 = CFAbsoluteTimeGetCurrent()
         var flagsByPath: [String: EonilFSEventsEventFlags] = [:]
         var maxEventID: UInt64 = 0
@@ -539,9 +547,8 @@ final class LiveIndexUpdater: @unchecked Sendable {
                 }
             }
             if FSEventsHistory.lost(flags, path: event.path) {
-                lost = true
-                historyLost()
-                return
+                reportLoss()
+                continue
             }
             guard let path = FSEventsHistory.normalized(event.path) else { continue }
             flagsByPath[path, default: []].formUnion(flags)
@@ -566,9 +573,7 @@ final class LiveIndexUpdater: @unchecked Sendable {
             guard let route = routes.filter({ $0.contains(path) }).max(by: { $0.root.utf8.count < $1.root.utf8.count }) else {
                 if flags.contains(.mustScanSubDirs), routes.contains(where: { $0.root == path }) {
                     // A whole scope folder needs rescanning.
-                    lost = true
-                    historyLost()
-                    return
+                    reportLoss()
                 }
                 continue
             }
@@ -682,7 +687,11 @@ final class LiveIndexUpdater: @unchecked Sendable {
         batch.changed = changed
 
         lock.withLock {
-            _lastAppliedEventID = max(_lastAppliedEventID, maxEventID)
+            // Past a loss the engines no longer hold every change up to here, so their saved positions stay before it
+            // and a relaunch replays what was dropped.
+            if !lost {
+                _lastAppliedEventID = max(_lastAppliedEventID, maxEventID)
+            }
             _changes += changed
             for (dir, count) in skipped where _skipped.count < Self.skippedMax || _skipped[dir] != nil {
                 _skipped[dir, default: 0] += count

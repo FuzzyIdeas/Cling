@@ -2040,12 +2040,15 @@ class FuzzyClient {
     /// FSEvents dropped changes or lost its history, so the indexes may have missed some: walk them again, at most
     /// once an hour in case it keeps happening.
     func liveHistoryLost() {
+        // A scope without a position is walked by the next index check, so a loss inside the hour still gets its walk,
+        // and the updater keeps following changes until then.
+        liveBase.removeAll()
         if let last = lastHistoryLossWalk, Date().timeIntervalSince(last) < 60 * 60 {
+            log.info("Live index: change history lost again, walking at the next index check")
             return
         }
         lastHistoryLossWalk = Date()
         log.info("Live index: change history lost, reindexing")
-        liveBase.removeAll()
         refresh(pauseSearch: false)
     }
 
