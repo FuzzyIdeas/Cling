@@ -132,10 +132,11 @@ extension MCPInstaller {
             path: "~/Library/Application Support/Claude/claude_desktop_config.json", style: .mcpServers,
             evidence: ["/Applications/Claude.app"]
         ),
+        // The ChatGPT desktop app runs Codex too and reads the same config.toml.
         Client(
             id: "codex", name: "Codex",
             path: "~/.codex/config.toml", style: .codex,
-            evidence: ["~/.codex", "/Applications/Codex.app"] + binaries("codex")
+            evidence: ["~/.codex", "/Applications/Codex.app", "/Applications/ChatGPT.app"] + binaries("codex")
         ),
         Client(
             id: "copilot", name: "Copilot CLI",
