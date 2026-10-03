@@ -88,6 +88,9 @@ class AppDelegate: LowtechProAppDelegate {
 
     var keepSettingsFrontUntil: Date?
 
+    /// Set while the search bar closes a hidden main window, which must not hand focus to another app.
+    var suppressFocusHandBack = false
+
     /// Picked when a summon starts and the window is still to be created: by the time it exists Cling has
     /// activated, and the frontmost app's focused window would be Cling's own.
     var pendingDisplay: NSScreen?
@@ -133,6 +136,7 @@ class AppDelegate: LowtechProAppDelegate {
         assignFilterUUIDsIfNeeded()
         ClingShortcuts.setup()
         FUZZY.start()
+        SB.setup()
         setupCleanup()
         QuickLookSupport.shared.warmUp()
 
@@ -158,6 +162,10 @@ class AppDelegate: LowtechProAppDelegate {
         KM.specialKey = Defaults[.enableGlobalHotkey] ? Defaults[.showAppKey] : nil
         KM.specialKeyModifiers = Defaults[.triggerKeys]
         KM.onSpecialHotkey = { [self] in
+            if SB.ownsHotkey {
+                SB.toggle()
+                return
+            }
             toggleMainWindow(isFront: mainWindow?.isKeyWindow ?? false)
         }
         applyMenuBarIconSetting()
@@ -222,7 +230,7 @@ class AppDelegate: LowtechProAppDelegate {
             WM.open("onboarding")
         } else {
             NSApp.setActivationPolicy(Defaults[.showDockIcon] ? .regular : .accessory)
-            if Defaults[.showWindowAtLaunch], !skipWindow {
+            if Defaults[.showWindowAtLaunch], !skipWindow, !SB.ownsHotkey {
                 pendingDisplay = displayForMainWindow()
                 WM.open("main")
                 mainWindow?.becomeMain()
@@ -245,6 +253,10 @@ class AppDelegate: LowtechProAppDelegate {
         // the Settings window, don't also pop the main search window.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [self] in
             if let settings = settingsWindow, settings.isKeyWindow || settings.isMainWindow {
+                return
+            }
+            // The search bar activates Cling for its sheets and alerts; that isn't a summon of the window.
+            if SB.isExpanded || (SB.ownsHotkey && mainWindow?.isVisible != true) {
                 return
             }
             focusWindow()
@@ -379,6 +391,10 @@ class AppDelegate: LowtechProAppDelegate {
     }
 
     @objc func menuBarIconClicked() {
+        if SB.ownsHotkey {
+            SB.toggle()
+            return
+        }
         // Clicking a status item sends the app to the background first, and in utility mode that
         // deactivation already hid the window by the time this runs. Without the grace window the
         // click meant to dismiss Cling would find an empty screen and summon it straight back.
@@ -486,6 +502,10 @@ class AppDelegate: LowtechProAppDelegate {
 //        log.debug("Reopened")
 
         DropZoneOverlay.shared.dismissIfPresenting()
+        if SB.ownsHotkey {
+            SB.expand()
+            return true
+        }
         if let mainWindow {
             mainWindow.orderFrontRegardless()
             mainWindow.becomeMain()
@@ -526,7 +546,9 @@ class AppDelegate: LowtechProAppDelegate {
         if window.identifier?.rawValue == "main" {
             WM.mainWindowActive = false
             WM.noteInactive()
-            handBackFocusAfterMainDismiss()
+            if !suppressFocusHandBack {
+                handBackFocusAfterMainDismiss()
+            }
         } else if window.identifier?.rawValue == "settings" {
             // Restore the user's configured policy once Settings closes.
             NSApp.setActivationPolicy(Defaults[.showDockIcon] ? .regular : .accessory)
@@ -756,9 +778,17 @@ class WindowManager {
 
     var mainWindowActive = false
 
+    /// The floating search bar is expanded. Searches run for it the same as for the main window.
+    @ObservationIgnored var searchBarActive = false
+
     /// Bumped when the app comes back after being away long enough for the result selection to
     /// count as stale. Observed by ContentView, which then jumps the selection back to the top.
     var selectionResetToken = 0
+
+    /// Something is showing results, so a search is worth running.
+    var searchUIActive: Bool {
+        mainWindowActive || searchBarActive
+    }
 
     /// Roughly a third of the table's width, clamped so it stays usable. Lives here rather than in
     /// ContentView because the filter discovery row lines its divider up with the same seam, so the

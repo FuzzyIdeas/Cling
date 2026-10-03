@@ -2224,6 +2224,11 @@ class FilePathBackgroundTasks {
         knownDirs[path] = isDir
     }
 
+    /// The directory flag when the index or an icon fetch has already reported it, without a `stat`.
+    func knownIsDir(_ path: FilePath) -> Bool? {
+        knownDirs[path]
+    }
+
     /// Size and modification date from a single `stat`, for a path the caller has established sits
     /// on the boot volume. That syscall is a few microseconds, so a row can afford it while it
     /// draws and the columns are filled on first paint instead of a beat later.
