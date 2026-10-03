@@ -78,8 +78,10 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         var scopeIcon: String?
         var scopeHue: Double?
         var everything: Bool
-        /// Only the search row shows: nothing typed and nothing chosen for the bar to show before typing.
+        /// Only the search row shows: nothing typed, nothing chosen for the bar to show before typing and nothing stashed.
         var fieldOnly: Bool
+        /// The stash is all there is to show, and the bar is only as tall as it needs.
+        var stashOnly: Bool
     }
 
     /// Shortcut labels and the paste target for the hint bar, read once per summon: both come from
@@ -137,6 +139,24 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             pillPanel
         }
     #endif
+
+    /// Cling's hotkey, shown on the compact field while it's the bar that the hotkey brings up, in
+    /// the usual ⌃⌥⇧⌘ order.
+    var pillHotkey: String? {
+        guard Defaults[.hotkeyTarget] == .searchBar, Defaults[.enableGlobalHotkey] else { return nil }
+        let triggers = Defaults[.triggerKeys]
+        let flags = triggers.map(\.sideIndependentModifier).reduce(NSEvent.ModifierFlags()) { $0.union($1) }
+        var keys = triggers.contains(.fn) ? "fn" : ""
+        for (flag, symbol) in [(NSEvent.ModifierFlags.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")] where flags.contains(flag) {
+            keys += symbol
+        }
+        return keys + Defaults[.showAppKey].character
+    }
+
+    /// Top centre of a display's usable area, a little under the menu bar.
+    static func defaultPillOrigin(size: NSSize, in area: NSRect) -> NSPoint {
+        NSPoint(x: (area.midX - size.width / 2).rounded(), y: area.maxY - size.height - 14)
+    }
 
     // MARK: Setup
 
@@ -774,20 +794,18 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
 
     /// The expanded height before typing when the bar shows only its field.
     private var fieldOnlyBeforeTyping: Bool {
+        emptyBeforeTyping && STASH.files.isEmpty
+    }
+
+    private var emptyBeforeTyping: Bool {
         FUZZY.noQuery && FUZZY.volumeFilter == nil && Defaults[.searchBarDefaultResults] == .empty
     }
 
-    /// Cling's hotkey, shown on the compact field while it's the bar that the hotkey brings up, in
-    /// the usual ⌃⌥⇧⌘ order.
-    private var pillHotkey: String? {
-        guard Defaults[.hotkeyTarget] == .searchBar, Defaults[.enableGlobalHotkey] else { return nil }
-        let triggers = Defaults[.triggerKeys]
-        let flags = triggers.map(\.sideIndependentModifier).reduce(NSEvent.ModifierFlags()) { $0.union($1) }
-        var keys = triggers.contains(.fn) ? "fn" : ""
-        for (flag, symbol) in [(NSEvent.ModifierFlags.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")] where flags.contains(flag) {
-            keys += symbol
-        }
-        return keys + Defaults[.showAppKey].character
+    /// Search row, stashed files and hint bar, when the stash is all the bar shows; nil otherwise.
+    private var stashOnlyHeight: CGFloat? {
+        guard emptyBeforeTyping, !STASH.files.isEmpty, let root else { return nil }
+        let height = root.searchRowHeight + results.listHeight(rows: min(STASH.files.count, 8)) + root.hintBarHeight
+        return min(height.rounded(.up), storedSize.height)
     }
 
     private var suggestionsVisible: Bool {
@@ -856,7 +874,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     /// Shrinks the bar to its search row, or grows it back to the stored size, keeping its top edge where it is.
     private func fitPanelHeight() {
         guard let panel, let root, !morphing else { return }
-        let height = root.fieldOnly ? root.searchRowHeight : storedSize.height
+        let height = root.fieldOnly ? root.searchRowHeight : stashOnlyHeight ?? storedSize.height
         guard panel.frame.height != height else { return }
         var frame = panel.frame
         frame.origin.y = frame.maxY - height
@@ -873,7 +891,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     /// Only sizes set by hand: animations and the bar's own placement go through `placingPanel`, and the field-only
     /// height isn't one to keep.
     private func storeSize() {
-        guard let panel, root?.fieldOnly != true, !placingPanel, !morphing else { return }
+        guard let panel, root?.fieldOnly != true, stashOnlyHeight == nil, !placingPanel, !morphing else { return }
         Defaults[.searchBarSize] = [panel.frame.width, panel.frame.height]
         refreshShadow()
     }
@@ -969,6 +987,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         if fieldOnlyBeforeTyping, let root {
             root.fieldOnly = true
             size.height = rowHeight
+        } else if let height = stashOnlyHeight {
+            size.height = height
         }
         if pinned, let pillPanel {
             let pillFrame = pillPanel.frame
@@ -1079,7 +1099,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             scopeIcon: scope?.icon,
             scopeHue: scope?.color.hue,
             everything: EVERYTHING.enabled,
-            fieldOnly: defaultList && defaultResults == .empty
+            fieldOnly: defaultList && defaultResults == .empty && STASH.files.isEmpty,
+            stashOnly: defaultList && defaultResults == .empty && !STASH.files.isEmpty
         )
     }
 
@@ -1108,6 +1129,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
 
         if inputs.fieldOnly != root.fieldOnly {
             root.fieldOnly = inputs.fieldOnly
+            fitPanelHeight()
+        } else if inputs.stashOnly != previous?.stashOnly || inputs.stashOnly && inputs.stash.count != previous?.stash.count {
             fitPanelHeight()
         }
 
@@ -1648,9 +1671,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
                 return origin
             }
         }
-        // Top right of the main display, under the menu bar.
         let area = (NSScreen.screens.first ?? NSScreen.main)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        return NSPoint(x: area.maxX - size.width - 20, y: area.maxY - size.height - 12)
+        return Self.defaultPillOrigin(size: size, in: area)
     }
 
     private func applyPillLevel() {

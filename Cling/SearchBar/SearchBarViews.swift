@@ -605,6 +605,10 @@ final class SearchBarRootView: NSView {
         FontScale.length(54, .secondary)
     }
 
+    var hintBarHeight: CGFloat {
+        FontScale.length(SearchBarMetrics.modern ? 34 : 30, .chrome)
+    }
+
     /// The rest of a past search that starts with the query, with the keys that take it.
     var completion: SearchBarCompletion? {
         didSet {
@@ -642,7 +646,7 @@ final class SearchBarRootView: NSView {
         // centred and the corners round off at half the height.
         let rowHeight = min(searchRowHeight, h)
         background.cornerRadius = min(SearchBarMetrics.windowRadius, h / 2)
-        let hintHeight = FontScale.length(SearchBarMetrics.modern ? 34 : 30, .chrome)
+        let hintHeight = hintBarHeight
         let inset = SearchBarMetrics.inset
 
         background.frame = bounds

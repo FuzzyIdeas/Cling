@@ -348,10 +348,12 @@ final class SearchBarRowView: NSTableRowView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        addSubview(stashView)
         addSubview(selectionView)
         addSubview(iconView)
         addSubview(content)
         selectionView.isHidden = true
+        stashView.isHidden = true
     }
 
     @available(*, unavailable)
@@ -379,6 +381,7 @@ final class SearchBarRowView: NSTableRowView {
     let content = SearchBarRowContent()
     let iconView = SearchBarIconView()
     let selectionView = SearchBarSelectionView()
+    let stashView = SearchBarStashView()
 
     var path: FilePath? {
         get { content.path }
@@ -388,9 +391,14 @@ final class SearchBarRowView: NSTableRowView {
         }
     }
 
-    var isStashed: Bool {
-        get { content.isStashed }
-        set { content.isStashed = newValue }
+    /// Where the row sits in the stashed files at the top of the list: they share one panel, labelled on its first row.
+    var stashPlace: SearchBarStashPlace = .none {
+        didSet {
+            guard stashPlace != oldValue else { return }
+            content.isStashed = stashPlace == .first || stashPlace == .only
+            stashView.place = stashPlace
+            stashView.isHidden = stashPlace == .none
+        }
     }
 
     /// In the accent colour while the keyboard is in the list, gray while it's typing in the field.
@@ -408,6 +416,7 @@ final class SearchBarRowView: NSTableRowView {
         super.layout()
         let side = SearchBarRowStyle.shared.iconSide
         selectionView.frame = bounds.insetBy(dx: SearchBarMetrics.inset, dy: 1)
+        stashView.frame = bounds.insetBy(dx: SearchBarMetrics.inset - 2, dy: 0)
         iconView.frame = NSRect(x: SearchBarRowStyle.iconX, y: ((bounds.height - side) / 2).rounded(), width: side, height: side)
         content.frame = bounds
     }
@@ -479,6 +488,62 @@ final class SearchBarIconView: NSView {
     override func updateLayer() {
         layer?.contents = image
         layer?.contentsGravity = .resizeAspect
+    }
+}
+
+// MARK: - SearchBarStashPlace
+
+enum SearchBarStashPlace { case none, first, middle, last, only }
+
+// MARK: - SearchBarStashView
+
+/// A slice of the panel behind the stashed files, rounded at the block's ends so the rows read as one section.
+final class SearchBarStashView: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError()
+    }
+
+    override var wantsUpdateLayer: Bool {
+        true
+    }
+    override var allowsVibrancy: Bool {
+        false
+    }
+
+    var place: SearchBarStashPlace = .none {
+        didSet {
+            guard place != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
+    override func hitTest(_: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func updateLayer() {
+        guard let layer else { return }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            layer.backgroundColor = NSColor.systemOrange.withAlphaComponent(dark ? 0.1 : 0.08).cgColor
+        }
+        layer.cornerRadius = SearchBarMetrics.rowRadius + 2
+        layer.cornerCurve = .continuous
+        // The view isn't flipped, so its layer's minY corners are the bottom ones.
+        let top: CACornerMask = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        let bottom: CACornerMask = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        switch place {
+        case .first: layer.maskedCorners = top
+        case .last: layer.maskedCorners = bottom
+        case .only, .none: layer.maskedCorners = top.union(bottom)
+        case .middle: layer.maskedCorners = []
+        }
     }
 }
 
@@ -763,14 +828,36 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
         } else if let first = selection.first {
             tableView.scrollRowToVisible(first)
         }
+        // A row kept across the change can now start, end or leave the stash block.
+        forEachVisibleRow { row, view in
+            view.stashPlace = stashPlace(row)
+        }
         onSelectionChange?()
+    }
+
+    /// The list's height for `rows` rows, with its insets.
+    func listHeight(rows: Int) -> CGFloat {
+        CGFloat(rows) * tableView.rowHeight + scrollView.contentInsets.top + scrollView.contentInsets.bottom
     }
 
     /// Same paths, fresher icons, sizes or dates: redraw the rows on screen whose look changed.
     func refreshVisibleRows() {
         forEachVisibleRow { row, view in
-            view.isStashed = stashed.contains(items[row])
+            view.stashPlace = stashPlace(row)
             view.refresh()
+        }
+    }
+
+    /// Stashed files lead the list as one block.
+    func stashPlace(_ row: Int) -> SearchBarStashPlace {
+        guard stashed.contains(items[row]) else { return .none }
+        let above = row > 0 && stashed.contains(items[row - 1])
+        let below = row + 1 < items.count && stashed.contains(items[row + 1])
+        switch (above, below) {
+        case (false, false): return .only
+        case (false, true): return .first
+        case (true, true): return .middle
+        case (true, false): return .last
         }
     }
 
@@ -816,7 +903,7 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
             view = SearchBarRowView()
         }
         view.path = path
-        view.isStashed = stashed.contains(path)
+        view.stashPlace = stashPlace(row)
         view.strongSelection = strongSelection
         return view
     }

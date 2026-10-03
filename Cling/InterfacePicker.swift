@@ -403,10 +403,66 @@ private struct MiniBar: View {
             .shadow(color: .black.opacity(0.25), radius: row * 0.5, y: row * 0.2)
             .position(x: geo.size.width / 2, y: geo.size.height * 0.18 + h / 2)
             .animation(.easeOut(duration: 0.2), value: defaultResults)
+
+            if pinned {
+                MiniPill(tile: geo.size)
+                    .transition(.opacity)
+            }
         }
+        .animation(.easeOut(duration: 0.2), value: pinned)
     }
 
     @Default(.searchBarDefaultResults) private var defaultResults
+    @Default(.searchBarPinned) private var pinned
+}
+
+// MARK: - MiniPill
+
+/// The pinned field, at the spot it has on its own display, so moving the real one moves this one too.
+private struct MiniPill: View {
+    let tile: CGSize
+
+    var body: some View {
+        let place = placement
+        // Half again its true size, or it would be a few pixels tall.
+        let w = max(tile.width * place.size.width * 1.5, 34)
+        let h = max(tile.height * place.size.height * 1.5, 8)
+        HStack(spacing: h * 0.3) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: h * 0.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Capsule().fill(.primary.opacity(0.25)).frame(width: w * 0.42, height: max(h * 0.18, 1))
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, h * 0.45)
+        .frame(width: w, height: h)
+        .background { MiniBarBackground() }
+        .clipShape(Capsule())
+        .overlay { Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5) }
+        .shadow(color: .black.opacity(0.2), radius: h * 0.3, y: h * 0.1)
+        .position(x: tile.width * place.center.x, y: tile.height * place.center.y)
+        .animation(.easeOut(duration: 0.2), value: origin)
+    }
+
+    @Default(.searchBarPillOrigin) private var origin
+
+    /// The field's centre and size as fractions of the display it is on.
+    private var placement: (center: CGPoint, size: CGSize) {
+        let pill = SearchBarPillView.fittingSize(hotkey: SB.pillHotkey)
+        let stored = origin.count == 2 ? NSPoint(x: origin[0], y: origin[1]) : nil
+        let screen = stored.flatMap { o in
+            NSScreen.screens.first { $0.frame.contains(NSPoint(x: o.x + pill.width / 2, y: o.y + pill.height / 2)) }
+        } ?? NSScreen.screens.first
+        guard let screen, screen.frame.width > 0, screen.frame.height > 0 else {
+            return (CGPoint(x: 0.5, y: 0.05), CGSize(width: 0.1, height: 0.025))
+        }
+        let frame = screen.frame
+        let o = stored ?? SearchBarController.defaultPillOrigin(size: pill, in: screen.visibleFrame)
+        return (
+            CGPoint(x: (o.x + pill.width / 2 - frame.minX) / frame.width, y: (frame.maxY - o.y - pill.height / 2) / frame.height),
+            CGSize(width: pill.width / frame.width, height: pill.height / frame.height)
+        )
+    }
 }
 
 // MARK: - MiniBarBackground
