@@ -520,7 +520,7 @@ extension SearchBarController {
             FUZZY.folderFilter = filter
             return true
         }
-        if let digit = ch.wholeNumberValue, !FUZZY.enabledVolumes.isEmpty {
+        if proactive, let digit = ch.wholeNumberValue, !FUZZY.enabledVolumes.isEmpty {
             let volumes = [FilePath.root] + FUZZY.enabledVolumes
             if digit < volumes.count {
                 FUZZY.volumeFilter = volumes[digit]

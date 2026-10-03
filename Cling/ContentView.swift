@@ -1608,7 +1608,7 @@ struct ContentView: View {
             fuzzy.quickFilter = filter
             result = .handled
         }
-        if let index = keyPress.key.character.wholeNumberValue, let filter = ([FilePath.root] + fuzzy.enabledVolumes)[safe: index] {
+        if proactive, let index = keyPress.key.character.wholeNumberValue, let filter = ([FilePath.root] + fuzzy.enabledVolumes)[safe: index] {
             fuzzy.volumeFilter = filter
             result = .handled
         }
