@@ -302,6 +302,13 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
 
     // MARK: Window delegate
 
+    /// Quick Look takes the keyboard when it opens or is clicked. The bar keeps it, so Space closes Quick Look and the
+    /// arrows move through the list as before.
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard notification.object is QLPreviewPanel, isExpanded, let panel else { return }
+        panel.makeKey()
+    }
+
     func windowDidResignKey(_: Notification) {
         guard isExpanded else { return }
         // Let the new key window settle: QuickLook, a sheet or an alert of our own keep the bar up.
@@ -518,6 +525,9 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         if !FUZZY.query.isEmpty {
             SearchHistory.shared.commit(FUZZY.query)
         }
+        // Like the bar, Quick Look has to take the keyboard without making Cling the active app. Otherwise Cling loses
+        // it altogether and Space and the arrows go to the app in front.
+        ql.styleMask.insert(.nonactivatingPanel)
         ql.makeKeyAndOrderFront(nil)
     }
 
