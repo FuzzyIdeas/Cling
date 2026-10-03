@@ -171,12 +171,13 @@ struct UnwatchedFolders: Codable {
 
 // MARK: - LiveRoute
 
-/// A folder a scope walks, with the engine it fills and the rules it walks by.
+/// A folder a scope walks, with the engine it fills and the rules it walks by. Without an engine (the scope is unloaded
+/// while Cling sits idle), its changes are set aside in `ParkedChanges` until it is loaded again.
 struct LiveRoute: @unchecked Sendable {
     let scope: SearchScope
     let root: String
     let excludePrefix: String?
-    let engine: SearchEngine
+    let engine: SearchEngine?
     let rules: WalkRules
 
     func contains(_ path: String) -> Bool {
@@ -186,6 +187,50 @@ struct LiveRoute: @unchecked Sendable {
         }
         return true
     }
+}
+
+// MARK: - ParkedChanges
+
+/// File changes in scopes unloaded while Cling sits idle, merged per path as the change journal keeps them, for the
+/// scope to take in when it is loaded again. A scope that gathers more than `maxPaths` drops them and replays its
+/// FSEvents history from where its file was saved instead.
+final class ParkedChanges: @unchecked Sendable {
+    /// `-parkedChangesMax N` lowers it, to try the replay a scope falls back to.
+    static let maxPaths = UserDefaults.standard.integer(forKey: "parkedChangesMax") > 0 ? UserDefaults.standard.integer(forKey: "parkedChangesMax") : 100_000
+
+    var pathCount: Int {
+        lock.withLock { changes.values.reduce(0) { $0 + $1.count } }
+    }
+
+    func record(_ scope: SearchScope, path: String, flags: EonilFSEventsEventFlags) {
+        lock.withLock {
+            guard !overflowed.contains(scope) else { return }
+            changes[scope, default: [:]][path, default: 0] |= flags.rawValue
+            if changes[scope]!.count > Self.maxPaths {
+                changes[scope] = nil
+                overflowed.insert(scope)
+            }
+        }
+    }
+
+    /// What `scope` gathered, or nil when it gathered too much to keep.
+    func take(_ scope: SearchScope) -> [String: UInt32]? {
+        lock.withLock {
+            defer {
+                changes[scope] = nil
+                overflowed.remove(scope)
+            }
+            return overflowed.contains(scope) ? nil : changes[scope] ?? [:]
+        }
+    }
+
+    func discard(_ scope: SearchScope) {
+        _ = take(scope)
+    }
+
+    private let lock = NSLock()
+    private var changes: [SearchScope: [String: UInt32]] = [:]
+    private var overflowed: Set<SearchScope> = []
 }
 
 // MARK: - FSChange
@@ -382,12 +427,14 @@ final class LiveIndexUpdater: @unchecked Sendable {
     init(
         routes: [LiveRoute],
         replaying: Bool,
+        parked: ParkedChanges? = nil,
         applied: @escaping @Sendable (LiveIndexBatch) -> Void,
         caughtUp: @escaping @Sendable () -> Void = {},
         historyLost: @escaping @Sendable () -> Void
     ) {
         _routes = routes
         _caughtUp = !replaying
+        self.parked = parked
         self.applied = applied
         self.caughtUp = caughtUp
         self.historyLost = historyLost
@@ -417,6 +464,35 @@ final class LiveIndexUpdater: @unchecked Sendable {
 
     func setRoutes(_ routes: [LiveRoute]) {
         lock.withLock { _routes = routes }
+    }
+
+    /// Switches to `routes` and calls `done` once no batch read with the old ones is still being applied.
+    func setRoutes(_ routes: [LiveRoute], done: @escaping @Sendable () -> Void) {
+        setRoutes(routes)
+        queue.async { done() }
+    }
+
+    /// Switches to `routes`, where `scopes` have their engines back, and applies what they gathered while unloaded
+    /// before any batch read with the new routes. `done` gets the scopes that gathered too much and must replay their
+    /// FSEvents history instead.
+    func resume(_ scopes: [SearchScope], routes: [LiveRoute], done: @escaping @Sendable ([SearchScope]) -> Void) {
+        setRoutes(routes)
+        queue.async { [self] in
+            var events: [FSChange] = []
+            var overflowed: [SearchScope] = []
+            for scope in scopes {
+                guard let changes = parked?.take(scope) else {
+                    overflowed.append(scope)
+                    continue
+                }
+                events += changes.map { FSChange(path: $0.key, flags: EonilFSEventsEventFlags(rawValue: $0.value), id: 0) }
+            }
+            if !events.isEmpty {
+                log.info("Live index: applying \(events.count) paths changed while unloaded")
+                apply(events, listed: false)
+            }
+            done(overflowed)
+        }
     }
 
     /// Changes counted in each folder a walk skips, since they were last taken.
@@ -479,6 +555,7 @@ final class LiveIndexUpdater: @unchecked Sendable {
     private var _lastAppliedEventID: UInt64 = 0
     private var _changes = 0
     private var _skipped: [String: Int] = [:]
+    private let parked: ParkedChanges?
     private let applied: @Sendable (LiveIndexBatch) -> Void
     private let caughtUp: @Sendable () -> Void
     private let historyLost: @Sendable () -> Void
@@ -513,14 +590,14 @@ final class LiveIndexUpdater: @unchecked Sendable {
     /// What went away is removed through each engine's path index, so only an indexed folder costs a pass over the
     /// entries, then whatever a walk would index is added, skipping what is already there. A file only modified is
     /// already in the index.
-    private func apply(_ events: [FSChange]) {
+    private func apply(_ events: [FSChange], listed: Bool = true) {
         guard !lost else { return }
         let t0 = CFAbsoluteTimeGetCurrent()
         var flagsByPath: [String: EonilFSEventsEventFlags] = [:]
         var maxEventID: UInt64 = 0
         var replayDone = false
         // A replay is applied without being listed: it would fill the live changes list with a day of changes.
-        let listing = lock.withLock { _caughtUp }
+        let listing = listed && lock.withLock { _caughtUp }
         for event in events {
             maxEventID = max(maxEventID, event.id)
             let flags = event.flags
@@ -572,8 +649,12 @@ final class LiveIndexUpdater: @unchecked Sendable {
                 }
                 continue
             }
-            let key = ObjectIdentifier(route.engine)
-            engines[key] = route.engine
+            guard let engine = route.engine else {
+                parked?.record(route.scope, path: path, flags: flags)
+                continue
+            }
+            let key = ObjectIdentifier(engine)
+            engines[key] = engine
 
             if route.rules.discoverGitignore, Self.isIgnoreFile(path) {
                 // A changed .gitignore changes what its folder should hold: walk that folder again under the new

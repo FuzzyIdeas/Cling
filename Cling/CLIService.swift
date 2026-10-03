@@ -356,6 +356,7 @@ extension FuzzyClient {
             if request.everything == true {
                 return searchEverything(request, coordinator: coord)
             }
+            FuzzyClient.waitForLoadedIndex()
             let query = request.query ?? ""
             let maxResults = request.maxResults ?? 30
 
@@ -513,7 +514,8 @@ extension FuzzyClient {
                 let state = FUZZY.indexing ? "indexing" : FUZZY.backgroundIndexing ? "background indexing" : (c > 0 ? "ready" : "empty")
                 stateOut = state
                 lines.append("status: \(state)")
-                lines.append("total: \(c.formatted()) entries")
+                let unloaded = FUZZY.unloadedScopes.filter { FUZZY.scopeEngines[$0.key] == nil }
+                lines.append("total: \((c + unloaded.values.reduce(0, +)).formatted()) entries")
 
                 // Scope details
                 let enabledScopes = Defaults[.searchScopes]
@@ -523,14 +525,20 @@ extension FuzzyClient {
                 lines.append("scopes:")
                 for scope in SearchScope.allCases {
                     let enabled = enabledScopes.contains(scope)
-                    let count = FUZZY.scopeEngines[scope]?.count ?? 0
-                    let indexed = FUZZY.scopeEngines[scope] != nil
+                    let count = FUZZY.scopeEngines[scope]?.count ?? unloaded[scope] ?? 0
+                    let indexed = FUZZY.scopeEngines[scope] != nil || unloaded[scope] != nil
                     let scopeKey = "scope:\(scope.rawValue)"
                     let loadKey = "load:\(scope.rawValue)"
                     let scopeOp = ops[scopeKey] ?? ops[loadKey]
                     let scopeOpCount = opCounts[scopeKey] ?? opCounts[loadKey]
                     let scopeIndexing = scopeOp != nil
-                    let status = !enabled ? "disabled" : scopeIndexing ? (scopeOp ?? "indexing...") : !indexed ? "not indexed" : "\(count.formatted()) entries"
+                    let status = !enabled
+                        ? "disabled"
+                        : scopeIndexing
+                            ? (scopeOp ?? "indexing...")
+                            : !indexed
+                                ? "not indexed"
+                                : unloaded[scope] != nil ? "\(count.formatted()) entries (unloaded)" : "\(count.formatted()) entries"
                     lines.append("  \(scope.label): \(status)")
                     let scopeFile = scopeIndexFile(scope)
                     let lastIndexedAt = scopeFile.exists ? scopeFile.timestamp : nil
@@ -645,6 +653,7 @@ extension FuzzyClient {
             guard let paths = request.paths, !paths.isEmpty else {
                 return ClingResponse(error: "no paths specified")
             }
+            FuzzyClient.waitForLoadedIndex()
             var messages = [String]()
             for path in paths {
                 let removed = coord.removePath(path, scopeLabels: request.scopes)
@@ -661,6 +670,7 @@ extension FuzzyClient {
             guard let paths = request.paths, !paths.isEmpty else {
                 return ClingResponse(error: "no paths specified")
             }
+            FuzzyClient.waitForLoadedIndex()
             var messages = [String]()
             for path in paths {
                 var isDirectory: ObjCBool = false
@@ -678,6 +688,7 @@ extension FuzzyClient {
             guard let paths = request.paths, !paths.isEmpty else {
                 return ClingResponse(error: "no paths specified")
             }
+            FuzzyClient.waitForLoadedIndex()
             var messages = [String]()
             for path in paths {
                 let found = coord.hasPath(path, scopeLabels: request.scopes)
@@ -693,6 +704,7 @@ extension FuzzyClient {
             guard let paths = request.paths, !paths.isEmpty else {
                 return ClingResponse(error: "no paths specified")
             }
+            FuzzyClient.waitForLoadedIndex()
             let report = paths.map { explainPathExclusion($0, coord: coord) }.joined(separator: "\n\n")
             return ClingResponse(status: report, indexCount: coord.count)
         }
