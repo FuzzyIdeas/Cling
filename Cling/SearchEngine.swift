@@ -647,6 +647,57 @@ struct SearchResult: Comparable {
     }
 }
 
+// MARK: - IgnoreNegations
+
+/// The `!` rules of an ignore file that name a path below where its patterns are anchored (`!Library/Caches/Clop/*`,
+/// and every rule Cling writes to re-include a path). Inside a folder the file leaves out only these can bring
+/// anything back, so a walk goes into an ignored folder only when one of them could match something in there.
+///
+/// A `!` rule that matches at any depth (`!*.pdf`, `!**/Files.noindex/`) brings back what it matches in the folders
+/// a walk goes into anyway, as in git. Going into every ignored folder for one of those, and the default ignore file
+/// has one, listed hundreds of thousands of files in toolchains, Mail and simulators only to leave them all out.
+struct IgnoreNegations: Sendable {
+    init(_ content: String?) {
+        var rules: [[String]] = []
+        for line in content?.split(whereSeparator: \.isNewline) ?? [] {
+            guard line.hasPrefix("!") else { continue }
+            var pattern = line.dropFirst()
+            while let last = pattern.last, last == " " || last == "\t" || last == "/" {
+                pattern.removeLast()
+            }
+            // No slash before the end, or a leading `**/`: it matches at any depth.
+            guard pattern.contains("/"), !pattern.hasPrefix("**/") else { continue }
+            if pattern.hasPrefix("/") {
+                pattern.removeFirst()
+            }
+            rules.append(pattern.split(separator: "/").map(String.init))
+        }
+        self.rules = rules
+    }
+
+    /// Each rule's path components, relative to where the patterns are anchored.
+    let rules: [[String]]
+
+    /// Whether a rule could match something inside `dir`, given the folder the patterns are anchored to.
+    func reachBelow(_ dir: String, base: String) -> Bool {
+        guard !rules.isEmpty else { return false }
+        let prefix = base.hasSuffix("/") ? base : base + "/"
+        guard dir.hasPrefix(prefix) else { return false }
+        let parts = dir.dropFirst(prefix.count).split(separator: "/")
+        return rules.contains { rule in
+            for (i, part) in parts.enumerated() {
+                guard i < rule.count else { return false }
+                if rule[i] == "**" {
+                    return true
+                }
+                // In either case: going in when unsure only costs a listing.
+                guard fnmatch(rule[i], String(part), FNM_CASEFOLD) == 0 else { return false }
+            }
+            return rule.count > parts.count
+        }
+    }
+}
+
 // MARK: - WalkRules
 
 /// The rules a walk applies below its root, set up once so a walk and a single-path check after it agree.
@@ -662,7 +713,7 @@ struct WalkRules: @unchecked Sendable {
         // Pre-extract extension patterns from ignore file content for fast file-level filtering
         let ignoreContent: String? = ignoreFile.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
         ignoredExtensions = ignoreContent.map { SearchEngine.extractExtensionPatterns(from: $0) } ?? []
-        hasNegationPatterns = ignoreContent?.contains("\n!") == true || ignoreContent?.hasPrefix("!") == true
+        negations = IgnoreNegations(ignoreContent)
         // Per-file blocklist checks are only needed when there are `!` exceptions (then we descend into blocked
         // dirs and must filter their files). With no exceptions, directory pruning alone is exact, so skip it.
         blocklistAllows = applyBlocklist && PathBlocklist.shared.hasAllows
@@ -672,15 +723,21 @@ struct WalkRules: @unchecked Sendable {
         //  - rooted (ignoreRoot != nil): patterns anchor to `ignoreRoot` (== the walked dir) while the file
         //    lives elsewhere (e.g. a scope ignore for /Applications stored in our cache dir).
         //  - file-rooted (default): patterns anchor to the ignore file's own parent directory.
-        ignoreCheck = {
-            guard let ignoreFile else { return nil }
+        let base: String? = ignoreFile.flatMap { ignoreFile in
             if let ignoreRoot {
-                return { $0.isIgnored(in: ignoreFile, root: ignoreRoot, isDir: $1) }
+                return ignoreRoot
             }
             let parent = (ignoreFile as NSString).deletingLastPathComponent
             guard !parent.isEmpty else { return nil }
             let prefix = parent.hasSuffix("/") ? parent : parent + "/"
-            guard walkRoot == parent || walkRoot.hasPrefix(prefix) else { return nil }
+            return walkRoot == parent || walkRoot.hasPrefix(prefix) ? parent : nil
+        }
+        ignoreBase = base
+        ignoreCheck = {
+            guard let ignoreFile, base != nil else { return nil }
+            if let ignoreRoot {
+                return { $0.isIgnored(in: ignoreFile, root: ignoreRoot, isDir: $1) }
+            }
             return { $0.isIgnored(in: ignoreFile, isDir: $1) }
         }()
     }
@@ -700,11 +757,19 @@ struct WalkRules: @unchecked Sendable {
     let applyBlocklist: Bool
     let discoverGitignore: Bool
     let ignoredExtensions: Set<String>
-    let hasNegationPatterns: Bool
+    let negations: IgnoreNegations
     let blocklistAllows: Bool
+    /// Where the ignore file's patterns are anchored, when it applies to this walk at all.
+    let ignoreBase: String?
     /// Whether the ignore file leaves a path out, told whether it is a folder: the walk knows already, and
     /// letting the matcher find out cost a stat per entry.
     let ignoreCheck: ((String, Bool) -> Bool)?
+
+    /// Whether the walk goes inside a folder the ignore file leaves out.
+    func entersIgnored(_ dir: String) -> Bool {
+        guard let ignoreBase else { return false }
+        return negations.reachBelow(dir, base: ignoreBase)
+    }
 
     /// The walk's folder checks, in its order, starting from the verdict for the folder above. The root itself is
     /// never checked or indexed by a walk, only gone into.
@@ -729,9 +794,8 @@ struct WalkRules: @unchecked Sendable {
             return skipped
         }
         if let ignoreCheck, ignoreCheck(dir, true) {
-            // When negation patterns exist (e.g. `*` + `!some/path/`), the walk still goes inside ignored
-            // folders so that un-ignored descendants can be visited.
-            return Folder(descended: hasNegationPatterns, added: false, gitignores: above.gitignores)
+            // A `!` rule naming a path inside (e.g. `*` + `!some/path/`) still needs the walk to go in.
+            return Folder(descended: entersIgnored(dir), added: false, gitignores: above.gitignores)
         }
         if applyBlocklist, pathBlockMatch(dir), isPathBlocked(dir) {
             // Blocked, but an allow-exception may live below: the walk goes inside without indexing it.
@@ -1769,7 +1833,6 @@ final class SearchEngine: @unchecked Sendable {
             applyBlocklist: applyBlocklist, discoverGitignore: discoverGitignore
         )
         let ignoredExtensions = rules.ignoredExtensions
-        let hasNegationPatterns = rules.hasNegationPatterns
         let blocklistAllows = rules.blocklistAllows
         let ignoreCheck = rules.ignoreCheck
 
@@ -1837,9 +1900,8 @@ final class SearchEngine: @unchecked Sendable {
                 let fullPath = String(decoding: UnsafeBufferPointer(start: pathPtr, count: pathLen), as: UTF8.self)
 
                 if let ignoreCheck, ignoreCheck(fullPath, true) {
-                    // When negation patterns exist (e.g. `*` + `!some/path/`), don't skip
-                    // ignored directories so that un-ignored descendants can still be visited.
-                    if !hasNegationPatterns {
+                    // A `!` rule naming a path inside (e.g. `*` + `!some/path/`) still needs the walk to go in.
+                    if !rules.entersIgnored(fullPath) {
                         fts_set(ftsp, ent, Int32(FTS_SKIP))
                     }
                     skippedIgnore &+= 1
@@ -1980,7 +2042,7 @@ final class SearchEngine: @unchecked Sendable {
 
         let ignoreContent: String? = ignoreFile.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
         let ignoredExtensions: Set<String> = ignoreContent.map { Self.extractExtensionPatterns(from: $0) } ?? []
-        let hasNegationPatterns: Bool = ignoreContent?.contains("\n!") == true || ignoreContent?.hasPrefix("!") == true
+        let negations = IgnoreNegations(ignoreContent)
 
         // Only apply ignore checks when the walked dir is under the ignore file's parent (see walkDirectory).
         let ignoreRootPrefix: String? = ignoreFile.flatMap { f -> String? in
@@ -2074,9 +2136,8 @@ final class SearchEngine: @unchecked Sendable {
                         continue
                     }
                     if let effectiveIgnoreFile, path.isIgnored(in: effectiveIgnoreFile, isDir: true) {
-                        // When negation patterns exist, keep traversing ignored dirs
-                        // so un-ignored descendants can still be found.
-                        if hasNegationPatterns {
+                        // A `!` rule naming a path inside still needs the walk to go in.
+                        if negations.reachBelow(path, base: (effectiveIgnoreFile as NSString).deletingLastPathComponent) {
                             queue.append(url)
                         }
                         continue

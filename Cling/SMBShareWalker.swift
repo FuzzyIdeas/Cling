@@ -365,7 +365,9 @@ private func parseDirectoryBuffer(
             }
         }
 
-        if info.nextEntryOffset == 0 { break }
+        if info.nextEntryOffset == 0 {
+            break
+        }
         let next = Int(info.nextEntryOffset)
         guard next > 0, offset + next <= total else { break }
         offset += next
@@ -424,7 +426,9 @@ private func querySingleDirectory(
         }
         isFirstCall = false
 
-        if status == STATUS_NO_MORE_FILES { break }
+        if status == STATUS_NO_MORE_FILES {
+            break
+        }
 
         if dirPath != "/", isPathNotFoundStatus(status) {
             slog.warning("SMB: skipping unreadable directory \(dirPath)")
@@ -435,7 +439,9 @@ private func querySingleDirectory(
             throw SMBWalkError.queryFailed(path: dirPath, status: status)
         }
 
-        if returned == 0 { continue }
+        if returned == 0 {
+            continue
+        }
 
         let page = parseDirectoryBuffer(
             buffer: buffer, returned: returned, dirPath: dirPath,
@@ -497,25 +503,39 @@ func walkSMBShare(
 
     let ignoreContent: String? = ignoreFile.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
     let ignoredExtensions: Set<String> = ignoreContent.map { SearchEngine.extractExtensionPatterns(from: $0) } ?? []
-    let hasNegationPatterns: Bool = ignoreContent?.contains("\n!") == true || ignoreContent?.hasPrefix("!") == true
+    let negations = IgnoreNegations(ignoreContent)
+    let ignoreBase = ignoreFile.map { ($0 as NSString).deletingLastPathComponent }
 
     let shouldSkip: (String) -> Bool = { path in
-        if isPathBlocked(path) { return true }
-        if let skipDir, skipDir(path) { return true }
+        if isPathBlocked(path) {
+            return true
+        }
+        if let skipDir, skipDir(path) {
+            return true
+        }
         if !ignoredExtensions.isEmpty {
             let ext = "." + (URL(fileURLWithPath: path).pathExtension.lowercased())
-            if ext.count > 1, ignoredExtensions.contains(ext) { return true }
+            if ext.count > 1, ignoredExtensions.contains(ext) {
+                return true
+            }
         }
-        if let ignoreFile, path.isIgnored(in: ignoreFile) { return true }
+        if let ignoreFile, path.isIgnored(in: ignoreFile) {
+            return true
+        }
         return false
     }
 
-    // When negation patterns exist, a directory may be ignored but still
-    // need traversal so un-ignored descendants can be found.
+    // An ignored directory still needs traversal when a `!` rule names a path inside it.
     let shouldSkipTraversal: (String) -> Bool = { path in
-        if isPathBlocked(path) { return true }
-        if let skipDir, skipDir(path) { return true }
-        if !hasNegationPatterns, let ignoreFile, path.isIgnored(in: ignoreFile) { return true }
+        if isPathBlocked(path) {
+            return true
+        }
+        if let skipDir, skipDir(path) {
+            return true
+        }
+        if let ignoreFile, let ignoreBase, path.isIgnored(in: ignoreFile), !negations.reachBelow(path, base: ignoreBase) {
+            return true
+        }
         return false
     }
 
@@ -566,7 +586,9 @@ func walkSMBShare(
         var seenFileIds: Set<UInt64> = []
 
         while let dirPath = pending.popLast() {
-            if cancelled?() == true { break }
+            if cancelled?() == true {
+                break
+            }
 
             let page = try querySingleDirectory(
                 conn: conn, dirPath: dirPath, mountPoint: mountPoint,
