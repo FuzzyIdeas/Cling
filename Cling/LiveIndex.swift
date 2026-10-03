@@ -385,6 +385,25 @@ final class SharedFlag: @unchecked Sendable {
     private var _value: Bool
 }
 
+// MARK: - LiveIndexBatch
+
+/// What a batch of file changes did to the scope indexes.
+struct LiveIndexBatch: Sendable {
+    enum Kind: Sendable {
+        case added
+        case modified
+        case removed
+    }
+
+    /// Indexed paths that came, changed or went, once the launch replay is done. What a folder brought or took with
+    /// it isn't listed path by path.
+    var paths: [(path: String, kind: Kind)] = []
+    /// Entries the indexes gained, or lost when negative.
+    var countDelta = 0
+    /// Paths changed in the indexes.
+    var changed = 0
+}
+
 // MARK: - LiveIndexUpdater
 
 /// Applies file changes to the scope indexes as a walk would have found them, in batches on its own queue, so they
@@ -393,7 +412,7 @@ final class LiveIndexUpdater: @unchecked Sendable {
     init(
         routes: [LiveRoute],
         replaying: Bool,
-        applied: @escaping @Sendable (_ changes: Int) -> Void,
+        applied: @escaping @Sendable (LiveIndexBatch) -> Void,
         caughtUp: @escaping @Sendable () -> Void = {},
         historyLost: @escaping @Sendable () -> Void
     ) {
@@ -490,7 +509,7 @@ final class LiveIndexUpdater: @unchecked Sendable {
     private var _lastAppliedEventID: UInt64 = 0
     private var _changes = 0
     private var _skipped: [String: Int] = [:]
-    private let applied: @Sendable (Int) -> Void
+    private let applied: @Sendable (LiveIndexBatch) -> Void
     private let caughtUp: @Sendable () -> Void
     private let historyLost: @Sendable () -> Void
     private let queue = DispatchQueue(label: "com.lowtechguys.Cling.liveIndex", qos: .utility)
@@ -530,6 +549,8 @@ final class LiveIndexUpdater: @unchecked Sendable {
         var flagsByPath: [String: EonilFSEventsEventFlags] = [:]
         var maxEventID: UInt64 = 0
         var replayDone = false
+        // A replay is applied without being listed: it would fill the live changes list with a day of changes.
+        let listing = lock.withLock { _caughtUp }
         for event in events {
             maxEventID = max(maxEventID, event.id)
             let flags = event.flags
@@ -567,6 +588,8 @@ final class LiveIndexUpdater: @unchecked Sendable {
         var rescans: [ObjectIdentifier: [(route: LiveRoute, dir: String)]] = [:]
         var folders: [String: [String: WalkRules.Folder]] = [:]
         var skipped: [String: Int] = [:]
+        var modified: [String] = []
+        var batch = LiveIndexBatch()
         var changed = 0
 
         for (path, flags) in flagsByPath {
@@ -616,7 +639,12 @@ final class LiveIndexUpdater: @unchecked Sendable {
                 }
                 continue
             }
-            guard !flags.isDisjoint(with: structural) else { continue }
+            guard !flags.isDisjoint(with: structural) else {
+                if kindKnown, listing {
+                    modified.append(path)
+                }
+                continue
+            }
             if flags.contains(.itemRenamed), FSEventsHistory.isStaleCase(path, mode: st.st_mode) {
                 gone[key, default: []].append(path)
                 changed += 1
@@ -653,11 +681,17 @@ final class LiveIndexUpdater: @unchecked Sendable {
                 engineAdded.removeAll { path, _ in prefixes.contains { path.hasPrefix($0) } }
             }
 
-            engine.removeIndexed(gone[key] ?? [])
+            let before = engine.count
+            var removed = Set<String>()
+            engine.removeIndexed(gone[key] ?? []) { removed.insert($0) }
             // Usually never indexed; counted only when they were (the rules changed since the last walk).
-            changed += engine.removeIndexed(excluded[key] ?? [])
+            changed += engine.removeIndexed(excluded[key] ?? []) { removed.insert($0) }
             for (path, isDir) in engineAdded {
-                _ = engine.addPath(path, isDir: isDir)
+                // A folder moved over one of the same name was taken out above and goes back in.
+                let new = engine.addPathIfMissing(path, isDir: isDir) && removed.remove(path) == nil
+                if listing {
+                    batch.paths.append((path, new ? .added : .modified))
+                }
             }
             for (route, dir) in engineRescans {
                 let folder = route.rules.folder(dir, cache: &folders[route.root, default: [:]])
@@ -667,7 +701,15 @@ final class LiveIndexUpdater: @unchecked Sendable {
                     inheritedGitignores: folder.gitignores
                 )
             }
+            if listing {
+                batch.paths += removed.map { ($0, .removed) }
+            }
+            batch.countDelta += engine.count - before
         }
+        if listing {
+            batch.paths += modified.map { ($0, .modified) }
+        }
+        batch.changed = changed
 
         lock.withLock {
             _lastAppliedEventID = max(_lastAppliedEventID, maxEventID)
@@ -678,7 +720,9 @@ final class LiveIndexUpdater: @unchecked Sendable {
         }
         if changed > 0 {
             log.debug("Live index: \(changed) changed paths applied in \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 3))s")
-            applied(changed)
+        }
+        if changed > 0 || batch.countDelta != 0 || !batch.paths.isEmpty {
+            applied(batch)
         }
         if replayDone {
             caughtUp()

@@ -978,6 +978,16 @@ final class SearchEngine: @unchecked Sendable {
         lock.withLock { _addPath(path, isDir: isDir) }
     }
 
+    /// Adds a path the index doesn't hold yet, saying whether it did.
+    func addPathIfMissing(_ path: String, isDir: Bool) -> Bool {
+        lock.withLock {
+            ensurePathIndex()
+            guard pathToID[path] == nil else { return false }
+            pathToID[path] = _insertPath(path, isDir: isDir)
+            return true
+        }
+    }
+
     /// Add without looking for an existing entry, for an engine that never builds the path index (at millions
     /// of entries the Everything index can't afford one). A path added twice turns up twice in this engine's
     /// results, and merging results collapses them by path.
@@ -1072,9 +1082,9 @@ final class SearchEngine: @unchecked Sendable {
 
     /// Removes these paths and, for the folders among them, everything below them. Each one is looked up in the path
     /// index, so a path that isn't indexed costs a lookup and a file costs nothing more; only a folder that is
-    /// indexed costs a pass over the entries.
+    /// indexed costs a pass over the entries. `found` is told each of the paths that was indexed.
     @discardableResult
-    func removeIndexed(_ paths: [String]) -> Int {
+    func removeIndexed(_ paths: [String], found: (String) -> Void = { _ in }) -> Int {
         guard !paths.isEmpty else { return 0 }
         var dirs: [String] = []
         var removed = 0
@@ -1082,6 +1092,7 @@ final class SearchEngine: @unchecked Sendable {
             ensurePathIndex()
             for path in paths {
                 guard let id = pathToID[path] else { continue }
+                found(path)
                 if entries[id].isDir {
                     dirs.append(path)
                 } else {

@@ -387,6 +387,14 @@ class FuzzyClient {
             case removed = "-"
             case modified = "~"
 
+            init(_ kind: LiveIndexBatch.Kind) {
+                switch kind {
+                case .added: self = .added
+                case .modified: self = .modified
+                case .removed: self = .removed
+                }
+            }
+
             static func < (lhs: Kind, rhs: Kind) -> Bool {
                 lhs.rawValue < rhs.rawValue
             }
@@ -405,10 +413,12 @@ class FuzzyClient {
         }
     }
 
-    /// An FSEvents change that survived filtering on `fsEventsQueue`, waiting to be applied.
+    /// A file change waiting on `fsEventsQueue` to be shown: one the scope indexes took, with what it did to them, or
+    /// one outside them (no kind), which is worked out from what was seen before.
     struct PendingFSChange {
         let path: FilePath
         let exists: Bool
+        var kind: IndexChange.Kind?
     }
 
     struct ActivityEntry: Identifiable {
@@ -521,7 +531,9 @@ class FuzzyClient {
     @ObservationIgnored nonisolated(unsafe) var replayingHistory = false
     /// Changes inside the scopes that arrived while no Cling window was on screen, path to the order they last
     /// happened in, shown once a window is (see `followChanges`). Touched only on `fsEventsQueue`.
-    @ObservationIgnored nonisolated(unsafe) var hiddenChanges: [String: Int] = [:]
+    @ObservationIgnored nonisolated(unsafe) var hiddenChanges: [String: (order: Int, kind: IndexChange.Kind)] = [:]
+    /// Entries the scope indexes gained since the count on screen last moved. Only touched on `fsEventsQueue`.
+    @ObservationIgnored nonisolated(unsafe) var pendingCountDelta = 0
     @ObservationIgnored nonisolated(unsafe) var hiddenChangeOrder = 0
     /// The main or Settings window is on screen. Read on the stream's and the live updater's queues.
     @ObservationIgnored let windowOnScreen = SharedFlag(false)
@@ -1721,19 +1733,16 @@ class FuzzyClient {
         fsEventsQueue.async { [self] in
             pendingFSChanges.removeAll()
             hiddenChanges.removeAll()
+            pendingCountDelta = 0
             replayingHistory = since != nil
         }
 
         let updater = LiveIndexUpdater(
             routes: liveRoutes(),
             replaying: since != nil,
-            applied: { [weak self] changes in
+            applied: { [weak self] batch in
                 guard let self else { return }
-                guard windowOnScreen.value else {
-                    indexChangedOffScreen.value = true
-                    return
-                }
-                Task { @MainActor in self.liveIndexApplied(changes) }
+                fsEventsQueue.async { self.followIndexChanges(batch) }
             },
             caughtUp: { [weak self] in
                 Task { @MainActor in self?.chooseUnwatched() }
@@ -1764,9 +1773,36 @@ class FuzzyClient {
         }
     }
 
-    /// Shows file changes as they happen: in the live changes list, by taking deleted files out of the results, and
-    /// in the count. With no Cling window on screen, changes inside the scopes are only noted and worked out once one
+    /// Shows what the scope indexes took from a batch of file changes: in the live changes list, by taking deleted
+    /// files out of the results, and in the count. With no Cling window on screen it is only noted and shown once one
     /// is: a hidden SwiftUI window still lays itself out again after every batch. Runs on `fsEventsQueue`.
+    func followIndexChanges(_ batch: LiveIndexBatch) {
+        pendingCountDelta += batch.countDelta
+        guard windowOnScreen.value else {
+            if batch.changed > 0 {
+                indexChangedOffScreen.value = true
+            }
+            for (path, kind) in batch.paths {
+                hiddenChangeOrder += 1
+                hiddenChanges[path] = (hiddenChangeOrder, IndexChange.Kind(kind))
+            }
+            if hiddenChanges.count >= Self.hiddenChangesMax {
+                showHiddenChanges()
+            }
+            return
+        }
+        for (path, kind) in batch.paths {
+            guard let filePath = path.filePath else { continue }
+            pendingFSChanges.append(PendingFSChange(path: filePath, exists: kind != .removed, kind: IndexChange.Kind(kind)))
+        }
+        scheduleFSFlush()
+        if batch.changed > 0 {
+            mainActor { self.liveIndexApplied(batch.changed) }
+        }
+    }
+
+    /// Follows file changes outside the scope indexes, which keep the recents index. The scope indexes report their
+    /// own (`followIndexChanges`). Runs on `fsEventsQueue`.
     func followChanges(_ events: [FSChange], updater: LiveIndexUpdater) {
         for event in events {
             if event.flags.contains(.historyDone) {
@@ -1775,26 +1811,16 @@ class FuzzyClient {
             }
             guard !replayingHistory,
                   event.flags.hasElements(from: [.itemCreated, .itemRemoved, .itemRenamed, .itemModified]),
-                  let pathStr = FSEventsHistory.normalized(event.path)
+                  let pathStr = FSEventsHistory.normalized(event.path),
+                  Self.recentsRoots.contains(where: { pathStr.hasPrefix($0) }),
+                  updater.route(for: pathStr) == nil
             else { continue }
-
-            // The scope indexes take changes inside them directly; the live index only keeps the rest.
-            let inScope = updater.route(for: pathStr) != nil
-            guard inScope || Self.recentsRoots.contains(where: { pathStr.hasPrefix($0) }) else { continue }
-            if inScope, !windowOnScreen.value {
-                hiddenChangeOrder += 1
-                hiddenChanges[pathStr] = hiddenChangeOrder
-                if hiddenChanges.count >= Self.hiddenChangesMax {
-                    showHiddenChanges()
-                }
-                continue
-            }
-            showChange(pathStr, inScope: inScope)
+            showRecentsChange(pathStr)
         }
     }
 
     /// Runs on `fsEventsQueue`.
-    func showChange(_ pathStr: String, inScope: Bool) {
+    func showRecentsChange(_ pathStr: String) {
         guard !isPathBlocked(pathStr), let path = pathStr.filePath else { return }
         if path.exists {
             let isDir = path.isDir
@@ -1808,28 +1834,25 @@ class FuzzyClient {
                 }
                 break
             }
-            if !inScope {
-                // Add to recents engine (never blocks main thread)
-                recentsEngine.addPath(pathStr, isDir: isDir)
-            }
+            // Add to recents engine (never blocks main thread)
+            recentsEngine.addPath(pathStr, isDir: isDir)
             enqueueFSChange(path, exists: true)
         } else {
-            if !inScope {
-                recentsEngine.removePath(pathStr)
-            }
+            recentsEngine.removePath(pathStr)
             enqueueFSChange(path, exists: false)
         }
     }
 
-    /// A window came on screen, or too many changes piled up: shows what the noted changes left on disk, in the order
-    /// they last happened. Runs on `fsEventsQueue`.
+    /// A window came on screen, or too many changes piled up: shows the noted changes in the order they last happened,
+    /// and moves the count by what the indexes gained meanwhile. Runs on `fsEventsQueue`.
     func showHiddenChanges() {
-        guard !hiddenChanges.isEmpty else { return }
-        let paths = hiddenChanges.sorted { $0.value < $1.value }.map(\.key)
+        let changes = hiddenChanges.sorted { $0.value.order < $1.value.order }
         hiddenChanges = [:]
-        for path in paths {
-            showChange(path, inScope: true)
+        for (path, change) in changes {
+            guard let filePath = path.filePath else { continue }
+            pendingFSChanges.append(PendingFSChange(path: filePath, exists: change.kind != .removed, kind: change.kind))
         }
+        scheduleFSFlush()
     }
 
     /// Follows whether the main or Settings window is on screen, from the windows' own occlusion changes, which
@@ -1863,8 +1886,8 @@ class FuzzyClient {
         }
     }
 
-    /// A batch of file changes reached the scope indexes. The count on screen already moved with each change as it
-    /// was shown, so it isn't recounted here: that would redraw the status bar once more per batch.
+    /// A batch of file changes reached the scope indexes. The count on screen moves by what the batch added and removed
+    /// along with the live changes list, so it isn't recounted here: that would redraw the status bar once more.
     func liveIndexApplied(_ changes: Int) {
         invalidateSearch()
         // QuickFilter pools hold entry positions, and removals free those up for reuse by new paths.
@@ -1910,29 +1933,39 @@ class FuzzyClient {
     /// Runs on `fsEventsQueue`.
     nonisolated func enqueueFSChange(_ path: FilePath, exists: Bool) {
         pendingFSChanges.append(PendingFSChange(path: path, exists: exists))
+        scheduleFSFlush()
+    }
+
+    /// Runs on `fsEventsQueue`.
+    nonisolated func scheduleFSFlush() {
         guard !fsFlushScheduled else { return }
 
         fsFlushScheduled = true
         fsEventsQueue.asyncAfter(deadline: .now() + Self.fsFlushInterval) { [self] in
             fsFlushScheduled = false
-            guard !pendingFSChanges.isEmpty else { return }
+            guard !pendingFSChanges.isEmpty || pendingCountDelta != 0 else { return }
 
             let batch = pendingFSChanges
+            let countDelta = pendingCountDelta
             pendingFSChanges.removeAll(keepingCapacity: true)
-            mainActor { self.applyFSChanges(batch) }
+            pendingCountDelta = 0
+            mainActor { self.applyFSChanges(batch, countDelta: countDelta) }
         }
     }
 
     /// Apply a batch of FSEvents changes in one main-actor transaction, in arrival order so a
     /// remove-then-create on the same path still ends up created.
-    func applyFSChanges(_ batch: [PendingFSChange]) {
+    func applyFSChanges(_ batch: [PendingFSChange], countDelta: Int = 0) {
         var resultsChanged = false
+        indexedCount = max(0, indexedCount &+ countDelta)
 
         for change in batch {
             let pathStr = change.path.string
             guard change.exists else {
                 removedFiles.insert(pathStr)
-                indexedCount = max(0, indexedCount &- 1)
+                if change.kind == nil {
+                    indexedCount = max(0, indexedCount &- 1)
+                }
                 appendLiveChange(IndexChange(path: pathStr, kind: .removed))
                 if let index = scoredResults.firstIndex(of: change.path) {
                     scoredResults.remove(at: index)
@@ -1948,6 +1981,10 @@ class FuzzyClient {
             // and in the index — the CLI, which applies no such filter, still
             // shows it. Un-remove it so the UI and index agree again.
             removedFiles.remove(pathStr)
+            if let kind = change.kind {
+                appendLiveChange(IndexChange(path: pathStr, kind: kind))
+                continue
+            }
             let isNew = !seenPaths.contains(pathStr)
             seenPaths.insert(pathStr)
             if isNew {
