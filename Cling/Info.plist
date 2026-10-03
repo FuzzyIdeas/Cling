@@ -2,16 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>SUFeedURL</key>
-	<string>https://files.lowtechguys.com/cling/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>lqnO6tg2A9evTIFo2SC9ArZ6NS84gtBshcAWdwh12xQ=</string>
+	<key>LSEnvironment</key>
+	<dict>
+		<key>MallocSpaceEfficient</key>
+		<string>1</string>
+	</dict>
 	<key>LSUIElement</key>
-	<true/>
-	<key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Cling asks Finder to open the Get Info panel for files.</string>
+	<key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key>
+	<true/>
 	<key>OSLogPreferences</key>
 	<dict>
 		<key>com.lowtechguys.Cling</key>
@@ -23,5 +24,9 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>SUFeedURL</key>
+	<string>https://files.lowtechguys.com/cling/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>lqnO6tg2A9evTIFo2SC9ArZ6NS84gtBshcAWdwh12xQ=</string>
 </dict>
 </plist>
