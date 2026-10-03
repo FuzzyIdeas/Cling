@@ -951,9 +951,9 @@ struct ClingApp: App {
         }
 
         Window("Welcome to Cling", id: "onboarding") {
+            // Laid out under the title bar, so the window fits it exactly; only the background reaches up behind the bar.
             OnboardingView()
-                .background { WindowBackground() }
-                .ignoresSafeArea()
+                .background { WindowBackground().ignoresSafeArea() }
                 .environmentObject(envState)
         }
         .defaultSize(width: 560, height: 580)

@@ -17,7 +17,7 @@ struct OnboardingView: View {
         VStack(spacing: 0) {
             Text("Welcome to Cling")
                 .heavy(28)
-                .padding(.top, 30)
+                .padding(.top, 2)
             Text("Fast file search for your Mac")
                 .round(14, weight: .regular)
                 .foregroundStyle(.secondary)
@@ -35,29 +35,31 @@ struct OnboardingView: View {
                         .frame(height: 180)
                 }
 
-                // Window Mode
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Window Mode")
-                        .heavy(14)
-                    HStack(spacing: 12) {
-                        windowModeButton(
-                            mode: .utility,
-                            icon: "rectangle.on.rectangle.angled",
-                            description: [
-                                "Summon on hotkey, hide on defocus",
-                                "No Dock icon, stays out of the way",
-                                "Best for quick find and act",
-                            ]
-                        )
-                        windowModeButton(
-                            mode: .desktopApp,
-                            icon: "macwindow",
-                            description: [
-                                "Stays open like a regular app",
-                                "Appears in the Dock and Cmd+Tab",
-                                "Best for browsing and organizing",
-                            ]
-                        )
+                // Window Mode: how the window behaves, which the bar has no use for.
+                if hotkeyTarget == .window {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Window Mode")
+                            .heavy(14)
+                        HStack(spacing: 12) {
+                            windowModeButton(
+                                mode: .utility,
+                                icon: "rectangle.on.rectangle.angled",
+                                description: [
+                                    "Summon on hotkey, hide on defocus",
+                                    "No Dock icon, stays out of the way",
+                                    "Best for quick find and act",
+                                ]
+                            )
+                            windowModeButton(
+                                mode: .desktopApp,
+                                icon: "macwindow",
+                                description: [
+                                    "Stays open like a regular app",
+                                    "Appears in the Dock and Cmd+Tab",
+                                    "Best for browsing and organizing",
+                                ]
+                            )
+                        }
                     }
                 }
 
@@ -140,9 +142,7 @@ struct OnboardingView: View {
             }
             .padding(.horizontal, 36)
             .padding(.top, 28)
-
-            Spacer()
-            Spacer()
+            .animation(.easeOut(duration: 0.2), value: hotkeyTarget)
 
             Button(action: getStarted) {
                 Text("Get Started")
@@ -153,10 +153,12 @@ struct OnboardingView: View {
             .controlSize(.large)
             .keyboardShortcut(.return, modifiers: [])
             .padding(.horizontal, 36)
+            .padding(.top, 32)
             .padding(.bottom, 24)
         }
+        // Its own height, so the window shrinks when the bar's choice drops Window Mode.
         .frame(width: 560)
-        .frame(maxHeight: .infinity)
+        .fixedSize(horizontal: false, vertical: true)
         .onAppear {
             if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "onboarding" }) {
                 window.level = .floating
@@ -187,6 +189,7 @@ struct OnboardingView: View {
     @State private var selectedVolumes: Set<FilePath> = Set(FuzzyClient.getVolumes())
 
     @Default(.windowAppearance) private var windowAppearance
+    @Default(.hotkeyTarget) private var hotkeyTarget
     @Default(.enableGlobalHotkey) private var enableGlobalHotkey
     @Default(.showAppKey) private var showAppKey
     @Default(.triggerKeys) private var triggerKeys
@@ -255,7 +258,8 @@ struct OnboardingView: View {
     }
 
     private func getStarted() {
-        switch selectedMode {
+        // The bar sets up Cling like the utility window: no Dock icon, gone when focus moves on.
+        switch hotkeyTarget == .searchBar ? .utility : selectedMode {
         case .utility:
             showDockIcon = false
             keepWindowOpenWhenDefocused = false
