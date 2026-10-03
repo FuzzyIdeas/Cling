@@ -63,6 +63,9 @@ final class SearchBarRowStyle {
 
     static let shared = SearchBarRowStyle()
 
+    /// Where a row's icon and name start; the search row lines its filter button and query up with them.
+    static let iconX: CGFloat = 14
+
     private(set) var rowHeight: CGFloat = 44
     private(set) var iconSide: CGFloat = 32
     private(set) var nameLineHeight: CGFloat = 16
@@ -70,11 +73,16 @@ final class SearchBarRowStyle {
     private(set) var metaWidth: CGFloat = 150
     private(set) var stashTagWidth: CGFloat = 30
     private(set) var scale: Double = 1
+
     /// Bumped whenever sizes or fonts change, so rows drawn with the old ones know to redraw.
     private(set) var generation = 0
 
     /// Called once a burst of background renders has landed, so the visible rows redraw once.
     var onRastersReady: (() -> Void)?
+
+    var textX: CGFloat {
+        Self.iconX + iconSide + 10
+    }
 
     func rebuildIfNeeded() {
         guard FontScale.current != scale else { return }
@@ -88,11 +96,19 @@ final class SearchBarRowStyle {
         if ext.isEmpty {
             return isDir == true ? folderKind : ""
         }
-        if let cached = kinds[ext] {
+        let key = isDir == true ? ext + "/" : ext
+        if let cached = kinds[key] {
             return cached
         }
-        let kind = UTType(filenameExtension: ext)?.localizedDescription.map(Self.capitalizedFirst) ?? ext.uppercased()
-        kinds[ext] = kind
+        // A bundle like .xcodeproj is only described when looked up as a directory, and a file type only as data.
+        let conforming: [UTType] = switch isDir {
+        case true: [.directory]
+        case false: [.data]
+        case nil: [.data, .directory]
+        }
+        let description = conforming.lazy.compactMap { UTType(filenameExtension: ext, conformingTo: $0)?.localizedDescription }.first
+        let kind = description.map(Self.capitalizedFirst) ?? (isDir == true ? folderKind : ext.uppercased())
+        kinds[key] = kind
         return kind
     }
 
@@ -392,7 +408,7 @@ final class SearchBarRowView: NSTableRowView {
         super.layout()
         let side = SearchBarRowStyle.shared.iconSide
         selectionView.frame = bounds.insetBy(dx: 6, dy: 1)
-        iconView.frame = NSRect(x: 14, y: ((bounds.height - side) / 2).rounded(), width: side, height: side)
+        iconView.frame = NSRect(x: SearchBarRowStyle.iconX, y: ((bounds.height - side) / 2).rounded(), width: side, height: side)
         content.frame = bounds
     }
 
@@ -569,7 +585,7 @@ final class SearchBarRowContent: NSView {
         let bounds = bounds
         drawnGeneration = style.generation
 
-        let textX = 14 + style.iconSide + 10
+        let textX = style.textX
         let showMeta = bounds.width > 420
         let metaWidth = showMeta ? style.metaWidth : 0
         let textWidth = max(bounds.width - textX - metaWidth - 20, 40)

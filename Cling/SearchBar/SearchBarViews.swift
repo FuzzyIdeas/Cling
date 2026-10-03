@@ -442,7 +442,11 @@ final class SearchBarRootView: NSView {
         // Search row, laid out from both ends towards the field.
         let iconBox = FontScale.length(28, .control)
         let iconY = (rowHeight - iconBox) / 2
-        filterButton.frame = NSRect(x: 12, y: iconY, width: iconBox + 4, height: iconBox)
+        // The filter button is centred over the rows' icons and the query starts where their names do.
+        let rowStyle = SearchBarRowStyle.shared
+        let filterWidth = iconBox + 4
+        let filterX = (SearchBarRowStyle.iconX + rowStyle.iconSide / 2 - filterWidth / 2).rounded()
+        filterButton.frame = NSRect(x: filterX, y: iconY, width: filterWidth, height: iconBox)
 
         var right = w - 12
         for button in [previewButton, sortButton, everythingButton] {
@@ -463,7 +467,8 @@ final class SearchBarRootView: NSView {
             right -= 6
         }
 
-        let fieldX = filterButton.frame.maxX + 6
+        // The field draws its text 2 pt in from its frame.
+        let fieldX = rowStyle.textX - 2
         let fieldHeight = ceil((field.font?.boundingRectForFont.height ?? 24) + 2)
         field.frame = NSRect(x: fieldX, y: (rowHeight - fieldHeight) / 2, width: max(right - fieldX - 4, 40), height: fieldHeight)
 
