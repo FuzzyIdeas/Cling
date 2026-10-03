@@ -233,6 +233,11 @@ final class SearchBarBackgroundView: NSView {
         edge?.cornerRadius = cornerRadius
         if #available(macOS 26, *), let glassView = material as? NSGlassEffectView {
             glassView.cornerRadius = cornerRadius
+            // The glass rounds what it shows, but still covers its whole rectangle at a sliver of alpha, which is
+            // enough for the window to cast a square shadow under the rounded corners. Clipping it here stops that.
+            layer?.cornerRadius = cornerRadius
+            layer?.cornerCurve = .continuous
+            layer?.masksToBounds = cornerRadius > 0
         } else if let effect = material as? NSVisualEffectView {
             effect.maskImage = cornerRadius > 0 ? Self.roundedMask(radius: cornerRadius) : nil
         } else if let plain = material as? SearchBarTintView {

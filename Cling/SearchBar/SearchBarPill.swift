@@ -152,10 +152,21 @@ private final class PillLabel: NSView {
         nil
     }
 
+    /// Drawn only on request, so a new size (the hotkey's keycap coming or going) has to ask.
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize != frame.size
+        super.setFrameSize(newSize)
+        if changed {
+            needsDisplay = true
+        }
+    }
+
     override func draw(_: NSRect) {
         #if DEBUG || SEARCHBAR_BENCH
             SearchBarBenchmark.count("pillDraw")
         #endif
+        NSColor.clear.setFill()
+        bounds.fill(using: .copy)
         let font = NSFont.systemFont(ofSize: SearchBarPillView.fontSize)
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.secondaryLabelColor]
         // The colour goes in as the symbol's palette, resolved now, while this view's appearance is the current one.
