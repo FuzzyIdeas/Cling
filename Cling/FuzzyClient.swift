@@ -812,40 +812,6 @@ class FuzzyClient {
         return path.name.string
     }
 
-    /// Pick the best first engine to search based on query hints.
-    /// Returns the index into the engines array.
-    nonisolated static func bestFirstEngine(
-        for query: String,
-        engines: [(engine: SearchEngine, label: String, scoreBias: Int)]
-    ) -> Int {
-        let q = query.lowercased()
-
-        // Map query patterns to preferred scope labels
-        let hints: [(pattern: (String) -> Bool, label: String)] = [
-            ({ $0.contains(".framework") || $0.contains(".dylib") }, "System"),
-            ({ $0.contains(".app") || $0.contains("/applications") }, "Applications"),
-            ({ $0.contains("/usr") || $0.contains("/bin") || $0.contains("/opt") }, "Root"),
-            ({ $0.contains("/library") || $0.contains("~/library") }, "Library"),
-            ({ $0.contains(".xcodeproj") || $0.contains(".swift") || $0.contains(".xcworkspace") }, "Home"),
-            ({ $0.contains("/documents") || $0.contains("/desktop") || $0.contains("/downloads") }, "Home"),
-        ]
-
-        for hint in hints {
-            if hint.pattern(q), let idx = engines.firstIndex(where: { $0.label == hint.label }) {
-                return idx
-            }
-        }
-
-        // Default: prefer Home (most likely user intent), then Applications
-        if let idx = engines.firstIndex(where: { $0.label == "Home" }) {
-            return idx
-        }
-        if let idx = engines.firstIndex(where: { $0.label == "Applications" }) {
-            return idx
-        }
-        return 0
-    }
-
     /// Merge results from multiple engines: quality gate + sort + dedup
     nonisolated static func mergeResults(_ results: [SearchResult], maxResults: Int) -> [SearchResult] {
         guard !results.isEmpty else { return [] }
@@ -2172,9 +2138,6 @@ class FuzzyClient {
 
         // Combine user query with QuickFilter's queryString
         var query = constructQuery(query)
-        // Only what was typed picks the first engine: a filter's own folders are in every query it makes, and the
-        // iCloud Drive one's `~/Library/Mobile Documents` would send each search to the Library engine first.
-        let hintQuery = query
         if let qf = quickFilter {
             // The filter wraps the user's typed query: prefix (constraints + Prepend) before it,
             // suffix (Append) after it. Order matters for the fuzzy word ranking.
@@ -2271,90 +2234,64 @@ class FuzzyClient {
 
         searching = true
         searchTask = Task.detached(priority: .userInitiated) {
-            let engineCount = engines.count
-            guard engineCount > 0 else {
+            guard !engines.isEmpty else {
                 await MainActor.run { self.searching = false }
                 return
             }
 
             nonisolated(unsafe) var cancelFlag = false
-            var accumulated = [SearchResult]()
-
-            // Pick the best first engine based on query hints
-            let bestFirstIdx = Self.bestFirstEngine(for: hintQuery, engines: engines)
-            // Set on the main actor once the merged results are shown, so a late first-engine list can't cover them.
+            // Set on the main actor once the merged results are shown, so a late partial list can't cover them.
             nonisolated(unsafe) var finalShown = false
-            var interimTask: Task<Void, Never>?
+            var accumulated = [SearchResult]()
+            let finished = OSAllocatedUnfairLock(initialState: [SearchResult]())
+
+            // Every engine at once, and the results go up once, merged. Searching one engine first and showing its
+            // results early flashed that engine's list before the merged one replaced it, and held the others back
+            // by its own time. A search still running after 150 ms shows what the finished engines found. The
+            // stale-path filter stat()s each result, so it runs off the main actor (see existingResultPaths).
+            let partialTask = Task.detached(priority: .userInitiated) {
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled, !cancelFlag else { return }
+                let sofar = finished.withLock { $0 }
+                guard !sofar.isEmpty else { return }
+                let partialPaths = await self.existingResultPaths(from: Self.mergeResults(sofar, maxResults: maxResults))
+                guard !Task.isCancelled, !cancelFlag else { return }
+                await MainActor.run {
+                    guard !finalShown, !cancelFlag else { return }
+                    self.scoredResults = partialPaths
+                    self.results = self.sortedResults()
+                }
+            }
 
             await withTaskCancellationHandler {
-                // Phase 1: Search the best engine first for instant results
-                let firstEng = engines[bestFirstIdx]
-                let firstPool = pools[firstEng.label]
-                var firstResults = firstEng.engine.search(
-                    query: query, maxResults: maxResults, folderPrefixes: allPrefixes,
-                    excludedPaths: removedPaths.isEmpty ? nil : removedPaths,
-                    maxDepth: activeMaxDepth,
-                    candidatePool: firstPool, literalDefault: literalDefault,
-                    cancelled: { cancelFlag }
-                )
-                for i in firstResults.indices {
-                    firstResults[i].sourceLabel = firstEng.label
-                }
-                accumulated = firstResults
-
-                guard !cancelFlag else { return }
-
-                guard engineCount > 1 else { return }
-
-                // The first engine's results go up only when the others are slow: when they're quick, showing them
-                // first only flashes one engine's list before the merged one replaces it. The stale-path filter
-                // stat()s each result, so it runs off the main actor (see existingResultPaths).
-                let interim = Self.mergeResults(firstResults, maxResults: maxResults)
-                interimTask = Task.detached(priority: .userInitiated) {
-                    try? await Task.sleep(for: .milliseconds(100))
-                    guard !Task.isCancelled, !cancelFlag else { return }
-                    let interimPaths = await self.existingResultPaths(from: interim)
-                    guard !Task.isCancelled, !cancelFlag else { return }
-                    await MainActor.run {
-                        guard !finalShown, !cancelFlag else { return }
-                        self.scoredResults = interimPaths
-                        self.results = self.sortedResults()
-                    }
-                }
-
-                // Phase 2: Search remaining engines in parallel, single final update
                 await withTaskGroup(of: [SearchResult].self) { group in
-                    var idx = 0
-                    while idx < engineCount {
-                        if idx != bestFirstIdx {
-                            let eng = engines[idx]
-                            let pool = pools[eng.label]
-                            group.addTask {
-                                guard !cancelFlag else { return [] }
-                                var results = eng.engine.search(
-                                    query: query, maxResults: maxResults, folderPrefixes: allPrefixes,
-                                    excludedPaths: removedPaths.isEmpty ? nil : removedPaths,
-                                    maxDepth: activeMaxDepth,
-                                    candidatePool: pool, literalDefault: literalDefault,
-                                    cancelled: { cancelFlag }
-                                )
-                                for i in results.indices {
-                                    results[i].sourceLabel = eng.label
-                                }
-                                return results
+                    for eng in engines {
+                        let pool = pools[eng.label]
+                        group.addTask {
+                            guard !cancelFlag else { return [] }
+                            var results = eng.engine.search(
+                                query: query, maxResults: maxResults, folderPrefixes: allPrefixes,
+                                excludedPaths: removedPaths.isEmpty ? nil : removedPaths,
+                                maxDepth: activeMaxDepth,
+                                candidatePool: pool, literalDefault: literalDefault,
+                                cancelled: { cancelFlag }
+                            )
+                            for i in results.indices {
+                                results[i].sourceLabel = eng.label
                             }
+                            return results
                         }
-                        idx += 1
                     }
                     for await results in group {
                         guard !cancelFlag else { break }
                         accumulated.append(contentsOf: results)
+                        finished.withLock { $0.append(contentsOf: results) }
                     }
                 }
             } onCancel: {
                 cancelFlag = true
             }
-            interimTask?.cancel()
+            partialTask.cancel()
 
             guard !cancelFlag else {
                 await MainActor.run { self.searching = false }
