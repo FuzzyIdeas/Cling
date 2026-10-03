@@ -352,7 +352,7 @@ final class SearchBarRowView: NSTableRowView {
         selectionView.isHidden = true
         stashHeader.isHidden = true
         stashPanel.isHidden = true
-        stashHeader.textColor = .systemOrange
+        stashHeader.textColor = .searchBarOrange
         stashHeader.setAccessibilityElement(false)
     }
 

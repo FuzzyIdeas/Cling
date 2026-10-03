@@ -31,9 +31,9 @@ enum SearchBarMetrics {
 }
 
 extension NSColor {
-    /// Everything's orange. The system orange is too light to read on its own tint over a light background, so light
-    /// mode gets a deeper one.
-    static let searchBarEverything = NSColor(name: nil) { appearance in
+    /// The orange of Everything and the stash. The system orange is too light to read on its own tint over a light
+    /// background, so light mode gets a deeper one.
+    static let searchBarOrange = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             ? .systemOrange
             : NSColor(srgbRed: 0.7, green: 0.32, blue: 0, alpha: 1)

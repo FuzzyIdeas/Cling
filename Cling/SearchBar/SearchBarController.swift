@@ -1180,7 +1180,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         if inputs.filterText != previous?.filterText || inputs.everything != previous?.everything || previous == nil {
             root.filterButton.label = inputs.filterText.isEmpty ? nil : inputs.filterText
             root.filterButton.tint = inputs.filterText.isEmpty ? nil : inputs.scopeHue.map { NSColor.searchBarFilter(hue: $0) }
-            root.everythingButton.tint = inputs.everything ? .searchBarEverything : nil
+            root.everythingButton.tint = inputs.everything ? .searchBarOrange : nil
             root.everythingButton.label = inputs.everything ? "Everything" : nil
             root.everythingButton.isEnabled = proactive
             root.needsLayout = true
