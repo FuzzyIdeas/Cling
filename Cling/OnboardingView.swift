@@ -24,6 +24,17 @@ struct OnboardingView: View {
                 .padding(.top, 4)
 
             VStack(alignment: .leading, spacing: 20) {
+                // The window or the bar: what the hotkey brings up from now on.
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Interface")
+                        .heavy(14)
+                    // A height to fill: this window sizes itself to its content, so the tiles would otherwise shrink
+                    // to their smallest.
+                    InterfacePicker()
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 180)
+                }
+
                 // Window Mode
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Window Mode")
@@ -270,6 +281,11 @@ struct OnboardingView: View {
 
         if let onboardingWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "onboarding" }) {
             onboardingWindow.close()
+        }
+        // Straight into whichever was picked above.
+        if Defaults[.hotkeyTarget] == .searchBar {
+            SB.expand()
+            return
         }
         WM.open("main")
         AppDelegate.shared?.focusWindow()
