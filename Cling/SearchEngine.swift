@@ -1081,6 +1081,20 @@ final class SearchEngine: @unchecked Sendable {
         max(minimum, count / 64)
     }
 
+    /// Where a folder named in `in:` really is when a symlink leads to it, and the folder as the disk spells it, since
+    /// the query arrives lowercased. Nil when no symlink is involved.
+    static func symlinkedFolder(_ path: String) -> (real: String, shown: String)? {
+        var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard realpath(path, &buf) != nil else { return nil }
+        let real = String(cString: buf)
+        // realpath also corrects the case of every component, which takes no link.
+        guard real.lowercased() != path.lowercased() else { return nil }
+        // The canonical path keeps the last component when it is the link, and resolves a link above it.
+        let canonical = (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.canonicalPathKey]))?.canonicalPath
+        let shown = canonical.flatMap { $0.lowercased() == real.lowercased() ? nil : $0 } ?? path
+        return (real, shown)
+    }
+
     /// Every indexed path, in the case it has on disk.
     func allPaths() -> [String] {
         lock.withLock {
@@ -2834,6 +2848,7 @@ final class SearchEngine: @unchecked Sendable {
 
         // Positive token buckets (existing semantics)
         var inPrefixes: [String] = []
+        var inAliases: [(real: String, shown: String)] = []
         var queryDepths: [Int] = []
         var extStrings: [String] = [] // ".pdf"
         var dirSegStrings: [String] = [] // "rcmd/"
@@ -2883,6 +2898,12 @@ final class SearchEngine: @unchecked Sendable {
                     inPrefixes.append(path); inPrefixes.append(String(path.dropFirst("/private".count)))
                 } else {
                     inPrefixes.append(path)
+                    // Walks store a symlinked folder's files where the link points (`~/.ssh` into a dotfiles
+                    // folder), so look there too, and show what is found under the name typed.
+                    if let link = Self.symlinkedFolder(path) {
+                        inPrefixes.append(link.real)
+                        inAliases.append(link)
+                    }
                 }
                 continue
             }
@@ -3142,6 +3163,9 @@ final class SearchEngine: @unchecked Sendable {
         ].map { Array($0.utf8) }
         let libraryPrefix = Array((homePrefix + "/library").utf8)
         let configPrefix = Array((homePrefix + "/.config").utf8)
+        // Like Recents' shallow dotdirs: config people open by hand sits right inside these, wherever they live (a
+        // dotfiles folder `~/.ssh` links to included). Deeper down are caches, sockets and key stores.
+        let configDotdirs: [[UInt8]] = [".ssh", ".aws", ".kube", ".gnupg", ".docker"].map { Array($0.utf8) }
 
         /// Path importance (higher = more relevant to the user), shared by the fuzzy scoring loop
         /// and the extension-only fast path:
@@ -3149,7 +3173,7 @@ final class SearchEngine: @unchecked Sendable {
         ///   3 = other home visible
         ///   2 = home Library visible
         ///   1 = system/root visible
-        ///   0 = hidden (dotfile/dotdir anywhere in the path)
+        ///   0 = hidden (dotfile/dotdir anywhere in the path, except `~/.config` and a config dotdir's own files)
         @inline(__always)
         func computePathImportance(_ allBase: UnsafePointer<UInt8>, _ off: Int, _ len: Int, _ bnOff: Int) -> Int32 {
             // `~/.config` is where a lot of what people go looking for actually lives, and it is
@@ -3176,7 +3200,25 @@ final class SearchEngine: @unchecked Sendable {
                 var p = hiddenScanFrom
                 while p < len {
                     if allBase[off + p] == 0x2F, p + 1 < len, allBase[off + p + 1] == 0x2E {
-                        return true
+                        // Only a config dotdir that is the basename's own folder is skipped: the segment from here
+                        // to the slash before the basename is then exactly its name.
+                        let segLen = bnOff - 2 - p
+                        var configParent = false
+                        var di = 0
+                        while di < configDotdirs.count, !configParent {
+                            let name = configDotdirs[di]
+                            if name.count == segLen {
+                                var j = 0
+                                while j < segLen, allBase[off + p + 1 + j] == name[j] {
+                                    j &+= 1
+                                }
+                                configParent = j == segLen
+                            }
+                            di &+= 1
+                        }
+                        if !configParent {
+                            return true
+                        }
                     }
                     p &+= 1
                 }
@@ -3254,6 +3296,16 @@ final class SearchEngine: @unchecked Sendable {
             return n
         }
         let excludedPrefixBytes: [[UInt8]]? = excludedPrefixes?.map { Array($0.lowercased().utf8) }
+        let inAliasPrefixes = inAliases.map { (real: Array(($0.real + "/").utf8), shown: $0.shown + "/") }
+
+        /// A result's path, under the symlinked `in:` folder it was asked for when it lies in where that points.
+        func shownPath(_ id: Int) -> String {
+            let p = path(id)
+            for alias in inAliasPrefixes where p.utf8.starts(with: alias.real) {
+                return alias.shown + String(decoding: p.utf8.dropFirst(alias.real.count), as: UTF8.self)
+            }
+            return p
+        }
 
         @inline(__always) func depthOK(_ i: Int) -> Bool {
             guard let maxD = effectiveMaxDepth else { return true }
@@ -3928,7 +3980,7 @@ final class SearchEngine: @unchecked Sendable {
             let results = order.prefix(maxResults).map { oi -> SearchResult in
                 let id = cands[oi]
                 let e = entries[id]
-                return SearchResult(path: path(id), isDir: e.isDir, score: 0, quality: 0, hasBase: false, segmentMatches: 0, pathImportance: Int(imp[oi]), prefixMatch: false, depth: e.segCount)
+                return SearchResult(path: shownPath(id), isDir: e.isDir, score: 0, quality: 0, hasBase: false, segmentMatches: 0, pathImportance: Int(imp[oi]), prefixMatch: false, depth: e.segCount)
             }
             let totalMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             slog.debug("search: q=\"\(query)\" \(n) entries, \(cands.count) cands, \(results.count) results in \(totalMs, format: .fixed(precision: 1))ms (filter=\(filterMs, format: .fixed(precision: 1))ms)")
@@ -4086,8 +4138,11 @@ final class SearchEngine: @unchecked Sendable {
                                                 let absEnd = pathSearchFrom + r.end
                                                 tokenPathStart = min(tokenPathStart, absStart)
                                                 tokenPathEnd = max(tokenPathEnd, absEnd)
-                                                // Check if match starts at a segment boundary (after / or start of path)
-                                                if absStart == 0 || allBase[off + absStart - 1] == 0x2F {
+                                                // Check if match starts at a segment boundary (after / or start of path).
+                                                // A hidden folder's name starts after its dot: `ssh` names `/.ssh`.
+                                                if absStart == 0 || allBase[off + absStart - 1] == 0x2F
+                                                    || (absStart >= 2 && allBase[off + absStart - 1] == 0x2E && allBase[off + absStart - 2] == 0x2F)
+                                                {
                                                     tokenSegMatches &+= 1
                                                 }
                                                 pathSearchFrom = absEnd
@@ -4435,7 +4490,7 @@ final class SearchEngine: @unchecked Sendable {
             let e = entries[s.id]
             let credit = extCredits.map { $0[s.id < extIDs.count ? extIDs[s.id] : 0] ?? 0 } ?? 0
             return SearchResult(
-                path: path(s.id),
+                path: shownPath(s.id),
                 isDir: e.isDir,
                 score: s.bestScore,
                 quality: s.quality,
