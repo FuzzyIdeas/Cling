@@ -553,9 +553,28 @@ final class SearchBarRootView: NSView {
     var showsPreview = false {
         didSet {
             guard showsPreview != oldValue else { return }
-            previewContainer.isHidden = !showsPreview
+            previewContainer.isHidden = !showsPreview || fieldOnly
             needsLayout = true
         }
+    }
+
+    /// Only the search row, the way the bar opens before anything is typed.
+    var fieldOnly = false {
+        didSet {
+            guard fieldOnly != oldValue else { return }
+            for view in [hintBar, results.scrollView, resizeOverlay] as [NSView] {
+                view.isHidden = fieldOnly
+            }
+            previewContainer.isHidden = !showsPreview || fieldOnly
+            if fieldOnly {
+                emptyLabel.isHidden = true
+            }
+            needsLayout = true
+        }
+    }
+
+    var searchRowHeight: CGFloat {
+        FontScale.length(54, .secondary)
     }
 
     /// Clicks that reach the background drag the window. The panel isn't movable by AppKit (see
@@ -583,7 +602,7 @@ final class SearchBarRootView: NSView {
         super.layout()
         let w = bounds.width
         let h = bounds.height
-        let rowHeight = FontScale.length(54, .secondary)
+        let rowHeight = searchRowHeight
         let hintHeight = FontScale.length(SearchBarMetrics.modern ? 34 : 30, .chrome)
         let inset = SearchBarMetrics.inset
 

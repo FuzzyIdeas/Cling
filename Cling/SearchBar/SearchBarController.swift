@@ -78,6 +78,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         var scopeIcon: String?
         var scopeHue: Double?
         var everything: Bool
+        /// Only the search row shows: nothing typed and nothing chosen for the bar to show before typing.
+        var fieldOnly: Bool
     }
 
     /// Shortcut labels and the paste target for the hint bar, read once per summon: both come from
@@ -167,6 +169,13 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         }.store(in: &observers)
         pub(.searchBarShowPreview).sink { [weak self] _ in
             mainAsync { self?.updatePreviewVisibility() }
+        }.store(in: &observers)
+        pub(.searchBarBeforeTyping).sink { [weak self] _ in
+            mainAsync {
+                guard let self, self.isExpanded else { return }
+                self.observationGeneration += 1
+                self.observe()
+            }
         }.store(in: &observers)
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .sink { [weak self] _ in
@@ -610,6 +619,11 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         return NSSize(width: max(stored[0], Self.minSize.width), height: max(stored[1], Self.minSize.height))
     }
 
+    /// The expanded height before typing when the bar shows only its field.
+    private var fieldOnlyBeforeTyping: Bool {
+        FUZZY.noQuery && FUZZY.volumeFilter == nil && Defaults[.searchBarBeforeTyping] == .fieldOnly
+    }
+
     /// The `in:` query the window's → builds: home shortened to `~`, quoted when it has spaces.
     private static func drillQuery(_ folder: FilePath) -> String {
         let p = folder.string
@@ -623,8 +637,25 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         return shown.contains(" ") ? "in:\"\(shown)\"" : "in:\(shown)"
     }
 
+    /// Shrinks the bar to its search row, or grows it back to the stored size, keeping its top edge where it is.
+    private func fitPanelHeight() {
+        guard let panel, let root else { return }
+        let height = root.fieldOnly ? root.searchRowHeight : storedSize.height
+        guard panel.frame.height != height else { return }
+        var frame = panel.frame
+        frame.origin.y = frame.maxY - height
+        frame.size.height = height
+        if let area = (panel.screen ?? NSScreen.main)?.visibleFrame {
+            frame = clamp(frame, in: area)
+        }
+        placingPanel = true
+        panel.setFrame(frame, display: true)
+        placingPanel = false
+        panel.invalidateShadow()
+    }
+
     private func storeSize() {
-        guard let panel else { return }
+        guard let panel, root?.fieldOnly != true else { return }
         Defaults[.searchBarSize] = [panel.frame.width, panel.frame.height]
         // A borderless window's shadow follows its content, which changed shape.
         panel.invalidateShadow()
@@ -658,7 +689,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         panel.isOpaque = false
         panel.hasShadow = true
         panel.animationBehavior = .none
-        panel.minSize = Self.minSize
+        // Down to the search row, which is all the bar shows before typing. Resizing by hand keeps to minSize.
+        panel.minSize = NSSize(width: Self.minSize.width, height: 40)
         panel.depthLimit = .twentyfourBitRGB
 
         let root = SearchBarRootView(results: results)
@@ -700,7 +732,11 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     /// Unpinned: where it was left on the display Settings > General picks, Spotlight's spot at
     /// first. Pinned: grown out of the compact field, downwards when there's room, else upwards.
     private func frameForExpanded() -> NSRect {
-        let size = storedSize
+        var size = storedSize
+        if fieldOnlyBeforeTyping, let root {
+            root.fieldOnly = true
+            size.height = root.searchRowHeight
+        }
         if pinned, let pillPanel {
             let pillFrame = pillPanel.frame
             let screen = NSScreen.screens.first { $0.frame.intersects(pillFrame) } ?? NSScreen.main
@@ -771,7 +807,16 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     private func readInputs() -> Inputs {
         let fuzzy = FUZZY
         let defaultList = fuzzy.noQuery && fuzzy.volumeFilter == nil
-        let list = defaultList ? (fuzzy.sortField == .score ? fuzzy.recents : fuzzy.sortedRecents) : fuzzy.results
+        let beforeTyping = Defaults[.searchBarBeforeTyping]
+        let list: [FilePath] = if !defaultList {
+            fuzzy.results
+        } else {
+            switch beforeTyping {
+            case .fieldOnly: []
+            case .recents: fuzzy.sortField == .score ? fuzzy.recents : fuzzy.sortedRecents
+            case .runHistory: Array(RH.mostRun.prefix(Defaults[.maxResultsCount]))
+            }
+        }
 
         var parts = [String]()
         if let q = fuzzy.quickFilter {
@@ -794,7 +839,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             filterText: parts.joined(separator: " "),
             scopeIcon: scope?.icon,
             scopeHue: scope?.color.hue,
-            everything: EVERYTHING.enabled
+            everything: EVERYTHING.enabled,
+            fieldOnly: defaultList && beforeTyping == .fieldOnly
         )
     }
 
@@ -820,6 +866,11 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         let previous = lastInputs
         lastInputs = inputs
         signpost("apply")
+
+        if inputs.fieldOnly != root.fieldOnly {
+            root.fieldOnly = inputs.fieldOnly
+            fitPanelHeight()
+        }
 
         // The list.
         let stashSet = Set(inputs.stash)
@@ -879,7 +930,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             root.emptyLabel.stringValue = tooShort
                 ? "Type \(minQueryLength) or more characters to search"
                 : (inputs.defaultList || inputs.searching ? "" : "No results")
-            root.emptyLabel.isHidden = root.emptyLabel.stringValue.isEmpty
+            root.emptyLabel.isHidden = root.emptyLabel.stringValue.isEmpty || inputs.fieldOnly
         } else if !root.emptyLabel.isHidden {
             root.emptyLabel.isHidden = true
         }

@@ -19,9 +19,18 @@ final class RunHistory {
 
     private(set) var entries: [String: Entry] = Defaults[.runHistory]
 
+    /// The files opened most through Cling, most opened first, the latest first among equals.
+    var mostRun: [FilePath] {
+        entries.sorted { a, b in
+            a.value.count != b.value.count ? a.value.count > b.value.count : a.value.lastRun > b.value.lastRun
+        }.map { FilePath($0.key) }
+    }
+
     func trackRun(_ paths: [FilePath]) {
         let query = FUZZY.query
-        if !query.isEmpty { SearchHistory.shared.commit(query) }
+        if !query.isEmpty {
+            SearchHistory.shared.commit(query)
+        }
 
         let now = Date()
         for path in paths {
@@ -46,7 +55,9 @@ final class RunHistory {
     /// Returns file paths sorted by run count (descending), then by last run date (descending)
     func topResults(limit: Int = 500) -> [FilePath] {
         entries.sorted { a, b in
-            if a.value.count != b.value.count { return a.value.count > b.value.count }
+            if a.value.count != b.value.count {
+                return a.value.count > b.value.count
+            }
             return a.value.lastRun > b.value.lastRun
         }
         .prefix(limit)

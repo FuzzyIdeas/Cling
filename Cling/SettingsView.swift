@@ -347,6 +347,15 @@ private struct InterfaceSettingsPane: View {
 
     var body: some View {
         Form {
+            Section("Interface") {
+                InterfacePicker()
+                Picker("Before typing", selection: $beforeTyping) {
+                    ForEach(SearchBarBeforeTyping.allCases, id: \.self) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+            }
+
             Section("Window") {
                 SettingRow(
                     title: "Window style",
@@ -538,6 +547,7 @@ private struct InterfaceSettingsPane: View {
 
     // MARK: Part A — knob state
 
+    @Default(.searchBarBeforeTyping) private var beforeTyping
     @Default(.showActionRow) private var showActionRow
     @Default(.showOpenWithRow) private var showOpenWithRow
     @Default(.rowsToggleModifier) private var rowsToggleModifier

@@ -24,8 +24,26 @@ enum HotkeyTarget: String, CaseIterable, Defaults.Serializable {
     }
 }
 
+// MARK: - SearchBarBeforeTyping
+
+/// What the bar shows while the query is empty.
+enum SearchBarBeforeTyping: String, CaseIterable, Defaults.Serializable {
+    case fieldOnly
+    case recents
+    case runHistory
+
+    var label: String {
+        switch self {
+        case .fieldOnly: "Search field only"
+        case .recents: "Recent files"
+        case .runHistory: "Run history"
+        }
+    }
+}
+
 extension Defaults.Keys {
     static let hotkeyTarget = Key<HotkeyTarget>("hotkeyTarget", default: .window)
+    static let searchBarBeforeTyping = Key<SearchBarBeforeTyping>("searchBarBeforeTyping", default: .fieldOnly)
     /// The compact field stays on screen while the bar is collapsed.
     static let searchBarPinned = Key<Bool>("searchBarPinned", default: false)
     /// Floating level for the compact field; off puts it on the desktop, under every window.
@@ -46,17 +64,11 @@ extension KeyboardShortcuts.Name {
 
 // MARK: - SearchBarSettingsSection
 
-/// Lives in Settings > General. Labels only: what each setting does shows up on screen the moment
-/// it is flipped.
+/// Lives in Settings > General; the choice between the bar and the window is in Settings > Style. Labels only: what
+/// each setting does shows up on screen the moment it is flipped.
 struct SearchBarSettingsSection: View {
     var body: some View {
         Section("Search bar") {
-            Picker("Interface", selection: $hotkeyTarget) {
-                ForEach(HotkeyTarget.allCases, id: \.self) { target in
-                    Text(target.label).tag(target)
-                }
-            }
-
             LabeledContent("Search bar hotkey") {
                 ShortcutRecorder(name: .clSearchBar, label: "Search bar hotkey")
             }
@@ -69,7 +81,6 @@ struct SearchBarSettingsSection: View {
         }
     }
 
-    @Default(.hotkeyTarget) private var hotkeyTarget
     @Default(.searchBarPinned) private var pinned
     @Default(.searchBarAboveWindows) private var aboveWindows
 }
