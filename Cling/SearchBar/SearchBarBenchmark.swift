@@ -688,6 +688,14 @@
                     try? await Task.sleep(for: .milliseconds(500))
                 }
             }
+            if let id = argument("-searchBarShowcaseFilter") {
+                FUZZY.quickFilter = Defaults[.quickFilters].first { $0.id.lowercased() == id.lowercased() }
+            }
+            if let folder = argument("-searchBarShowcaseFolder") {
+                let path = (folder as NSString).expandingTildeInPath
+                let name = path == NSHomeDirectory() ? "Home" : (path as NSString).lastPathComponent
+                FUZZY.folderFilter = FolderFilter(id: name, folders: [FilePath(path)], key: nil)
+            }
             // `-` leaves the bar closed, for the pinned field.
             guard query != "-" else { return }
             let readyBy = Date().addingTimeInterval(120)
