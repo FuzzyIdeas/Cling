@@ -1187,7 +1187,10 @@ class FuzzyClient {
                     liveBase[scope] = id
                     liveRules[scope] = fingerprint
                 }
-                let missing = searchableScopes.filter { liveBase[$0] == nil }
+                // A scope that became searchable after loading started (Pro confirmed a moment later) loads from its file
+                // rather than being walked.
+                let unloaded = searchableScopes.filter { scopeEngines[$0] == nil && scopeIndexFile($0).exists }
+                let missing = searchableScopes.filter { liveBase[$0] == nil && !unloaded.contains($0) }
                 if missing.isEmpty || batteryLevel() <= 0.3 {
                     watchFiles()
                     indexStaleExternalVolumes()
@@ -1196,6 +1199,9 @@ class FuzzyClient {
                         watchFiles()
                         indexStaleExternalVolumes()
                     }
+                }
+                if !unloaded.isEmpty {
+                    syncScopeEngines()
                 }
             }
         }
@@ -1315,8 +1321,19 @@ class FuzzyClient {
                 }
             }
 
-            // Phase 2: Load remaining scopes in background
-            for scope in remainingScopes {
+            // Phase 2: Load remaining scopes in background. Pro may only have been confirmed after the list above was
+            // made, so its scopes are checked for again once the others are in.
+            var phase2 = remainingScopes
+            var checkedForLate = false
+            while !phase2.isEmpty || !checkedForLate {
+                if phase2.isEmpty {
+                    checkedForLate = true
+                    phase2 = await MainActor.run {
+                        self.searchableScopes.filter { self.scopeEngines[$0] == nil && !corruptScopes.contains($0) && scopeIndexFile($0).exists }
+                    }
+                    continue
+                }
+                let scope = phase2.removeFirst()
                 let file = scopeIndexFile(scope)
                 guard file.exists else { continue }
                 let eng = SearchEngine()
