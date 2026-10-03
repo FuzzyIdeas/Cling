@@ -80,6 +80,15 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         var everything: Bool
     }
 
+    /// Shortcut labels and the paste target for the hint bar, read once per summon: both come from
+    /// settings and the app in front, neither of which changes while the bar has the keyboard.
+    struct HintKeys {
+        var showInFinder = "⌘⏎"
+        var quickLook = "⌘Y"
+        var copy = "⌘C"
+        var pasteTarget: String?
+    }
+
     static let shared = SearchBarController()
 
     static let minSize = NSSize(width: 560, height: 320)
@@ -187,7 +196,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     func expand() {
         let panel = ensurePanel()
         guard let root else { return }
-        closeHiddenMainWindow()
+        suspendHiddenMainWindow()
 
         root.background.rebuild()
         root.applyFonts()
@@ -216,6 +225,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         }
 
         if !wasExpanded {
+            refreshHintKeys()
             observationGeneration += 1
             observe()
             updatePreviewVisibility()
@@ -440,22 +450,32 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         guard let root else { return }
         let sel = selection
         var hints: [SearchBarHint] = []
+        let keys = hintKeys
         if !sel.isEmpty {
-            let pastes = APP_MANAGER.frontmostAppIsTerminal && Defaults[.enterPastesToFrontmostTerminal]
-            if pastes {
-                hints.append(.init(id: .paste, key: "⏎", title: "Paste to \(APP_MANAGER.lastFrontmostApp?.name ?? "frontmost app")"))
+            if let pasteTarget = keys.pasteTarget {
+                hints.append(.init(id: .paste, key: "⏎", title: "Paste to \(pasteTarget)"))
             } else {
                 hints.append(.init(id: .open, key: "⏎", title: "Open"))
             }
-            hints.append(.init(id: .showInFinder, key: shortcutString(.clShowInFinder) ?? "⌘⏎", title: "Show in Finder"))
-            hints.append(.init(id: .quickLook, key: listFocused ? "␣" : shortcutString(.clQuickLook) ?? "⌘Y", title: "QuickLook"))
+            hints.append(.init(id: .showInFinder, key: keys.showInFinder, title: "Show in Finder"))
+            hints.append(.init(id: .quickLook, key: listFocused ? "␣" : keys.quickLook, title: "QuickLook"))
             if sel.count == 1, let path = sel.first, FilePathBackgroundTasks.shared.knownIsDir(path) == true {
                 hints.append(.init(id: .drill, key: "⇥", title: "Search in folder"))
             }
-            hints.append(.init(id: .copy, key: shortcutString(.clCopy) ?? "⌘C", title: "Copy"))
+            hints.append(.init(id: .copy, key: keys.copy, title: "Copy"))
         }
         hints.append(.init(id: .actions, key: "⌘K", title: "Actions"))
         root.hintBar.hints = hints
+    }
+
+    func refreshHintKeys() {
+        let pastes = APP_MANAGER.frontmostAppIsTerminal && Defaults[.enterPastesToFrontmostTerminal]
+        hintKeys = HintKeys(
+            showInFinder: shortcutString(.clShowInFinder) ?? "⌘⏎",
+            quickLook: shortcutString(.clQuickLook) ?? "⌘Y",
+            copy: shortcutString(.clCopy) ?? "⌘C",
+            pasteTarget: pastes ? (APP_MANAGER.lastFrontmostApp?.name ?? "frontmost app") : nil
+        )
     }
 
     func shortcutString(_ name: KeyboardShortcuts.Name) -> String? {
@@ -513,6 +533,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         MainActor.assumeIsolated { quickLookItems[safe: index] as NSURL? }
     }
 
+    private var hintKeys = HintKeys()
     private var pillPanel: SearchBarPillPanel?
     private var pillView: SearchBarPillView?
     private var previewHost: NSHostingView<AnyView>?
@@ -593,6 +614,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         panel.hasShadow = true
         panel.animationBehavior = .none
         panel.minSize = Self.minSize
+        panel.depthLimit = .twentyfourBitRGB
 
         let root = SearchBarRootView(results: results)
         root.frame = NSRect(origin: .zero, size: size)
@@ -670,16 +692,13 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         return r
     }
 
-    /// A hidden main window would keep laying itself out for every result the bar gets, since it
-    /// observes the same state. Closing it tears its view down; the window comes back fresh when
-    /// it is next summoned.
-    private func closeHiddenMainWindow() {
-        guard let delegate = AppDelegate.shared, let main = delegate.mainWindow,
-              !main.isVisible || main.alphaValue == 0
-        else { return }
-        delegate.suppressFocusHandBack = true
-        main.close()
-        delegate.suppressFocusHandBack = false
+    /// A hidden main window keeps its view graph, and that graph observes the same results the bar
+    /// shows, so it would redraw its table for every keystroke here. Its content is dropped until
+    /// the window is summoned again.
+    private func suspendHiddenMainWindow() {
+        let main = AppDelegate.shared?.mainWindow
+        guard main == nil || main?.isVisible == false || main?.alphaValue == 0, !WM.mainContentSuspended else { return }
+        WM.mainContentSuspended = true
     }
 
     private func checkFocusLoss() {
@@ -867,16 +886,12 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         guard let root, isExpanded, showsPreview else { return }
         let sel = selection
         let paths = sel.isEmpty ? Array(results.items.prefix(1)) : sel
-        guard paths != previewPaths || previewHost?.superview == nil else { return }
+        guard paths != previewPaths else { return }
         previewPaths = paths
         signpost("preview")
         let view = AnyView(FilePreviewPanel(paths: paths))
         if let previewHost {
             previewHost.rootView = view
-            if previewHost.superview == nil {
-                root.previewContainer.addSubview(previewHost)
-                previewHost.frame = root.previewContainer.bounds
-            }
         } else {
             let host = NSHostingView(rootView: view)
             // Laid out by the bar; the preview must not push its own size onto the window.
@@ -889,12 +904,14 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     }
 
     /// Drops the preview's SwiftUI content, which stops any playing media and releases images.
+    /// The host stays in the window and applies the change right away: QuickLook's view asserts if
+    /// it is closed after it already left its window.
     private func clearPreview() {
         previewWork?.cancel()
         previewPaths = []
         guard let previewHost else { return }
         previewHost.rootView = AnyView(EmptyView())
-        previewHost.removeFromSuperview()
+        previewHost.layoutSubtreeIfNeeded()
     }
 
     /// Arrowing through the bar's list while QuickLook is up moves QuickLook along with it.

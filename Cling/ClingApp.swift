@@ -88,9 +88,6 @@ class AppDelegate: LowtechProAppDelegate {
 
     var keepSettingsFrontUntil: Date?
 
-    /// Set while the search bar closes a hidden main window, which must not hand focus to another app.
-    var suppressFocusHandBack = false
-
     /// Picked when a summon starts and the window is still to be created: by the time it exists Cling has
     /// activated, and the frontmost app's focused window would be Cling's own.
     var pendingDisplay: NSScreen?
@@ -414,6 +411,7 @@ class AppDelegate: LowtechProAppDelegate {
     }
 
     func focusWindow() {
+        WM.mainContentSuspended = false
         DropZoneOverlay.shared.dismissIfPresenting()
         guard let window = mainWindow else { return }
         if !window.isVisible || window.alphaValue == 0 {
@@ -507,6 +505,7 @@ class AppDelegate: LowtechProAppDelegate {
             return true
         }
         if let mainWindow {
+            WM.mainContentSuspended = false
             mainWindow.orderFrontRegardless()
             mainWindow.becomeMain()
             mainWindow.becomeKey()
@@ -546,9 +545,7 @@ class AppDelegate: LowtechProAppDelegate {
         if window.identifier?.rawValue == "main" {
             WM.mainWindowActive = false
             WM.noteInactive()
-            if !suppressFocusHandBack {
-                handBackFocusAfterMainDismiss()
-            }
+            handBackFocusAfterMainDismiss()
         } else if window.identifier?.rawValue == "settings" {
             // Restore the user's configured policy once Settings closes.
             NSApp.setActivationPolicy(Defaults[.showDockIcon] ? .regular : .accessory)
@@ -588,6 +585,7 @@ class AppDelegate: LowtechProAppDelegate {
         }
 
         if window.identifier?.rawValue == "main" {
+            WM.mainContentSuspended = false
             WM.mainWindowActive = true
             WM.noteActive()
             FUZZY.refreshDefaultResultsIfNeeded()
@@ -781,6 +779,10 @@ class WindowManager {
     /// The floating search bar is expanded. Searches run for it the same as for the main window.
     @ObservationIgnored var searchBarActive = false
 
+    /// The hidden search window's content is dropped while the search bar is in use, since it would
+    /// otherwise redraw its table for every result the bar gets. Set back before the window shows.
+    var mainContentSuspended = false
+
     /// Bumped when the app comes back after being away long enough for the result selection to
     /// count as stale. Observed by ContentView, which then jumps the selection back to the top.
     var selectionResetToken = 0
@@ -813,6 +815,9 @@ class WindowManager {
     }
 
     func open(_ window: String) {
+        if window == "main" {
+            mainContentSuspended = false
+        }
         if window == "main", NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) != nil {
             focus()
             AppDelegate.shared?.focusWindow()
@@ -890,7 +895,7 @@ struct ClingApp: App {
 
     var body: some Scene {
         Window("Cling", id: "main") {
-            ContentView()
+            MainWindowContent()
                 .frame(minWidth: WindowManager.DEFAULT_SIZE.width, minHeight: 300)
                 .background {
                     WindowBackground()

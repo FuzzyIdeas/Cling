@@ -100,6 +100,7 @@ final class SearchBarHintBar: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
+        layer?.contentsFormat = .RGBA8Uint
         rebuildFonts()
     }
 

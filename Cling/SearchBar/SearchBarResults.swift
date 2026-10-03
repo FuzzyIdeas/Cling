@@ -65,17 +65,14 @@ final class SearchBarRowStyle {
 
     private(set) var rowHeight: CGFloat = 44
     private(set) var iconSide: CGFloat = 32
-    private(set) var nameAttrs: [NSAttributedString.Key: Any] = [:]
-    private(set) var nameSelectedAttrs: [NSAttributedString.Key: Any] = [:]
-    private(set) var detailAttrs: [NSAttributedString.Key: Any] = [:]
-    private(set) var detailSelectedAttrs: [NSAttributedString.Key: Any] = [:]
-    private(set) var metaAttrs: [NSAttributedString.Key: Any] = [:]
-    private(set) var metaSelectedAttrs: [NSAttributedString.Key: Any] = [:]
-    private(set) var tagAttrs: [NSAttributedString.Key: Any] = [:]
     private(set) var nameLineHeight: CGFloat = 16
     private(set) var detailLineHeight: CGFloat = 14
     private(set) var metaWidth: CGFloat = 150
+    private(set) var stashTagWidth: CGFloat = 30
     private(set) var scale: Double = 1
+
+    /// Called once a burst of background renders has landed, so the visible rows redraw once.
+    var onRastersReady: (() -> Void)?
 
     func rebuildIfNeeded() {
         guard FontScale.current != scale else { return }
@@ -97,8 +94,98 @@ final class SearchBarRowStyle {
         return kind
     }
 
+    /// The icon pre-rendered at the row's exact pixel size. Workspace icons are IconServices
+    /// images that render their representation again on every draw, which was the single most
+    /// expensive part of a row; a plain bitmap of the right size draws as a blit.
+    ///
+    /// A row never renders a file's own icon on the main thread: until its bitmap is ready (made on
+    /// a background queue) the row shows the icon for its type, which is shared by every file with
+    /// that extension and so rendered once.
+    func iconImage(for path: FilePath, side: CGFloat, scale: CGFloat) -> NSImage {
+        let icon = FilePathBackgroundTasks.shared.icon(for: path)
+        if let ready = cachedRaster(icon, side: side, scale: scale) {
+            return ready
+        }
+        requestRaster(icon, side: side, scale: scale)
+        let stand = FilePathBackgroundTasks.shared.typeIcon(for: path)
+        if let ready = cachedRaster(stand, side: side, scale: scale) {
+            return ready
+        }
+        let image = Self.render(stand, side: side, scale: scale) ?? stand
+        rasters.setObject(Raster(image: image, side: side, scale: scale), forKey: stand)
+        return image
+    }
+
+    private final class Raster {
+        init(image: NSImage, side: CGFloat, scale: CGFloat) {
+            self.image = image
+            self.side = side
+            self.scale = scale
+        }
+
+        let image: NSImage
+        let side: CGFloat
+        let scale: CGFloat
+    }
+
+    private var pendingRasters: Set<ObjectIdentifier> = []
+    private var readyNotificationScheduled = false
+
+    /// Weak keys: a stand-in icon replaced by the real one drops its raster with it.
+    private let rasters = NSMapTable<NSImage, Raster>(keyOptions: .weakMemory, valueOptions: .strongMemory)
+
     private var kinds: [String: String] = [:]
     private let folderKind = UTType.folder.localizedDescription ?? "Folder"
+
+    private nonisolated static func render(_ icon: NSImage, side: CGFloat, scale: CGFloat) -> NSImage? {
+        let pixels = Int((side * scale).rounded())
+        guard pixels > 0, let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ), let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+        rep.size = NSSize(width: side, height: side)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        context.imageInterpolation = .high
+        icon.draw(in: NSRect(x: 0, y: 0, width: side, height: side), from: .zero, operation: .copy, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        let image = NSImage(size: rep.size)
+        image.addRepresentation(rep)
+        return image
+    }
+
+    private func cachedRaster(_ icon: NSImage, side: CGFloat, scale: CGFloat) -> NSImage? {
+        guard let cached = rasters.object(forKey: icon), cached.side == side, cached.scale == scale else { return nil }
+        return cached.image
+    }
+
+    private func requestRaster(_ icon: NSImage, side: CGFloat, scale: CGFloat) {
+        let id = ObjectIdentifier(icon)
+        guard !pendingRasters.contains(id) else { return }
+        pendingRasters.insert(id)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let image = Self.render(icon, side: side, scale: scale)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self.pendingRasters.remove(id)
+                    guard let image else { return }
+                    self.rasters.setObject(Raster(image: image, side: side, scale: scale), forKey: icon)
+                    self.scheduleReadyNotification()
+                }
+            }
+        }
+    }
+
+    private func scheduleReadyNotification() {
+        guard !readyNotificationScheduled else { return }
+        readyNotificationScheduled = true
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                self.readyNotificationScheduled = false
+                self.onRastersReady?()
+            }
+        }
+    }
 
     private func rebuild() {
         scale = FontScale.current
@@ -108,33 +195,119 @@ final class SearchBarRowStyle {
 
         let nameFont = NSFont.systemFont(ofSize: FontScale.size(13), weight: .medium)
         let detailFont = NSFont.systemFont(ofSize: FontScale.size(11))
-        let metaFont = NSFont.monospacedDigitSystemFont(ofSize: FontScale.size(10.5), weight: .regular)
         let tagFont = NSFont.systemFont(ofSize: FontScale.size(9.5), weight: .semibold)
-
-        func para(_ mode: NSLineBreakMode, _ alignment: NSTextAlignment = .left) -> NSParagraphStyle {
-            let style = NSMutableParagraphStyle()
-            style.lineBreakMode = mode
-            style.alignment = alignment
-            return style
-        }
-
-        nameAttrs = [.font: nameFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: para(.byTruncatingMiddle)]
-        nameSelectedAttrs = [.font: nameFont, .foregroundColor: NSColor.white, .paragraphStyle: para(.byTruncatingMiddle)]
-        detailAttrs = [.font: detailFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: para(.byTruncatingMiddle)]
-        detailSelectedAttrs = [.font: detailFont, .foregroundColor: NSColor.white.withAlphaComponent(0.8), .paragraphStyle: para(.byTruncatingMiddle)]
-        metaAttrs = [.font: metaFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: para(.byTruncatingTail, .right)]
-        metaSelectedAttrs = [.font: metaFont, .foregroundColor: NSColor.white.withAlphaComponent(0.8), .paragraphStyle: para(.byTruncatingTail, .right)]
-        tagAttrs = [.font: tagFont, .foregroundColor: NSColor.systemOrange]
-
         nameLineHeight = ceil(nameFont.ascender - nameFont.descender + nameFont.leading)
         detailLineHeight = ceil(detailFont.ascender - detailFont.descender + detailFont.leading)
+        stashTagWidth = ceil(("Stash" as NSString).size(withAttributes: [.font: tagFont]).width)
+        SearchBarTextCache.shared.reset()
+    }
+}
+
+// MARK: - SearchBarTextCache
+
+/// Typeset, truncated lines kept by text and width, so a row drawn again (the same file after a
+/// list update, a fresher icon, a scroll back) only draws glyphs. Colour isn't part of a line: it
+/// comes from the context when drawn, so cached lines follow light and dark mode.
+@MainActor
+final class SearchBarTextCache {
+    enum Style: Int {
+        case name, detail, meta, tag
+    }
+
+    static let shared = SearchBarTextCache()
+
+    /// Draws `text` on one line inside `rect` of a flipped context, truncated in the middle (or at
+    /// the end for meta), right-aligned when asked.
+    func draw(_ text: String, style: Style, in rect: NSRect, color: NSColor, alignRight: Bool = false) {
+        guard !text.isEmpty, let context = NSGraphicsContext.current?.cgContext else { return }
+        let entry = line(text, style: style, width: rect.width)
+        context.saveGState()
+        color.setFill()
+        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        let x = alignRight ? rect.maxX - entry.width : rect.minX
+        context.textPosition = CGPoint(x: x, y: rect.minY + entry.ascent)
+        CTLineDraw(entry.line, context)
+        context.restoreGState()
+    }
+
+    func reset() {
+        lines.removeAll(keepingCapacity: true)
+        fonts.removeAll()
+    }
+
+    private struct Key: Hashable {
+        let text: String
+        let style: Int
+        let width: Int
+    }
+
+    private struct Entry {
+        let line: CTLine
+        let width: CGFloat
+        let ascent: CGFloat
+    }
+
+    private var lines: [Key: Entry] = [:]
+    private var fonts: [Int: NSFont] = [:]
+
+    private func font(_ style: Style) -> NSFont {
+        if let font = fonts[style.rawValue] {
+            return font
+        }
+        let font: NSFont = switch style {
+        case .name: .systemFont(ofSize: FontScale.size(13), weight: .medium)
+        case .detail: .systemFont(ofSize: FontScale.size(11))
+        case .meta: .monospacedDigitSystemFont(ofSize: FontScale.size(10.5), weight: .regular)
+        case .tag: .systemFont(ofSize: FontScale.size(9.5), weight: .semibold)
+        }
+        fonts[style.rawValue] = font
+        return font
+    }
+
+    private func line(_ text: String, style: Style, width: CGFloat) -> Entry {
+        let key = Key(text: text, style: style.rawValue, width: Int(width))
+        if let cached = lines[key] {
+            return cached
+        }
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font(style),
+            NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
+        ]
+        let full = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attrs))
+        var line = full
+        if CTLineGetTypographicBounds(full, nil, nil, nil) > width {
+            let ellipsis = CTLineCreateWithAttributedString(NSAttributedString(string: "…", attributes: attrs))
+            line = CTLineCreateTruncatedLine(full, width, style == .meta ? .end : .middle, ellipsis) ?? full
+        }
+        var ascent: CGFloat = 0
+        let lineWidth = CTLineGetTypographicBounds(line, &ascent, nil, nil)
+        let entry = Entry(line: line, width: lineWidth, ascent: ascent)
+        if lines.count > 1500 {
+            lines.removeAll(keepingCapacity: true)
+        }
+        lines[key] = entry
+        return entry
     }
 }
 
 // MARK: - SearchBarRowView
 
-/// Draws a whole result row (selection, icon, name, folder, kind, size and date) in one `draw`.
+/// A result row: a selection highlight that is only shown or hidden, under content that redraws
+/// only when the row's file or what's known about it changes. Moving the selection draws nothing.
 final class SearchBarRowView: NSTableRowView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        addSubview(selectionView)
+        addSubview(content)
+        selectionView.isHidden = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError()
+    }
+
     static let identifier = NSUserInterfaceItemIdentifier("SearchBarRow")
 
     override var isOpaque: Bool {
@@ -143,7 +316,116 @@ final class SearchBarRowView: NSTableRowView {
     override var allowsVibrancy: Bool {
         false
     }
-    override var wantsDefaultClipping: Bool {
+    override var wantsUpdateLayer: Bool {
+        true
+    }
+
+    override var isSelected: Bool {
+        didSet {
+            guard isSelected != oldValue else { return }
+            selectionView.isHidden = !isSelected
+        }
+    }
+
+    let content = SearchBarRowContent()
+    let selectionView = SearchBarSelectionView()
+
+    var path: FilePath? {
+        get { content.path }
+        set { content.path = newValue }
+    }
+
+    var isStashed: Bool {
+        get { content.isStashed }
+        set { content.isStashed = newValue }
+    }
+
+    /// Stronger while the keyboard is in the list, lighter while it's typing in the field.
+    var strongSelection: Bool {
+        get { selectionView.strong }
+        set { selectionView.strong = newValue }
+    }
+
+    override func updateLayer() {}
+    override func drawBackground(in _: NSRect) {}
+    override func drawSelection(in _: NSRect) {}
+    override func drawSeparator(in _: NSRect) {}
+
+    override func layout() {
+        super.layout()
+        selectionView.frame = bounds.insetBy(dx: 6, dy: 1)
+        content.frame = bounds
+    }
+
+    override func accessibilityLabel() -> String? {
+        guard let path else { return nil }
+        return "\(path.name.string), \(path.dir.shellString)"
+    }
+}
+
+// MARK: - SearchBarSelectionView
+
+final class SearchBarSelectionView: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError()
+    }
+
+    override var wantsUpdateLayer: Bool {
+        true
+    }
+    override var allowsVibrancy: Bool {
+        false
+    }
+
+    var strong = true {
+        didSet {
+            guard strong != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
+    override func hitTest(_: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(strong ? 0.32 : 0.2).cgColor
+        layer?.cornerRadius = 8
+        layer?.cornerCurve = .continuous
+    }
+}
+
+// MARK: - SearchBarRowContent
+
+/// Icon, name, folder, kind, size and date, drawn in one pass.
+final class SearchBarRowContent: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+        // On an XDR display the default backing is 16 bits per channel; text and icons don't need
+        // it and drawing into half the bytes is twice as cheap.
+        layer?.contentsFormat = .RGBA8Uint
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError()
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
+    override var isOpaque: Bool {
+        false
+    }
+    override var allowsVibrancy: Bool {
         false
     }
 
@@ -161,17 +443,9 @@ final class SearchBarRowView: NSTableRowView {
         }
     }
 
-    /// Strong accent while the keyboard is in the list, a lighter one while it's typing in the field.
-    var strongSelection = true {
-        didSet {
-            guard strongSelection != oldValue, isSelected else { return }
-            needsDisplay = true
-        }
+    override func hitTest(_: NSPoint) -> NSView? {
+        nil
     }
-
-    override func drawBackground(in _: NSRect) {}
-    override func drawSelection(in _: NSRect) {}
-    override func drawSeparator(in _: NSRect) {}
 
     override func draw(_: NSRect) {
         guard let path else { return }
@@ -179,20 +453,14 @@ final class SearchBarRowView: NSTableRowView {
             SearchBarBenchmark.count("rowDraw")
         #endif
         let style = SearchBarRowStyle.shared
-        let selected = isSelected
+        let text = SearchBarTextCache.shared
         let bounds = bounds
-
-        if selected {
-            let rect = bounds.insetBy(dx: 6, dy: 1)
-            let color = strongSelection ? NSColor.controlAccentColor : NSColor.controlAccentColor.withAlphaComponent(0.55)
-            color.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8).fill()
-        }
 
         let iconSide = style.iconSide
         let iconRect = NSRect(x: 14, y: (bounds.height - iconSide) / 2, width: iconSide, height: iconSide)
-        FilePathBackgroundTasks.shared.icon(for: path)
-            .draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        let icon = style.iconImage(for: path, side: iconSide, scale: window?.backingScaleFactor ?? 2)
+        icon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        drawnIcon = ObjectIdentifier(icon)
 
         let textX = iconRect.maxX + 10
         let showMeta = bounds.width > 420
@@ -202,40 +470,58 @@ final class SearchBarRowView: NSTableRowView {
         let block = style.nameLineHeight + gap + style.detailLineHeight
         let top = (bounds.height - block) / 2
 
-        let name = path.name.string
-        (name as NSString).draw(
-            in: NSRect(x: textX, y: top, width: textWidth, height: style.nameLineHeight),
-            withAttributes: selected ? style.nameSelectedAttrs : style.nameAttrs
-        )
-        (path.dir.shellString as NSString).draw(
+        text.draw(path.name.string, style: .name, in: NSRect(x: textX, y: top, width: textWidth, height: style.nameLineHeight), color: .labelColor)
+        text.draw(
+            path.dir.shellString, style: .detail,
             in: NSRect(x: textX, y: top + style.nameLineHeight + gap, width: textWidth, height: style.detailLineHeight),
-            withAttributes: selected ? style.detailSelectedAttrs : style.detailAttrs
+            color: .secondaryLabelColor
         )
 
-        guard showMeta else { return }
-        let metaX = bounds.width - metaWidth - 16
-        let metaAttrs = selected ? style.metaSelectedAttrs : style.metaAttrs
-        let isDir = FilePathBackgroundTasks.shared.knownIsDir(path)
-        let kind = style.kind(of: path, isDir: isDir)
-        let topLine: NSString = if isStashed {
-            kind.isEmpty ? "Stash" : "Stash · \(kind)" as NSString
-        } else {
-            kind as NSString
+        guard showMeta else {
+            drawnMeta = nil
+            return
         }
-        topLine.draw(in: NSRect(x: metaX, y: top + 1, width: metaWidth, height: style.nameLineHeight), withAttributes: metaAttrs)
-
-        let size = isDir == true ? "" : path.memoz.humanizedFileSize
-        let date = path.memoz.formattedModificationDate
-        let bottomLine = (size.isEmpty || size == "—" ? date : "\(size)  ·  \(date)") as NSString
-        bottomLine.draw(
+        let metaX = bounds.width - metaWidth - 16
+        let kind = style.kind(of: path, isDir: FilePathBackgroundTasks.shared.knownIsDir(path))
+        if isStashed {
+            let tag = "Stash"
+            text.draw(tag, style: .tag, in: NSRect(x: metaX, y: top + 2, width: metaWidth, height: style.nameLineHeight), color: .systemOrange)
+            let tagWidth = style.stashTagWidth
+            text.draw(
+                kind, style: .meta,
+                in: NSRect(x: metaX + tagWidth + 6, y: top + 1, width: max(metaWidth - tagWidth - 6, 10), height: style.nameLineHeight),
+                color: .secondaryLabelColor, alignRight: true
+            )
+        } else {
+            text.draw(kind, style: .meta, in: NSRect(x: metaX, y: top + 1, width: metaWidth, height: style.nameLineHeight), color: .secondaryLabelColor, alignRight: true)
+        }
+        let meta = metaLine(path)
+        drawnMeta = meta
+        text.draw(
+            meta, style: .meta,
             in: NSRect(x: metaX, y: top + style.nameLineHeight + gap, width: metaWidth, height: style.detailLineHeight),
-            withAttributes: metaAttrs
+            color: .secondaryLabelColor, alignRight: true
         )
     }
 
-    override func accessibilityLabel() -> String? {
-        guard let path else { return nil }
-        return "\(path.name.string), \(path.dir.shellString)"
+    /// Redraws only when the icon or the size and date line changed since the last draw.
+    func refreshIfStale() {
+        guard let path else { return }
+        let style = SearchBarRowStyle.shared
+        let icon = style.iconImage(for: path, side: style.iconSide, scale: window?.backingScaleFactor ?? 2)
+        if ObjectIdentifier(icon) != drawnIcon || metaLine(path) != drawnMeta {
+            needsDisplay = true
+        }
+    }
+
+    private var drawnIcon: ObjectIdentifier?
+    private var drawnMeta: String?
+
+    private func metaLine(_ path: FilePath) -> String {
+        let isDir = FilePathBackgroundTasks.shared.knownIsDir(path) == true
+        let size = isDir ? "" : path.memoz.humanizedFileSize
+        let date = path.memoz.formattedModificationDate
+        return size.isEmpty || size == "—" ? date : "\(size)  ·  \(date)"
     }
 }
 
@@ -279,6 +565,10 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         scrollView.borderType = .noBorder
+
+        SearchBarRowStyle.shared.onRastersReady = { [weak self] in
+            self?.refreshVisibleRows()
+        }
     }
 
     let tableView: SearchBarTableView
@@ -334,11 +624,11 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
         onSelectionChange?()
     }
 
-    /// Same paths, fresher icons, sizes or dates: redraw what's on screen and nothing else.
+    /// Same paths, fresher icons, sizes or dates: redraw the rows on screen whose look changed.
     func refreshVisibleRows() {
         forEachVisibleRow { row, view in
             view.isStashed = stashed.contains(items[row])
-            view.needsDisplay = true
+            view.content.refreshIfStale()
         }
     }
 

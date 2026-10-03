@@ -181,16 +181,22 @@
         // MARK: Scenarios
 
         private static var lines: [String] = []
+        private static let outPath = CommandLine.arguments.firstIndex(of: "-searchBarBenchmarkOut")
+            .flatMap { CommandLine.arguments[safe: $0 + 1] } ?? "/private/tmp/cling-searchbar-bench.txt"
 
+        /// Appends as it goes, so a run that dies half way still leaves what it measured.
         private static func log(_ line: String) {
             lines.append(line)
             print(line)
+            if let handle = FileHandle(forWritingAtPath: outPath) {
+                handle.seekToEndOfFile()
+                handle.write(Data((line + "\n").utf8))
+                try? handle.close()
+            }
         }
 
         private static func run() async {
-            let outPath = CommandLine.arguments.firstIndex(of: "-searchBarBenchmarkOut")
-                .flatMap { CommandLine.arguments[safe: $0 + 1] } ?? "/private/tmp/cling-searchbar-bench.txt"
-
+            FileManager.default.createFile(atPath: outPath, contents: nil)
             log("# Cling search bar benchmark")
             log("host: \(Host.current().localizedName ?? "?"), \(ProcessInfo.processInfo.operatingSystemVersionString), \(ProcessInfo.processInfo.activeProcessorCount) cores")
             if let screen = NSScreen.main {
@@ -214,25 +220,62 @@
             if #available(macOS 26, *) {
                 appearances.insert(.glassy, at: 0)
             }
+            if let themes = argument("-searchBarBenchmarkThemes") {
+                let wanted = Set(themes.lowercased().split(separator: ",").map(String.init))
+                appearances = appearances.filter { wanted.contains($0.rawValue.lowercased()) }
+            }
+            let previews: [Bool] = switch argument("-searchBarBenchmarkPreview") {
+            case "on": [true]
+            case "off": [false]
+            default: [false, true]
+            }
+            let only = argument("-searchBarBenchmarkScenarios").map { Set($0.split(separator: ",").map(String.init)) }
+            func wants(_ name: String) -> Bool {
+                only?.contains(name) ?? true
+            }
+
+            if wants("idle-baseline") {
+                // The bar never opened, nothing pinned: what the churn costs Cling without the bar.
+                Defaults[.searchBarPinned] = false
+                SB.collapse()
+                await settle(500)
+                let meter = Meter("idle-baseline+churn", "hidden")
+                await churn(seconds: 6)
+                meter.finish()
+            }
 
             for appearance in appearances {
                 Defaults[.windowAppearance] = appearance
                 AM.update()
                 try? await Task.sleep(for: .milliseconds(300))
-                for preview in [false, true] {
+                for preview in previews {
                     Defaults[.searchBarShowPreview] = preview
                     try? await Task.sleep(for: .milliseconds(100))
                     let tag = "\(appearance.rawValue.lowercased())\(preview ? "+preview" : "")"
                     log("")
                     log("## \(tag)")
-                    await expandCollapse(tag)
-                    await typeAndWait(tag)
-                    await typeBurst(tag)
-                    await arrows(tag)
-                    await listUpdates(tag)
+                    if wants("expand") {
+                        await expandCollapse(tag)
+                    }
+                    if wants("type-wait") {
+                        await typeAndWait(tag)
+                    }
+                    if wants("type-burst") {
+                        await typeBurst(tag)
+                    }
+                    if wants("arrows") {
+                        await arrows(tag)
+                    }
+                    if wants("list-updates") {
+                        await listUpdates(tag)
+                    }
                 }
-                await idleExpanded(appearance.rawValue.lowercased())
-                await idleCompact(appearance.rawValue.lowercased())
+                if wants("idle-expanded") {
+                    await idleExpanded(appearance.rawValue.lowercased())
+                }
+                if wants("idle-compact") {
+                    await idleCompact(appearance.rawValue.lowercased())
+                }
             }
 
             SB.collapse()
@@ -243,9 +286,7 @@
             FUZZY.suppressNextSearch = true
             FUZZY.query = savedQuery
 
-            let report = lines.joined(separator: "\n") + "\n"
-            try? report.write(toFile: outPath, atomically: true, encoding: .utf8)
-            print("Benchmark written to \(outPath)")
+            log("# done")
             if CommandLine.arguments.contains("-searchBarBenchmarkQuit") {
                 NSApp.terminate(nil)
             }
@@ -396,23 +437,30 @@
             await settle(200)
         }
 
-        /// Creates, edits and deletes files in a scratch folder, about 40 changes a second.
+        /// Creates and deletes files in a scratch folder, about 40 changes a second, off the main thread
+        /// so the file I/O itself doesn't count as main thread time.
         private static func churn(seconds: Double) async {
-            let dir = "/private/tmp/cling-bench-churn"
-            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            let end = CACurrentMediaTime() + seconds
-            var i = 0
-            while CACurrentMediaTime() < end {
-                let path = "\(dir)/file-\(i % 20).txt"
-                if i % 40 < 20 {
-                    FileManager.default.createFile(atPath: path, contents: Data("churn \(i)".utf8))
-                } else {
-                    try? FileManager.default.removeItem(atPath: path)
+            await Task.detached(priority: .utility) {
+                let dir = "/private/tmp/cling-bench-churn"
+                try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                let end = CACurrentMediaTime() + seconds
+                var i = 0
+                while CACurrentMediaTime() < end {
+                    let path = "\(dir)/file-\(i % 20).txt"
+                    if i % 40 < 20 {
+                        FileManager.default.createFile(atPath: path, contents: Data("churn \(i)".utf8))
+                    } else {
+                        try? FileManager.default.removeItem(atPath: path)
+                    }
+                    i += 1
+                    try? await Task.sleep(for: .milliseconds(25))
                 }
-                i += 1
-                try? await Task.sleep(for: .milliseconds(25))
-            }
-            try? FileManager.default.removeItem(atPath: dir)
+                try? FileManager.default.removeItem(atPath: dir)
+            }.value
+        }
+
+        private static func argument(_ name: String) -> String? {
+            CommandLine.arguments.firstIndex(of: name).flatMap { CommandLine.arguments[safe: $0 + 1] }
         }
 
     }
