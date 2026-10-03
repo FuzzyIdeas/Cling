@@ -18,7 +18,7 @@ enum HotkeyTarget: String, CaseIterable, Defaults.Serializable {
 
     var label: String {
         switch self {
-        case .window: "Window"
+        case .window: "Search window"
         case .searchBar: "Search bar"
         }
     }
@@ -51,7 +51,7 @@ extension KeyboardShortcuts.Name {
 struct SearchBarSettingsSection: View {
     var body: some View {
         Section("Search bar") {
-            Picker("Hotkey shows", selection: $hotkeyTarget) {
+            Picker("Interface", selection: $hotkeyTarget) {
                 ForEach(HotkeyTarget.allCases, id: \.self) { target in
                     Text(target.label).tag(target)
                 }
