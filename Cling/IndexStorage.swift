@@ -29,14 +29,19 @@ func adviseSequentialRead(_ path: String) {
 final class AtomicFileWriter {
     init?(destination: String) {
         self.destination = destination
+        Self.claim(destination)
         temporary = destination + ".saving"
         fd = open(temporary, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
-        guard fd >= 0 else { return nil }
+        guard fd >= 0 else {
+            Self.release(destination)
+            return nil
+        }
         buffer = UnsafeMutableRawPointer.allocate(byteCount: capacity, alignment: 16)
     }
 
     deinit {
         buffer.deallocate()
+        defer { Self.release(destination) }
         if fd >= 0 {
             close(fd)
             unlink(temporary)
@@ -102,10 +107,30 @@ final class AtomicFileWriter {
         return true
     }
 
+    /// One writer per destination at a time: two saves of the same file share its temporary name.
+    private static let busy = NSCondition()
+    private nonisolated(unsafe) static var writing: Set<String> = []
+
     private let capacity = 1 << 20
     private var buffer: UnsafeMutableRawPointer
     private var used = 0
     private var fd: Int32
+
+    private static func claim(_ destination: String) {
+        busy.lock()
+        while writing.contains(destination) {
+            busy.wait()
+        }
+        writing.insert(destination)
+        busy.unlock()
+    }
+
+    private static func release(_ destination: String) {
+        busy.lock()
+        writing.remove(destination)
+        busy.broadcast()
+        busy.unlock()
+    }
 
     private func flush() {
         guard used > 0 else { return }

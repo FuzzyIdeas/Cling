@@ -913,7 +913,8 @@ final class SearchEngine: @unchecked Sendable {
     /// Whether v4 files are memory-mapped (the default) or read into the heap. Mapped, an index costs the app almost
     /// nothing until searched, and the system takes the pages back under memory pressure and reads them in again when
     /// needed.
-    nonisolated(unsafe) static var mapIndexFiles = true
+    /// `-mapIndexFiles NO` reads them into the heap, for comparing the two.
+    nonisolated(unsafe) static var mapIndexFiles = UserDefaults.standard.object(forKey: "mapIndexFiles") as? Bool ?? true
 
     var count: Int {
         lock.withLock { liveCount }
@@ -2132,13 +2133,38 @@ final class SearchEngine: @unchecked Sendable {
         }
     }
 
+    /// One per scored candidate, so a broad query holds millions of them at once: 32-bit fields keep it at 56 bytes
+    /// instead of 80. Scores, qualities and ids all fit.
     private struct ScoredEntry {
-        let id: Int
+        init(id: Int, key: SortKey, bestScore: Int, quality: Int, hasBase: Bool, segmentMatches: Int = 0) {
+            _id = Int32(truncatingIfNeeded: id)
+            self.key = key
+            _bestScore = Int32(clamping: bestScore)
+            _quality = Int32(clamping: quality)
+            _segmentMatches = Int32(clamping: segmentMatches)
+            self.hasBase = hasBase
+        }
+
         let key: SortKey
-        let bestScore: Int
-        let quality: Int
         let hasBase: Bool
-        var segmentMatches = 0
+
+        var id: Int {
+            Int(_id)
+        }
+        var bestScore: Int {
+            Int(_bestScore)
+        }
+        var quality: Int {
+            Int(_quality)
+        }
+        var segmentMatches: Int {
+            Int(_segmentMatches)
+        }
+
+        private let _id: Int32
+        private let _bestScore: Int32
+        private let _quality: Int32
+        private let _segmentMatches: Int32
     }
 
     /// Columns read from a file, not yet installed.
