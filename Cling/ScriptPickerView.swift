@@ -162,6 +162,8 @@ struct ScriptPickerView: View {
 struct ScriptActionButtons: View {
     let selectedResults: Set<FilePath>
     var focused: FocusState<FocusedField?>.Binding
+    /// Drawn in Settings as a preview, where ⌘X has to stay Cut.
+    var preview = false
 
     var body: some View {
         HStack(spacing: density.spacing) {
@@ -432,7 +434,7 @@ struct ScriptActionButtons: View {
             }
             .shortcutPrefix("⌘X", visible: comboHintVisible, color: ShortcutTint.scripts)
         }
-        .keyboardShortcut("x", modifiers: [.command])
+        .keyboardShortcut(preview ? nil : KeyboardShortcut("x", modifiers: [.command]))
         .fixedSize()
         .frame(minWidth: ActionRowLayout.leadingWidth(for: labelStyle, density: density), alignment: .leading)
         .disabled(focused.wrappedValue == .search)

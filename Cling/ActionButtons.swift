@@ -59,6 +59,9 @@ struct ActionButtons: View {
     @Binding var selectedResults: Set<FilePath>
     @Binding var selectedResultIDs: Set<String>
     var focused: FocusState<FocusedField?>.Binding
+    /// Drawn in Settings as a preview: the same buttons, without the shortcut monitor, sheets and popovers the
+    /// window's copy owns, since those are shared and would fire or show twice.
+    var preview = false
 
     @Default(.suppressTrashConfirm) var suppressTrashConfirm: Bool
     @Default(.enterPastesToFrontmostTerminal) var enterPastesToFrontmostTerminal: Bool
@@ -104,131 +107,70 @@ struct ActionButtons: View {
     }
 
     var body: some View {
-        let inTerminal = appManager.frontmostAppIsTerminal
-        let showingAlternates = (km.ralt || km.lalt) && !isAnySheetOpen
-        let hidden = hiddenActions
-
-        HStack {
-            if showActionRow, !toolbarRowsHidden {
-                if showingAlternates {
-                    HStack(spacing: density.spacing) {
-                        dropToFocusedElementButton
-                        dropToZoneButton
-                        openWithFrontmostAppButton
-                        Spacer()
-                        if !hidden.contains(.copy) {
-                            copyFilesButton.disabled(focused.wrappedValue != .list && focused.wrappedValue != .stash)
-                        }
-                        if !hidden.contains(.copyPaths) {
-                            copyPathsButton
-                        }
-                        if !hidden.contains(.trash) {
-                            trashButton.disabled(focused.wrappedValue != .list && focused.wrappedValue != .stash)
-                        }
+        if preview {
+            row
+        } else {
+            row
+                .background(openWithPickerButton)
+                .sheet(isPresented: $isPresentingCopyToSheet) {
+                    FileOperationSheet(operation: .copy, files: selectedResults.arr)
+                }
+                .sheet(isPresented: $isPresentingMoveToSheet) {
+                    FileOperationSheet(operation: .move, files: selectedResults.arr) { movedPaths in
+                        selectedResults.subtract(movedPaths)
+                        fuzzy.results = fuzzy.results.filter { !movedPaths.contains($0) }
                     }
-                    .font(.scaled(density.fontSize, .control))
-                    .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
-                } else {
-                    HStack(spacing: density.spacing) {
-                        ForEach(ToolbarAction.segmentOrder, id: \.self) { segment in
-                            let items = visibleBarActions.filter { $0.segment == segment }
-                            if !items.isEmpty {
-                                if segment == .destructive {
-                                    Spacer(minLength: 8)
-                                } else if showDividers, segment != ToolbarAction.segmentOrder.first {
-                                    Divider().frame(height: 16)
-                                }
-                                ForEach(items) { action in actionButton(action) }
+                }
+                .sheet(isPresented: $showingSendIntro, onDismiss: {
+                    if introWantsSend {
+                        introWantsSend = false
+                        sendExpiration = Defaults[.defaultLinkExpiration]
+                        sendManager.showingSendPopover = true
+                    }
+                }) {
+                    SendSecurelyIntroView {
+                        sendSecurelyIntroShown = true
+                        introWantsSend = true
+                        showingSendIntro = false
+                    }
+                }
+                .onAppear { installShortcutMonitor() }
+                .onDisappear { removeShortcutMonitor() }
+                .onReceive(NotificationCenter.default.publisher(for: .clingRequestRename)) { _ in
+                    guard !selectedResults.isEmpty else { return }
+                    isPresentingRenameView = true
+                }
+                .onChange(of: sendManager.linkCopiedTick) { _, _ in
+                    flashCopied(.sendSecurely, text: "Link copied")
+                }
+                .confirmationDialog(
+                    "Archive folders before sending?",
+                    isPresented: Binding(
+                        get: { sendManager.pendingFolderConfirm != nil },
+                        set: {
+                            if !$0 {
+                                sendManager.cancelPendingSend()
                             }
                         }
-                        overflowButton
-                    }
-                    .font(.scaled(density.fontSize, .control))
-                    .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
+                    ),
+                    presenting: sendManager.pendingFolderConfirm
+                ) { _ in
+                    Button("Create archive & send") { sendManager.confirmPendingSend() }
+                    Button("Cancel", role: .cancel) { sendManager.cancelPendingSend() }
+                } message: { pending in
+                    let n = sendManager.folderCount(in: pending.files)
+                    Text("\(n) folder\(n == 1 ? "" : "s") will be archived into a .zip before sending.")
                 }
-            }
-        }
-        .font(.scaled(10, .control))
-        .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
-        .lineLimit(1)
-        .background(openWithPickerButton)
-        .sheet(isPresented: $isPresentingCopyToSheet) {
-            FileOperationSheet(operation: .copy, files: selectedResults.arr)
-        }
-        .sheet(isPresented: $isPresentingMoveToSheet) {
-            FileOperationSheet(operation: .move, files: selectedResults.arr) { movedPaths in
-                selectedResults.subtract(movedPaths)
-                fuzzy.results = fuzzy.results.filter { !movedPaths.contains($0) }
-            }
-        }
-        .sheet(isPresented: $showingSendIntro, onDismiss: {
-            if introWantsSend {
-                introWantsSend = false
-                sendExpiration = Defaults[.defaultLinkExpiration]
-                sendManager.showingSendPopover = true
-            }
-        }) {
-            SendSecurelyIntroView {
-                sendSecurelyIntroShown = true
-                introWantsSend = true
-                showingSendIntro = false
-            }
-        }
-        .onAppear { installShortcutMonitor() }
-        .onDisappear { removeShortcutMonitor() }
-        .onReceive(NotificationCenter.default.publisher(for: .clingRequestRename)) { _ in
-            guard !selectedResults.isEmpty else { return }
-            isPresentingRenameView = true
-        }
-        .onChange(of: sendManager.linkCopiedTick) { _, _ in
-            flashCopied(.sendSecurely, text: "Link copied")
-        }
-        .onChange(of: badgeModifierHeld) { _, held in
-            badgeRevealTask?.cancel()
-            guard held else {
-                withAnimation(.easeOut(duration: 0.12)) { badgesVisible = false }
-                return
-            }
-            // First reveal after the coachmark is instant, to reward the discovery.
-            // Afterwards the badges only show if ⌘/⌥ is held a beat, so quick hotkeys don't flash them.
-            if !badgesRevealedOnce {
-                badgesRevealedOnce = true
-                withAnimation(.easeOut(duration: 0.12)) { badgesVisible = true }
-            } else {
-                badgeRevealTask = Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(500))
-                    guard !Task.isCancelled, badgeModifierHeld else { return }
-                    withAnimation(.easeOut(duration: 0.12)) { badgesVisible = true }
+                .confirmationDialog(
+                    "Are you sure?",
+                    isPresented: $isPresentingConfirm
+                ) {
+                    Button("Move to trash") {
+                        moveToTrash()
+                    }.keyboardShortcut(.defaultAction)
                 }
-            }
+                .dialogIcon(Image(systemName: "trash.circle.fill"))
         }
-        .confirmationDialog(
-            "Archive folders before sending?",
-            isPresented: Binding(
-                get: { sendManager.pendingFolderConfirm != nil },
-                set: {
-                    if !$0 {
-                        sendManager.cancelPendingSend()
-                    }
-                }
-            ),
-            presenting: sendManager.pendingFolderConfirm
-        ) { _ in
-            Button("Create archive & send") { sendManager.confirmPendingSend() }
-            Button("Cancel", role: .cancel) { sendManager.cancelPendingSend() }
-        } message: { pending in
-            let n = sendManager.folderCount(in: pending.files)
-            Text("\(n) folder\(n == 1 ? "" : "s") will be archived into a .zip before sending.")
-        }
-        .confirmationDialog(
-            "Are you sure?",
-            isPresented: $isPresentingConfirm
-        ) {
-            Button("Move to trash") {
-                moveToTrash()
-            }.keyboardShortcut(.defaultAction)
-        }
-        .dialogIcon(Image(systemName: "trash.circle.fill"))
     }
 
     @ViewBuilder var overflowButton: some View {
@@ -296,12 +238,12 @@ struct ActionButtons: View {
         .buttonStyle(.text(color: sendActive ? Color.accentColor : color))
         .disabled(!isAvailable(action.id))
         .buttonFlash(copiedFeedbackText, visible: copiedFeedbackAction == action.id, fontSize: density.fontSize)
-        .popover(isPresented: isSend ? $sendManager.showingSendPopover : .constant(false), arrowEdge: .bottom) {
+        .popover(isPresented: isSend && !preview ? $sendManager.showingSendPopover : .constant(false), arrowEdge: .bottom) {
             if isSend {
                 SendExpirationPopover(files: selectedResults.map(\.url), expiration: $sendExpiration) { sendManager.showingSendPopover = false }
             }
         }
-        .popover(isPresented: isSend ? $sendManager.showingTransfers : .constant(false), arrowEdge: .bottom) {
+        .popover(isPresented: isSend && !preview ? $sendManager.showingTransfers : .constant(false), arrowEdge: .bottom) {
             if isSend {
                 TransfersPanel(selection: selectedResults.map(\.url))
             }
@@ -425,6 +367,76 @@ struct ActionButtons: View {
         isPresentingRenameView || isPresentingOpenWithPicker || isPresentingConfirm
             || isPresentingCopyToSheet || isPresentingMoveToSheet || sendManager.showingSendPopover || sendManager.showingTransfers
             || showingSendIntro || sendManager.pendingFolderConfirm != nil
+    }
+
+    /// The buttons themselves, shared by the window and the Settings preview.
+    @ViewBuilder private var row: some View {
+        let inTerminal = appManager.frontmostAppIsTerminal
+        let showingAlternates = (km.ralt || km.lalt) && !isAnySheetOpen
+        let hidden = hiddenActions
+
+        HStack {
+            if showActionRow, !toolbarRowsHidden {
+                if showingAlternates {
+                    HStack(spacing: density.spacing) {
+                        dropToFocusedElementButton
+                        dropToZoneButton
+                        openWithFrontmostAppButton
+                        Spacer()
+                        if !hidden.contains(.copy) {
+                            copyFilesButton.disabled(focused.wrappedValue != .list && focused.wrappedValue != .stash)
+                        }
+                        if !hidden.contains(.copyPaths) {
+                            copyPathsButton
+                        }
+                        if !hidden.contains(.trash) {
+                            trashButton.disabled(focused.wrappedValue != .list && focused.wrappedValue != .stash)
+                        }
+                    }
+                    .font(.scaled(density.fontSize, .control))
+                    .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
+                } else {
+                    HStack(spacing: density.spacing) {
+                        ForEach(ToolbarAction.segmentOrder, id: \.self) { segment in
+                            let items = visibleBarActions.filter { $0.segment == segment }
+                            if !items.isEmpty {
+                                if segment == .destructive {
+                                    Spacer(minLength: 8)
+                                } else if showDividers, segment != ToolbarAction.segmentOrder.first {
+                                    Divider().frame(height: 16)
+                                }
+                                ForEach(items) { action in actionButton(action) }
+                            }
+                        }
+                        overflowButton
+                    }
+                    .font(.scaled(density.fontSize, .control))
+                    .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
+                }
+            }
+        }
+        .font(.scaled(10, .control))
+        .buttonStyle(.text(color: .fg.warm.opacity(0.9)))
+        .lineLimit(1)
+        .onChange(of: badgeModifierHeld) { _, held in
+            badgeRevealTask?.cancel()
+            guard held else {
+                withAnimation(.easeOut(duration: 0.12)) { badgesVisible = false }
+                return
+            }
+            // First reveal after the coachmark is instant, to reward the discovery.
+            // Afterwards the badges only show if ⌘/⌥ is held a beat, so quick hotkeys don't flash them.
+            if !badgesRevealedOnce {
+                badgesRevealedOnce = true
+                withAnimation(.easeOut(duration: 0.12)) { badgesVisible = true }
+            } else {
+                badgeRevealTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard !Task.isCancelled, badgeModifierHeld else { return }
+                    withAnimation(.easeOut(duration: 0.12)) { badgesVisible = true }
+                }
+            }
+        }
     }
 
     private var showInFinderButton: some View {

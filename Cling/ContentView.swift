@@ -863,44 +863,13 @@ struct ContentView: View {
     }
 
     private var actionButtonRows: some View {
-        // Each row clears its shortcut badges by `badgeClearance` on top and bottom (the Open With /
-        // Scripts rows do it inside their pill ScrollViews; the action row gets it here). The bottom
-        // clearance is otherwise empty, so a small negative spacing overlaps it to keep the visible
-        // gap between rows tight and even.
-        let rows = VStack(spacing: -3) {
-            ActionButtons(selectedResults: $selectedResults, selectedResultIDs: $selectedResultIDs, focused: $focused)
-                .hfill(.leading)
-                .padding(.vertical, showActionRow && !toolbarRowsHidden ? ActionRowLayout.badgeClearance : 0)
-                .contentShape(Rectangle())
-                .contextMenu {
-                    Button("Hide action buttons row") { showActionRow = false }
-                }
-
-            if showOpenWithRow, !toolbarRowsHidden {
-                OpenWithActionButtons(selectedResults: selectedResults)
-                    .hfill(.leading)
-                    .contentShape(Rectangle())
-                    .contextMenu {
-                        Button("Hide \"Open with\" row") { showOpenWithRow = false }
-                    }
-            }
-            if proactive, showScriptRow, !toolbarRowsHidden {
-                ScriptActionButtons(selectedResults: selectedResults, focused: $focused)
-                    .hfill(.leading)
-                    .contentShape(Rectangle())
-                    .contextMenu {
-                        Button("Hide script row") { showScriptRow = false }
-                    }
-            }
-        }
-
         // Nothing typed and nothing selected means the action rows have no subject to act on, so the
         // space introduces the filters instead of showing buttons that would do nothing. The rows
         // stay mounted underneath at zero height: ActionButtons installs the action shortcut monitor
         // on appear and hosts the copy/move/send sheets, so dropping it while Option is held would
         // take every action shortcut down with it.
-        let showing = ZStack(alignment: .topLeading) {
-            rows
+        ZStack(alignment: .topLeading) {
+            ActionRowsStack(selectedResults: $selectedResults, selectedResultIDs: $selectedResultIDs, focused: $focused)
                 .frame(height: showFilterDiscovery ? 0 : nil)
                 .opacity(showFilterDiscovery ? 0 : 1)
                 .allowsHitTesting(!showFilterDiscovery)
@@ -911,31 +880,7 @@ struct ContentView: View {
                     .transition(.opacity)
             }
         }
-
-        return Group {
-            if toolbarRowBackground, anyToolbarRowVisible {
-                showing
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background {
-                        RoundedRectangle(cornerRadius: windowCornerRadius, style: .continuous)
-                            .fill(.black.opacity(0.06).shadow(.inner(color: .black.opacity(0.22), radius: 4, y: 1)))
-                    }
-                    .overlay {
-                        RoundedRectangle(cornerRadius: windowCornerRadius, style: .continuous)
-                            .strokeBorder(
-                                LinearGradient(
-                                    colors: [.black.opacity(0.25), .white.opacity(0.12)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                ),
-                                lineWidth: 1
-                            )
-                    }
-            } else {
-                showing
-            }
-        }
+        .modifier(ActionRowsBackground(visible: toolbarRowBackground && anyToolbarRowVisible))
     }
 
     @ViewBuilder

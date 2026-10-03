@@ -45,6 +45,7 @@ struct SidebarHue {
     static let stone = rgb(0.45, 0.43, 0.37, 0.66, 0.64, 0.57)
     static let ochre = rgb(0.78, 0.56, 0.16, 0.83, 0.68, 0.40)
     static let dustyRose = rgb(0.76, 0.39, 0.40, 0.80, 0.60, 0.58)
+    static let olive = rgb(0.47, 0.47, 0.20, 0.70, 0.69, 0.45)
 
     let light: Color
     let dark: Color
@@ -95,7 +96,7 @@ struct SidebarIcon: View {
 // MARK: - SettingsCategory
 
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case general, interface, shortcuts, apps, search, volumes, filters, scripts, exclusions, licenseAndUpdates, about
+    case general, interface, actionBar, shortcuts, apps, search, volumes, filters, scripts, exclusions, licenseAndUpdates, about
 
     var id: String {
         rawValue
@@ -105,6 +106,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .general: "General"
         case .interface: "Style"
+        case .actionBar: "Action Bar"
         case .shortcuts: "Keyboard Shortcuts"
         case .apps: "Open With"
         case .search: "Search"
@@ -121,6 +123,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .general: "gearshape"
         case .interface: "slider.horizontal.3"
+        case .actionBar: "dock.rectangle"
         case .shortcuts: "keyboard"
         case .apps: "app.badge"
         case .search: "magnifyingglass"
@@ -137,6 +140,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .general: .stone
         case .interface: .skin
+        case .actionBar: .olive
         case .shortcuts: .clay
         case .apps: .periwinkle
         case .search: .dustyBlue
@@ -215,6 +219,7 @@ struct SettingsView: View {
                 Section {
                     sidebarRow(.general)
                     sidebarRow(.interface)
+                    sidebarRow(.actionBar)
                 }
                 Section("Search") {
                     sidebarRow(.search)
@@ -255,6 +260,7 @@ struct SettingsView: View {
         switch nav.selection {
         case .general: GeneralSettingsPane().environmentObject(env)
         case .interface: InterfaceSettingsPane()
+        case .actionBar: ActionBarSettingsPane()
         case .shortcuts: ShortcutsSettingsPane()
         case .apps: AppsSettingsPane()
         case .search: SearchSettingsPane()
@@ -414,139 +420,6 @@ private struct InterfaceSettingsPane: View {
                     .animation(.snappy(duration: 0.2), value: filterWindowTintStrength)
                 }
             }
-
-            Section("Rows") {
-                DescriptiveToggle(
-                    title: "Action Bar row",
-                    detail: "The bar of buttons under the results: Open, Copy, Trash, Rename, etc.",
-                    isOn: $showActionRow
-                )
-                DescriptiveToggle(
-                    title: "Open With row",
-                    detail: "Quick app shortcuts for opening the selected files.",
-                    isOn: $showOpenWithRow
-                )
-                DescriptiveToggle(
-                    title: "Scripts row",
-                    detail: "Run scripts on the selected files.",
-                    isOn: $showScriptRow
-                )
-                SettingRow(
-                    title: "Toggle all rows by double-tapping",
-                    detail: anyRowEnabled
-                        ? "Double-tap this modifier key to instantly hide or show all three rows at once."
-                        : "Enable at least one row above to use the double-tap toggle."
-                ) {
-                    Picker("Toggle all rows by double-tapping", selection: $rowsToggleModifier) {
-                        ForEach(RowToggleModifier.allCases, id: \.self) { modifier in
-                            Text(modifier.label).tag(modifier)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                }
-                .disabled(!anyRowEnabled)
-                .opacity(anyRowEnabled ? 1 : 0.5)
-            }
-
-            // MARK: Part A — toolbar knobs
-
-            Section("Action Bar styling") {
-                SettingRow(title: "Labels") {
-                    Picker("Labels", selection: $toolbarLabelStyle) {
-                        Text("Icon + Text").tag(ToolbarLabelStyle.iconAndText)
-                        Text("Text only").tag(ToolbarLabelStyle.textOnly)
-                        Text("Icon only").tag(ToolbarLabelStyle.iconOnly)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                }
-
-                SettingRow(title: "Density") {
-                    Picker("Density", selection: $toolbarDensity) {
-                        Text("Regular").tag(ToolbarDensity.regular)
-                        Text("Compact").tag(ToolbarDensity.compact)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                }
-            }
-            .disabled(!showActionRow)
-
-            Section {
-                DescriptiveToggle(
-                    title: "Show Action Menu",
-                    detail: "The \u{22EF} menu holds actions you keep out of the bar. Shows only when there are overflow actions.",
-                    isOn: $showActionMenu
-                )
-
-                DescriptiveToggle(
-                    title: "Show segment dividers",
-                    detail: "Thin separators between action groups",
-                    isOn: $toolbarShowDividers
-                )
-
-                DescriptiveToggle(
-                    title: "Show row background",
-                    detail: "Show the material behind the action row",
-                    isOn: $toolbarRowBackground
-                )
-            }
-            .disabled(!showActionRow)
-
-            // MARK: Sharing
-
-            Section {
-                SettingRow(title: "Default link expiration") {
-                    Picker("Default link expiration", selection: $defaultLinkExpiration) {
-                        ForEach(LINK_EXPIRATION_PRESETS, id: \.self) { e in
-                            Text(expirationDurationLabel(e)).tag(e)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                }
-            } header: {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Send Securely")
-                    Text("Share the selected files over a private link that's copied to your clipboard. Files transfer straight from your Mac, so a link works only while you're sharing it and stops when it expires.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textCase(nil)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            // MARK: Part B — per-action visibility editor
-
-            ForEach(Array(ToolbarAction.segmentOrder.enumerated()), id: \.element) { index, segment in
-                let actions = ToolbarAction.all.filter { $0.segment == segment }
-                if !actions.isEmpty {
-                    if index == 0 {
-                        Section {
-                            ForEach(actions) { action in
-                                placementRow(action)
-                            }
-                        } header: {
-                            Text(segment.title)
-                        } footer: {
-                            Text("Choose where each action lives: the Action Bar, the ⋯ Action Menu, or hidden entirely.")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-                        .disabled(!showActionRow)
-                    } else {
-                        Section(segment.title) {
-                            ForEach(actions) { action in
-                                placementRow(action)
-                            }
-                        }
-                        .disabled(!showActionRow)
-                    }
-                }
-            }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
@@ -559,20 +432,169 @@ private struct InterfaceSettingsPane: View {
     @Default(.defaultResultsMode) private var defaultResultsMode
     @Default(.searchBarPinned) private var searchBarPinned
     @Default(.searchBarAboveWindows) private var searchBarAboveWindows
-    @Default(.showActionRow) private var showActionRow
-    @Default(.showOpenWithRow) private var showOpenWithRow
-    @Default(.rowsToggleModifier) private var rowsToggleModifier
-
-    @Default(.showScriptRow) private var showScriptRow
     @Default(.fontScale) private var fontScale
     @Default(.windowAppearance) private var windowAppearance
+    @Default(.dimStatusBar) private var dimStatusBar
+    @Default(.filterWindowTintStrength) private var filterWindowTintStrength
+}
+
+// MARK: - ActionBarSettingsPane
+
+/// The rows under the results and what goes in them, over a preview of the rows that stays at the bottom while the
+/// settings scroll.
+private struct ActionBarSettingsPane: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section("Rows") {
+                    DescriptiveToggle(
+                        title: "Action Bar row",
+                        detail: "The bar of buttons under the results: Open, Copy, Trash, Rename, etc.",
+                        isOn: $showActionRow
+                    )
+                    DescriptiveToggle(
+                        title: "Open With row",
+                        detail: "Quick app shortcuts for opening the selected files.",
+                        isOn: $showOpenWithRow
+                    )
+                    DescriptiveToggle(
+                        title: "Scripts row",
+                        detail: "Run scripts on the selected files.",
+                        isOn: $showScriptRow
+                    )
+                    SettingRow(
+                        title: "Toggle all rows by double-tapping",
+                        detail: anyRowEnabled
+                            ? "Double-tap this modifier key to instantly hide or show all three rows at once."
+                            : "Enable at least one row above to use the double-tap toggle."
+                    ) {
+                        Picker("Toggle all rows by double-tapping", selection: $rowsToggleModifier) {
+                            ForEach(RowToggleModifier.allCases, id: \.self) { modifier in
+                                Text(modifier.label).tag(modifier)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    .disabled(!anyRowEnabled)
+                    .opacity(anyRowEnabled ? 1 : 0.5)
+                }
+
+                // MARK: Part A — toolbar knobs
+
+                Section("Action Bar styling") {
+                    SettingRow(title: "Labels") {
+                        Picker("Labels", selection: $toolbarLabelStyle) {
+                            Text("Icon + Text").tag(ToolbarLabelStyle.iconAndText)
+                            Text("Text only").tag(ToolbarLabelStyle.textOnly)
+                            Text("Icon only").tag(ToolbarLabelStyle.iconOnly)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+
+                    SettingRow(title: "Density") {
+                        Picker("Density", selection: $toolbarDensity) {
+                            Text("Regular").tag(ToolbarDensity.regular)
+                            Text("Compact").tag(ToolbarDensity.compact)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                }
+                .disabled(!showActionRow)
+
+                Section {
+                    DescriptiveToggle(
+                        title: "Show Action Menu",
+                        detail: "The \u{22EF} menu holds actions you keep out of the bar. Shows only when there are overflow actions.",
+                        isOn: $showActionMenu
+                    )
+
+                    DescriptiveToggle(
+                        title: "Show segment dividers",
+                        detail: "Thin separators between action groups",
+                        isOn: $toolbarShowDividers
+                    )
+
+                    DescriptiveToggle(
+                        title: "Show row background",
+                        detail: "Show the material behind the action row",
+                        isOn: $toolbarRowBackground
+                    )
+                }
+                .disabled(!showActionRow)
+
+                // MARK: Sharing
+
+                Section {
+                    SettingRow(title: "Default link expiration") {
+                        Picker("Default link expiration", selection: $defaultLinkExpiration) {
+                            ForEach(LINK_EXPIRATION_PRESETS, id: \.self) { e in
+                                Text(expirationDurationLabel(e)).tag(e)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                } header: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Send Securely")
+                        Text("Share the selected files over a private link that's copied to your clipboard. Files transfer straight from your Mac, so a link works only while you're sharing it and stops when it expires.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textCase(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                // MARK: Part B — per-action visibility editor
+
+                ForEach(Array(ToolbarAction.segmentOrder.enumerated()), id: \.element) { index, segment in
+                    let actions = ToolbarAction.all.filter { $0.segment == segment }
+                    if !actions.isEmpty {
+                        if index == 0 {
+                            Section {
+                                ForEach(actions) { action in
+                                    placementRow(action)
+                                }
+                            } header: {
+                                Text(segment.title)
+                            } footer: {
+                                Text("Choose where each action lives: the Action Bar, the ⋯ Action Menu, or hidden entirely.")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .disabled(!showActionRow)
+                        } else {
+                            Section(segment.title) {
+                                ForEach(actions) { action in
+                                    placementRow(action)
+                                }
+                            }
+                            .disabled(!showActionRow)
+                        }
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+
+            ActionBarPreview()
+        }
+    }
+
+    @Default(.showActionRow) private var showActionRow
+    @Default(.showOpenWithRow) private var showOpenWithRow
+    @Default(.showScriptRow) private var showScriptRow
+    @Default(.rowsToggleModifier) private var rowsToggleModifier
     @Default(.toolbarLabelStyle) private var toolbarLabelStyle
     @Default(.toolbarDensity) private var toolbarDensity
     @Default(.showActionMenu) private var showActionMenu
     @Default(.toolbarShowDividers) private var toolbarShowDividers
     @Default(.toolbarRowBackground) private var toolbarRowBackground
-    @Default(.dimStatusBar) private var dimStatusBar
-    @Default(.filterWindowTintStrength) private var filterWindowTintStrength
     @Default(.defaultLinkExpiration) private var defaultLinkExpiration
 
     // MARK: Part B — placement state
