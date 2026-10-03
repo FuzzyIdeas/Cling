@@ -513,7 +513,9 @@ class AppDelegate: LowtechProAppDelegate {
         DropZoneOverlay.shared.dismissIfPresenting()
         if SB.ownsHotkey {
             SB.expand()
-            return true
+            // true would let SwiftUI open the main window too when nothing is visible, which takes focus and
+            // collapses the bar.
+            return false
         }
         if let mainWindow {
             WM.mainContentSuspended = false
