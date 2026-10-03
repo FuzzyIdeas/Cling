@@ -295,6 +295,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         searchWork?.cancel()
         previewWork?.cancel()
         historyIndex = -1
+        ghostDismissed = false
         hideSuggestions()
         root?.completion = nil
         closeQuickLook()
@@ -435,7 +436,10 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             }
             moveSelection(by: -1)
         case #selector(NSResponder.moveRight(_:)):
-            return completeNextWord()
+            // In the list, into the selected folder; in the query, the caret, or the ghost's next word at the end.
+            return listFocused ? drillIn(keepingListFocus: true) : completeNextWord()
+        case #selector(NSResponder.moveLeft(_:)):
+            return listFocused && drillOut()
         case #selector(NSResponder.moveDownAndModifySelection(_:)):
             moveSelection(by: 1, extend: true)
         case #selector(NSResponder.moveUpAndModifySelection(_:)):
@@ -472,6 +476,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         setListFocused(false)
         historyIndex = -1
         suggestionIndex = -1
+        ghostDismissed = false
         if !FUZZY.showLiveIndex {
             FUZZY.suppressNextSearch = true
         }
@@ -514,13 +519,18 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     }
 
     func moveSelection(by delta: Int, extend: Bool = false) {
-        if delta < 0, historyIndex >= 0 || (FUZZY.query.isEmpty && (results.tableView.selectedRow <= 0)) {
-            if stepHistory(back: true) {
-                return
-            }
+        // As in the window, ↑ from the field goes back through past searches, whatever is typed, and ↓ comes forward
+        // again. The results only take the keyboard on ↓, so ⌘⌫ keeps editing the query.
+        if delta == -1, !extend, !listFocused, stepHistory(back: true) {
+            return
         }
-        if delta > 0, historyIndex >= 0 {
+        if delta > 0, !listFocused, historyIndex >= 0 {
             _ = stepHistory(back: false)
+            return
+        }
+        if delta == -1, !extend, listFocused, results.tableView.selectedRow <= 0 {
+            // Up from the first result hands the keyboard back to the field.
+            setListFocused(false)
             return
         }
         let wasFocused = listFocused
@@ -558,9 +568,11 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         updateCompletion()
     }
 
-    /// Tab: search inside the selected folder, the way → does in the window's table.
-    func drillIn() {
-        guard selection.count == 1, let folder = selection.first, isDirectory(folder) else { return }
+    /// Tab, or → in the list as in the window's table: search inside the selected folder. Tab leaves the keyboard in
+    /// the field to type more, → keeps it in the list to go on into a subfolder.
+    @discardableResult
+    func drillIn(keepingListFocus: Bool = false) -> Bool {
+        guard selection.count == 1, let folder = selection.first, isDirectory(folder) else { return false }
         if FUZZY.query != lastDrillQuery {
             drillStack.removeAll()
         }
@@ -568,15 +580,20 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         let drilled = Self.drillQuery(folder) + " "
         lastDrillQuery = drilled
         setQuery(drilled)
-        setListFocused(false)
+        if !keepingListFocus {
+            setListFocused(false)
+        }
+        return true
     }
 
-    /// Shift-Tab: back out to the query from before the last Tab.
-    func drillOut() {
-        guard !drillStack.isEmpty, FUZZY.query == lastDrillQuery else { return }
+    /// Shift-Tab, or ← in the list: back out to the query from before the last drill, while it's still untouched.
+    @discardableResult
+    func drillOut() -> Bool {
+        guard !drillStack.isEmpty, FUZZY.query == lastDrillQuery else { return false }
         let previous = drillStack.removeLast()
         lastDrillQuery = drillStack.isEmpty ? nil : previous
         setQuery(previous)
+        return true
     }
 
     func isDirectory(_ path: FilePath) -> Bool {
@@ -593,16 +610,20 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         var hints: [SearchBarHint] = []
         let keys = hintKeys
         if !sel.isEmpty {
-            if let pasteTarget = keys.pasteTarget {
-                hints.append(.init(id: .paste, key: "⏎", title: "Paste to \(pasteTarget)"))
-            } else {
-                hints.append(.init(id: .open, key: "⏎", title: "Open"))
+            // Return settles the query first while ↑ is going through past searches or a ghost completion shows.
+            let returnSettlesQuery = !listFocused && (historyIndex >= 0 || root.completion != nil)
+            if !returnSettlesQuery {
+                if let pasteTarget = keys.pasteTarget {
+                    hints.append(.init(id: .paste, key: "⏎", title: "Paste to \(pasteTarget)"))
+                } else {
+                    hints.append(.init(id: .open, key: "⏎", title: "Open"))
+                }
             }
             hints.append(.init(id: .showInFinder, key: keys.showInFinder, title: "Show in Finder"))
             hints.append(.init(id: .quickLook, key: listFocused ? "␣" : keys.quickLook, title: "QuickLook"))
             // ⇥ takes the ghost completion while there is one.
             if sel.count == 1, root.completion == nil, let path = sel.first, FilePathBackgroundTasks.shared.knownIsDir(path) == true {
-                hints.append(.init(id: .drill, key: "⇥", title: "Search in folder"))
+                hints.append(.init(id: .drill, key: listFocused ? "→" : "⇥", title: "Search in folder"))
             }
             hints.append(.init(id: .copy, key: keys.copy, title: "Copy"))
         }
@@ -734,6 +755,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
 
     // MARK: Past searches
 
+    /// Return dropped the ghost completion; typing brings it back.
+    private var ghostDismissed = false
     /// The ⌘↓ list is open, even while nothing matches the query.
     private var suggestionsShown = false
     private var suggestionIndex = -1
@@ -777,7 +800,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
 
     /// The latest past search the query starts, drawn after it: ⇥ takes it all, → a word at a time.
     private var inlineSuggestion: String? {
-        guard let root, !listFocused, historyIndex < 0 else { return nil }
+        guard let root, !listFocused, historyIndex < 0, !ghostDismissed else { return nil }
         if let editor = root.field.currentEditor() as? NSTextView, editor.hasMarkedText() {
             return nil
         }
@@ -1292,6 +1315,14 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
                 pickSuggestion(at: max(suggestionIndex, 0))
                 return nil
             }
+            // From the field, Return first settles the query, as in the window: it keeps the past search ↑ brought
+            // back, or drops the ghost completion. Only then does it open the result.
+            if mods.isEmpty, !listFocused, historyIndex >= 0 || root.completion != nil {
+                historyIndex = -1
+                ghostDismissed = true
+                updateCompletion()
+                return nil
+            }
             if mods.isEmpty || mods == [.command, .shift], performReturn(modifiers: mods) {
                 return nil
             }
@@ -1684,11 +1715,9 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             hints.append("⌘↓ suggestions")
             return SearchBarCompletion(typed: query, suffix: suffix, hints: hints)
         }
-        let hadCompletion = root.completion != nil
         root.completion = completion
-        if hadCompletion != (completion != nil) {
-            updateHints()
-        }
+        // Return and ⇥ follow the ghost and the history, and so do their hints.
+        updateHints()
         updateSuggestions()
     }
 
