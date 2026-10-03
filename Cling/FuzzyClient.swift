@@ -323,11 +323,9 @@ private let liveChangesCompactThreshold = 20000 // compact once the raw array pa
 /// Max number of newest live changes computeDefaultResults scans looking for 20 fresh results.
 private let liveScanBudget = 4000
 
-/// `-indexFolder <path>` keeps the index somewhere else, so a second build can run against its own copy without
-/// rewriting the files the installed one reads.
-let indexFolder: FilePath = UserDefaults.standard.string(forKey: "indexFolder").flatMap(\.filePath)
-    ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-    .appendingPathComponent("com.lowtechguys.Cling", isDirectory: true).filePath ?? "/tmp/cling-\(NSUserName())".filePath!
+let indexFolder: FilePath =
+    FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("com.lowtechguys.Cling", isDirectory: true).filePath ?? "/tmp/cling-\(NSUserName())".filePath!
 
 let PIDFILE = "/tmp/cling-\(NSUserName().safeFilename).pid".filePath!
 let HARD_IGNORED: Set<String> = [PIDFILE.string]
@@ -560,16 +558,6 @@ class FuzzyClient {
     @ObservationIgnored var skippedCountedSince = Date()
     @ObservationIgnored var lastLiveSave = Date()
     @ObservationIgnored var lastHistoryLossWalk: Date?
-    /// Scopes unloaded while Cling sits idle (see IndexIdleUnload.swift), with their entry counts.
-    @ObservationIgnored var unloadedScopes: [SearchScope: Int] = [:]
-    /// Scopes whose position stays where their file was saved: unloaded, or loaded but not yet given their parked changes.
-    @ObservationIgnored var frozenScopes: Set<SearchScope> = []
-    @ObservationIgnored let parkedChanges = ParkedChanges()
-    @ObservationIgnored var unloadTask: Task<Void, Never>?
-    @ObservationIgnored var reloadTask: Task<Void, Never>?
-    @ObservationIgnored var reloadWaiters: [@MainActor () -> Void] = []
-    @ObservationIgnored var lastIndexUse = Date()
-    @ObservationIgnored var idleUnloadChecker: Repeater?
     @ObservationIgnored var updatingFilters = false
     @ObservationIgnored var defaultResultsDirty = true
 
@@ -1031,7 +1019,6 @@ class FuzzyClient {
     /// Recalculate total indexed count from all engines
     func updateIndexedCount() {
         indexedCount = scopeEngines.values.reduce(0) { $0 + $1.count }
-            + unloadedScopes.filter { scopeEngines[$0.key] == nil }.values.reduce(0, +)
             + volumeEngines.values.reduce(0) { $0 + $1.count }
             + recentsEngine.count
         syncCoordinator()
@@ -1221,13 +1208,6 @@ class FuzzyClient {
 
         // The indexes follow file changes as they happen, so nothing is walked on a timer; this only writes them
         // to disk now and then, and walks what has no position to replay from.
-        // Read at launch: the option has no switch in Settings yet.
-        let idleDelay = Self.idleUnloadDelay
-        if idleDelay > 0 {
-            idleUnloadChecker = Repeater(every: idleDelay < 240 ? max(5, idleDelay / 4) : 60, name: "Idle Index Unload", tolerance: 5) { [self] in
-                unloadIndexIfIdle()
-            }
-        }
         indexChecker = Repeater(every: 60 * 60, name: "Index Checker", tolerance: 60 * 60) { [self] in
             saveLiveIndexIfWorthIt()
             chooseUnwatched()
@@ -1486,10 +1466,6 @@ class FuzzyClient {
             scopeSyncPending = true
             return
         }
-        guard !indexUnloaded else {
-            reloadIndex { [self] in syncScopeEngines() }
-            return
-        }
         let searchable = searchableScopes
         let dropped = scopeEngines.keys.filter { !searchable.contains($0) }
         let added = searchable.filter { scopeEngines[$0] == nil && !scopesIndexing.contains($0) }
@@ -1679,7 +1655,6 @@ class FuzzyClient {
                     await MainActor.run {
                         self.liveBase[scope] = walkStartID
                         self.liveRules[scope] = fingerprints[scope]
-                        self.forgetUnloaded(scope)
                         releaseInBackground(self.scopeEngines.updateValue(engineToStore, forKey: scope))
                         self.scopesIndexing.remove(scope)
                         self.updateIndexedCount()
@@ -1780,7 +1755,7 @@ class FuzzyClient {
     /// position stays without one: it was never caught up from a known point.
     func advanceLiveBase() {
         guard let applied = liveUpdater?.lastAppliedEventID, applied > 0 else { return }
-        for (scope, id) in liveBase where id < applied && !frozenScopes.contains(scope) {
+        for (scope, id) in liveBase where id < applied {
             liveBase[scope] = applied
         }
     }
@@ -1814,8 +1789,7 @@ class FuzzyClient {
         let volumePaths = Set(enabledVolumes.map(\.string))
         var routes: [LiveRoute] = []
         for scope in searchableScopes {
-            let engine = unloadedScopes[scope] != nil ? nil : scopeEngines[scope]
-            guard engine != nil || unloadedScopes[scope] != nil else { continue }
+            guard let engine = scopeEngines[scope] else { continue }
             let scopeIgnoreFile = ScopeIgnore.rootedScopes.contains(scope) ? ScopeIgnore.activeFile(for: scope) : nil
             let honorGitignore = scope == .home && Defaults[.honorGitignore]
             for dir in walkDirs(for: scope) {
@@ -1865,15 +1839,10 @@ class FuzzyClient {
     func watchFiles() {
         removedFiles.removeAll()
         seenPaths.removeAll()
-        let followedUpTo = liveUpdater?.lastAppliedEventID ?? 0
         stopWatchingFiles()
 
         // Replay from the oldest position among the engines; changes they already hold apply again harmlessly.
         var since = searchableScopes.compactMap { scopeEngines[$0] != nil ? liveBase[$0] : nil }.min()
-        // With every scope unloaded, their changes keep being set aside from where the last stream got to.
-        if since == nil, indexUnloaded, followedUpTo > 0 {
-            since = followedUpTo
-        }
         // The background agent's changes from while Cling was closed, when every engine is at or past where they start:
         // they are applied first, and the replay starts where the agent stopped.
         let journal = launchJournal.flatMap { journal in since.map { journal.header.start <= $0 } == true ? journal : nil }
@@ -1893,7 +1862,6 @@ class FuzzyClient {
         let updater = LiveIndexUpdater(
             routes: liveRoutes(),
             replaying: since != nil,
-            parked: parkedChanges,
             applied: { [weak self] batch in
                 guard let self else { return }
                 fsEventsQueue.async { self.followIndexChanges(batch) }
@@ -2037,10 +2005,6 @@ class FuzzyClient {
         log.debug("Cling window on screen: \(onScreen)")
         guard onScreen else { return }
 
-        noteIndexUse()
-        if indexUnloaded {
-            reloadIndex()
-        }
         liveStream?.flush()
         fsEventsQueue.async { [self] in showHiddenChanges() }
         if indexChangedOffScreen.take() {
@@ -2189,11 +2153,6 @@ class FuzzyClient {
         guard WM.mainWindowActive else {
             querySendTask = nil
             return
-        }
-        noteIndexUse()
-        if indexUnloaded {
-            // Searches again as soon as Home is back.
-            reloadIndex()
         }
 
         if emptyQuery, volumeFilter == nil {

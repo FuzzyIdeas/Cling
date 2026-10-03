@@ -410,10 +410,6 @@ class AppDelegate: LowtechProAppDelegate {
 
     func focusWindow() {
         DropZoneOverlay.shared.dismissIfPresenting()
-        FUZZY.noteIndexUse()
-        if FUZZY.indexUnloaded {
-            FUZZY.reloadIndex()
-        }
         guard let window = mainWindow else { return }
         if !window.isVisible || window.alphaValue == 0 {
             placeMainWindow(window, on: pendingDisplay ?? displayForMainWindow())

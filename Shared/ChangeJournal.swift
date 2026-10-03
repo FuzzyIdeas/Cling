@@ -63,9 +63,8 @@ struct ChangeJournal {
         var lastRun = Date()
     }
 
-    /// Cling's `-indexFolder` moves it along with the index.
-    static let folder = UserDefaults.standard.string(forKey: "indexFolder").map { URL(fileURLWithPath: $0, isDirectory: true) }
-        ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("com.lowtechguys.Cling", isDirectory: true)
+    static let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("com.lowtechguys.Cling", isDirectory: true)
     static let file = folder.appendingPathComponent("change-journal")
     /// Past this many paths it is cheaper to walk.
     static let maxPaths = 2_000_000

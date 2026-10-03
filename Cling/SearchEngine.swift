@@ -914,7 +914,7 @@ final class SearchEngine: @unchecked Sendable {
     /// nothing until searched, and the system takes the pages back under memory pressure and reads them in again when
     /// needed.
     /// `-mapIndexFiles NO` reads them into the heap, for comparing the two.
-    nonisolated(unsafe) static var mapIndexFiles = UserDefaults.standard.object(forKey: "mapIndexFiles") == nil || UserDefaults.standard.bool(forKey: "mapIndexFiles")
+    nonisolated(unsafe) static var mapIndexFiles = UserDefaults.standard.object(forKey: "mapIndexFiles") as? Bool ?? true
 
     var count: Int {
         lock.withLock { liveCount }
