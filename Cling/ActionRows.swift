@@ -94,29 +94,46 @@ struct ActionRowsBackground: ViewModifier {
 // MARK: - ActionBarPreview
 
 /// The rows at the bottom of Settings > Action Bar, redrawn as its settings change: the window's own rows over its
-/// background, acting on a file from the current results. As wide as the pane, so Trash and the ⋯ menu stay at its
-/// edge, and scrolling sideways only when the buttons need more. Only to look at: clicks and shortcuts never reach it.
+/// background, acting on a file from the current results. As wide as the pane, like the window, so Trash and the ⋯
+/// menu sit at its edge; an Action Bar with more buttons than fit is drawn smaller instead of cutting them short.
+/// Only to look at: clicks and shortcuts never reach it.
 struct ActionBarPreview: View {
     var body: some View {
-        ScrollView(.horizontal) {
-            ActionRowsStack(selectedResults: $selection, selectedResultIDs: $selectionIDs, focused: $focused, preview: true)
-                .modifier(ActionRowsBackground(visible: toolbarRowBackground && anyRowVisible))
-                .allowsHitTesting(false)
-                .frame(minWidth: max(available - 32, 0), alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }, action: { available = $0 })
-        .background(WindowBackground())
-        .overlay(alignment: .top) { Divider() }
-        .onAppear { selection = Self.sampleSelection() }
+        let background = toolbarRowBackground && anyRowVisible
+        // The Action Bar at its own width, plus what the row background adds around it. The other two rows scroll
+        // their buttons within themselves, as in the window.
+        let needed = barWidth + (background ? 20 : 0)
+        let width = max(available, needed)
+        let scale = width > 0 ? available / width : 1
+
+        ActionRowsStack(selectedResults: $selection, selectedResultIDs: $selectionIDs, focused: $focused, preview: true)
+            .modifier(ActionRowsBackground(visible: background))
+            .allowsHitTesting(false)
+            .frame(width: width, alignment: .leading)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { height = $0 })
+            .scaleEffect(scale, anchor: .topLeading)
+            .frame(width: available, height: height * scale, alignment: .topLeading)
+            .background(alignment: .topLeading) {
+                ActionButtons(selectedResults: $selection, selectedResultIDs: $selectionIDs, focused: $focused, preview: true)
+                    .fixedSize()
+                    .hidden()
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.width }, action: { barWidth = $0 })
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }, action: { available = $0 })
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(WindowBackground())
+            .overlay(alignment: .top) { Divider() }
+            .onAppear { selection = Self.sampleSelection() }
     }
 
     @State private var selection: Set<FilePath> = []
     @State private var selectionIDs: Set<String> = []
     @FocusState private var focused: FocusedField?
     @State private var available: CGFloat = 0
+    @State private var barWidth: CGFloat = 0
+    @State private var height: CGFloat = 0
 
     @Default(.toolbarRowBackground) private var toolbarRowBackground
     @Default(.showActionRow) private var showActionRow
