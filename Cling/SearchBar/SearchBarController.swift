@@ -202,7 +202,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     func expand() {
         let panel = ensurePanel()
         guard let root else { return }
-        suspendHiddenMainWindow()
+        restoreMainContentWork?.cancel()
 
         root.background.rebuild()
         root.applyFonts()
@@ -246,6 +246,12 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         panel.makeKeyAndOrderFront(nil)
         root.field.currentEditor()?.selectAll(nil)
         pillPanel?.orderOut(nil)
+        // After this turn's commit, so tearing the hidden window's content down doesn't hold up the
+        // bar's first frame.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, isExpanded else { return }
+            suspendHiddenMainWindow()
+        }
         signpost("expand")
     }
 
@@ -270,6 +276,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         if pinned {
             showPill()
         }
+        restoreMainContentWhenIdle()
         if activatedApp {
             activatedApp = false
             if !focusLost {
@@ -544,6 +551,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     }
 
     private var hintKeys = HintKeys()
+    private var restoreMainContentWork: DispatchWorkItem?
     private var pillPanel: SearchBarPillPanel?
     private var pillView: SearchBarPillView?
     private var previewHost: NSHostingView<AnyView>?
@@ -712,6 +720,19 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         let main = AppDelegate.shared?.mainWindow
         guard main == nil || main?.isVisible == false || main?.alphaValue == 0, !WM.mainContentSuspended else { return }
         WM.mainContentSuspended = true
+    }
+
+    /// When the hotkey still shows the window, the bar is the occasional tool, so the window's
+    /// content is built again a moment after the bar closes. That cost lands while nobody waits,
+    /// instead of on the next summon of the window. When the hotkey shows the bar, the window
+    /// stays empty until something opens it.
+    private func restoreMainContentWhenIdle() {
+        guard !ownsHotkey, WM.mainContentSuspended else { return }
+        restoreMainContentWork?.cancel()
+        restoreMainContentWork = mainAsyncAfter(ms: 800) { [weak self] in
+            guard let self, !isExpanded else { return }
+            WM.mainContentSuspended = false
+        }
     }
 
     private func checkFocusLoss() {
