@@ -38,8 +38,13 @@ struct MCPSettingsPane: View {
             }
 
             Section("Install in") {
-                ForEach(MCPInstaller.clients) { client in
+                ForEach(MCPInstaller.featuredClients) { client in
                     clientRow(client)
+                }
+                DisclosureGroup("See more", isExpanded: $showMoreClients) {
+                    ForEach(MCPInstaller.moreClients) { client in
+                        clientRow(client)
+                    }
                 }
             }
 
@@ -55,6 +60,7 @@ struct MCPSettingsPane: View {
 
     @State private var states: [String: MCPInstaller.ConfigState] = [:]
     @State private var failures: [String: String] = [:]
+    @State private var showMoreClients = false
 
     @Default(.mcpEnabled) private var mcpEnabled
     @Default(.mcpAllowScripts) private var mcpAllowScripts
