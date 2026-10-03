@@ -467,6 +467,8 @@ class FuzzyClient {
     @ObservationIgnored var savedQuery: String?
     var activityLog: [ActivityEntry] = []
     var loadingIndex = false
+    /// A scope or Pro change arrived while engines were loading; it is applied once they are in.
+    @ObservationIgnored var scopeSyncPending = false
     var indexedCount = 0
     var clopIsAvailable = false
     var removedFiles: Set<String> = []
@@ -569,6 +571,12 @@ class FuzzyClient {
     @ObservationIgnored var ongoingOperationCounts: [String: Int] = [:]
     var ongoingOperationsList: [(key: String, message: String)] = []
 
+    /// The scopes search uses: the enabled ones, and without Pro only the free ones. Nothing else is walked, loaded,
+    /// followed or saved, since its results would never be shown.
+    var searchableScopes: [SearchScope] {
+        Defaults[.searchScopes].filter { proactive || Self.freeScopes.contains($0) }
+    }
+
     @ObservationIgnored var livePoolRefresh: DispatchWorkItem? {
         didSet { oldValue?.cancel() }
     }
@@ -622,12 +630,8 @@ class FuzzyClient {
         if EVERYTHING.active, let engine = EVERYTHING.engine {
             return [(engine, "Everything", 0)]
         }
-        let scopes = Defaults[.searchScopes]
         var result = [(SearchEngine, String, Int)]()
-        for scope in scopes {
-            if !proactive, !Self.freeScopes.contains(scope) {
-                continue
-            }
+        for scope in searchableScopes {
             if let eng = scopeEngines[scope] {
                 result.append((eng, scope.label, Self.scopeBiases[scope] ?? 0))
             }
@@ -1049,6 +1053,7 @@ class FuzzyClient {
         pub(.searchScopes)
             .debounce(for: 2.0, scheduler: RunLoop.main)
             .sink { [self] _ in
+                syncScopeEngines()
                 performSearch()
             }.store(in: &observers)
         pub(.literalSearch)
@@ -1182,7 +1187,7 @@ class FuzzyClient {
                     liveBase[scope] = id
                     liveRules[scope] = fingerprint
                 }
-                let missing = Defaults[.searchScopes].filter { liveBase[$0] == nil }
+                let missing = searchableScopes.filter { liveBase[$0] == nil }
                 if missing.isEmpty || batteryLevel() <= 0.3 {
                     watchFiles()
                     indexStaleExternalVolumes()
@@ -1201,7 +1206,7 @@ class FuzzyClient {
             saveLiveIndexIfWorthIt()
             chooseUnwatched()
             guard batteryLevel() > 0.3 else { return }
-            let missing = Defaults[.searchScopes].filter { liveBase[$0] == nil }
+            let missing = searchableScopes.filter { liveBase[$0] == nil }
             if !missing.isEmpty {
                 refresh(pauseSearch: false, scopes: missing)
             } else {
@@ -1275,11 +1280,13 @@ class FuzzyClient {
 
         setOperation("Loading index...")
         loadingIndex = true
+        // A scope search doesn't use stays on disk: it is loaded if it is turned on, or when Pro starts.
+        let wanted = Set(searchableScopes)
 
         Task.detached(priority: .userInitiated) {
             // Load priority scopes first (home, applications) so search works during cold start
-            let priorityScopes: [SearchScope] = [.home, .applications, .library]
-            let remainingScopes: [SearchScope] = SearchScope.allCases.filter { !priorityScopes.contains($0) }
+            let priorityScopes: [SearchScope] = [.home, .applications, .library].filter { wanted.contains($0) }
+            let remainingScopes: [SearchScope] = SearchScope.allCases.filter { !priorityScopes.contains($0) && wanted.contains($0) }
 
             // A file the loader rejects is truncated or corrupt, so it will never load. Delete it and
             // re-walk that scope, otherwise the scope stays silently empty until the next staleness check.
@@ -1421,6 +1428,89 @@ class FuzzyClient {
                 if !corruptScopes.isEmpty {
                     self.indexFiles(pauseSearch: false, scopes: corruptScopes)
                 }
+                if self.scopeSyncPending {
+                    self.scopeSyncPending = false
+                    self.syncScopeEngines()
+                }
+            }
+        }
+    }
+
+    /// Brings the loaded engines in line with the scopes search uses, after a scope is turned on or off, or Pro starts
+    /// or ends.
+    ///
+    /// A scope that stops being searchable has its engine, file and saved position dropped: replaying days of changes
+    /// when it comes back would cost more than walking it, and a position left behind would keep the background
+    /// agent's journal from ever being discarded. One that becomes searchable is loaded and caught up the same way as
+    /// at launch (a file left from before this version or from a launch without Pro), and walked when it has no file,
+    /// no position to replay from, or rules that changed meanwhile.
+    func syncScopeEngines() {
+        guard !loadingIndex else {
+            scopeSyncPending = true
+            return
+        }
+        let searchable = searchableScopes
+        let dropped = scopeEngines.keys.filter { !searchable.contains($0) }
+        let added = searchable.filter { scopeEngines[$0] == nil && !scopesIndexing.contains($0) }
+
+        if !dropped.isEmpty {
+            for scope in dropped {
+                releaseInBackground(scopeEngines.removeValue(forKey: scope))
+                liveBase[scope] = nil
+                liveRules[scope] = nil
+                try? FileManager.default.removeItem(at: scopeIndexFile(scope).url)
+            }
+            ScopeIndexState.forget(dropped)
+            log.info("Scopes no longer searched, unloaded: \(dropped.map(\.rawValue))")
+            updateIndexedCount()
+            refreshLiveRoutes()
+            invalidateSearch()
+            performSearch()
+        }
+        guard !added.isEmpty else { return }
+
+        loadingIndex = true
+        Task.detached(priority: .userInitiated) {
+            var loaded: [(SearchScope, SearchEngine)] = []
+            for scope in added {
+                let file = scopeIndexFile(scope)
+                guard file.exists else { continue }
+                let eng = SearchEngine()
+                if eng.loadBinaryIndex(from: file.url) {
+                    loaded.append((scope, eng))
+                }
+            }
+            await MainActor.run { [loaded] in
+                self.loadingIndex = false
+                // The engines still being followed move up to where the updater got, before the stream restarts from
+                // the oldest position, which the new ones may now hold.
+                self.stopWatchingFiles()
+                let state = ScopeIndexState.read()
+                let now = FSEventsGetCurrentEventId()
+                for (scope, eng) in loaded where self.searchableScopes.contains(scope) {
+                    releaseInBackground(self.scopeEngines.updateValue(eng, forKey: scope))
+                    let fingerprint = self.rulesFingerprint(scope)
+                    if let id = state?.replayable[scope], state?.rules[scope.rawValue] == fingerprint, now - id <= Self.maxReplayGap {
+                        self.liveBase[scope] = id
+                        self.liveRules[scope] = fingerprint
+                    }
+                }
+                let walk = added.filter { self.searchableScopes.contains($0) && self.liveBase[$0] == nil }
+                log.info("Scopes now searched: loaded \(loaded.map(\.0.rawValue)), walking \(walk.map(\.rawValue))")
+                self.updateIndexedCount()
+                self.invalidateSearch()
+                self.performSearch()
+                if walk.isEmpty {
+                    self.watchFiles()
+                } else {
+                    self.indexFiles(pauseSearch: false, scopes: walk) { [self] in
+                        watchFiles()
+                    }
+                }
+                if self.scopeSyncPending {
+                    self.scopeSyncPending = false
+                    self.syncScopeEngines()
+                }
             }
         }
     }
@@ -1465,7 +1555,8 @@ class FuzzyClient {
             indexing = true
         }
 
-        let scopes = scopeOverride ?? Defaults[.searchScopes]
+        let searchable = searchableScopes
+        let scopes = (scopeOverride ?? searchable).filter { searchable.contains($0) }
         guard !scopes.isEmpty else {
             log.debug("No scopes to index")
             onFinish?()
@@ -1680,7 +1771,7 @@ class FuzzyClient {
         let ignoreChecker: String? = fsignore.exists ? fsignoreString : nil
         let volumePaths = Set(enabledVolumes.map(\.string))
         var routes: [LiveRoute] = []
-        for scope in Defaults[.searchScopes] {
+        for scope in searchableScopes {
             guard let engine = scopeEngines[scope] else { continue }
             let scopeIgnoreFile = ScopeIgnore.rootedScopes.contains(scope) ? ScopeIgnore.activeFile(for: scope) : nil
             let honorGitignore = scope == .home && Defaults[.honorGitignore]
@@ -1734,7 +1825,7 @@ class FuzzyClient {
         stopWatchingFiles()
 
         // Replay from the oldest position among the engines; changes they already hold apply again harmlessly.
-        var since = Defaults[.searchScopes].compactMap { scopeEngines[$0] != nil ? liveBase[$0] : nil }.min()
+        var since = searchableScopes.compactMap { scopeEngines[$0] != nil ? liveBase[$0] : nil }.min()
         // The background agent's changes from while Cling was closed, when every engine is at or past where they start:
         // they are applied first, and the replay starts where the agent stopped.
         let journal = launchJournal.flatMap { journal in since.map { journal.header.start <= $0 } == true ? journal : nil }
@@ -3097,7 +3188,7 @@ class FuzzyClient {
         }
         let volumePaths = Set(enabledVolumes.map(\.string))
         let homeIgnore: String? = fsignore.exists ? fsignoreString : nil
-        for scope in Defaults[.searchScopes] {
+        for scope in searchableScopes {
             guard let engine = scopeEngines[scope],
                   let root = walkDirs(for: scope).first(where: { contains($0.dir) && !($0.excludePrefix.map(contains) ?? false) })
             else { continue }
