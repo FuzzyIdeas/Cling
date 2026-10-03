@@ -70,6 +70,8 @@ final class SearchBarRowStyle {
     private(set) var metaWidth: CGFloat = 150
     private(set) var stashTagWidth: CGFloat = 30
     private(set) var scale: Double = 1
+    /// Bumped whenever sizes or fonts change, so rows drawn with the old ones know to redraw.
+    private(set) var generation = 0
 
     /// Called once a burst of background renders has landed, so the visible rows redraw once.
     var onRastersReady: (() -> Void)?
@@ -94,14 +96,14 @@ final class SearchBarRowStyle {
         return kind
     }
 
-    /// The icon pre-rendered at the row's exact pixel size. Workspace icons are IconServices
-    /// images that render their representation again on every draw, which was the single most
-    /// expensive part of a row; a plain bitmap of the right size draws as a blit.
+    /// The icon pre-rendered at the row's exact pixel size, for a row's icon layer. Workspace
+    /// icons are IconServices images that render their representation again on every draw, which
+    /// was the single most expensive part of a row; a bitmap of the right size is only composited.
     ///
-    /// A row never renders a file's own icon on the main thread: until its bitmap is ready (made on
-    /// a background queue) the row shows the icon for its type, which is shared by every file with
-    /// that extension and so rendered once.
-    func iconImage(for path: FilePath, side: CGFloat, scale: CGFloat) -> NSImage {
+    /// A file's own icon is never rendered on the main thread: until its bitmap is ready (made on a
+    /// background queue) the row shows the icon for its type, which every file with that extension
+    /// shares and so is rendered once.
+    func iconImage(for path: FilePath, side: CGFloat, scale: CGFloat) -> CGImage? {
         let icon = FilePathBackgroundTasks.shared.icon(for: path)
         if let ready = cachedRaster(icon, side: side, scale: scale) {
             return ready
@@ -111,19 +113,19 @@ final class SearchBarRowStyle {
         if let ready = cachedRaster(stand, side: side, scale: scale) {
             return ready
         }
-        let image = Self.render(stand, side: side, scale: scale) ?? stand
+        guard let image = Self.render(stand, side: side, scale: scale) else { return nil }
         rasters.setObject(Raster(image: image, side: side, scale: scale), forKey: stand)
         return image
     }
 
     private final class Raster {
-        init(image: NSImage, side: CGFloat, scale: CGFloat) {
+        init(image: CGImage, side: CGFloat, scale: CGFloat) {
             self.image = image
             self.side = side
             self.scale = scale
         }
 
-        let image: NSImage
+        let image: CGImage
         let side: CGFloat
         let scale: CGFloat
     }
@@ -137,24 +139,22 @@ final class SearchBarRowStyle {
     private var kinds: [String: String] = [:]
     private let folderKind = UTType.folder.localizedDescription ?? "Folder"
 
-    private nonisolated static func render(_ icon: NSImage, side: CGFloat, scale: CGFloat) -> NSImage? {
+    private nonisolated static func render(_ icon: NSImage, side: CGFloat, scale: CGFloat) -> CGImage? {
         let pixels = Int((side * scale).rounded())
-        guard pixels > 0, let rep = NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8, samplesPerPixel: 4,
-            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-        ), let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
-        rep.size = NSSize(width: side, height: side)
+        guard pixels > 0, let space = CGColorSpace(name: CGColorSpace.sRGB), let cg = CGContext(
+            data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
+            space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        cg.interpolationQuality = .high
+        let context = NSGraphicsContext(cgContext: cg, flipped: false)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
-        context.imageInterpolation = .high
-        icon.draw(in: NSRect(x: 0, y: 0, width: side, height: side), from: .zero, operation: .copy, fraction: 1)
+        icon.draw(in: NSRect(x: 0, y: 0, width: pixels, height: pixels), from: .zero, operation: .copy, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()
-        let image = NSImage(size: rep.size)
-        image.addRepresentation(rep)
-        return image
+        return cg.makeImage()
     }
 
-    private func cachedRaster(_ icon: NSImage, side: CGFloat, scale: CGFloat) -> NSImage? {
+    private func cachedRaster(_ icon: NSImage, side: CGFloat, scale: CGFloat) -> CGImage? {
         guard let cached = rasters.object(forKey: icon), cached.side == side, cached.scale == scale else { return nil }
         return cached.image
     }
@@ -200,6 +200,7 @@ final class SearchBarRowStyle {
         detailLineHeight = ceil(detailFont.ascender - detailFont.descender + detailFont.leading)
         stashTagWidth = ceil(("Stash" as NSString).size(withAttributes: [.font: tagFont]).width)
         SearchBarTextCache.shared.reset()
+        generation += 1
     }
 }
 
@@ -212,6 +213,7 @@ final class SearchBarRowStyle {
 final class SearchBarTextCache {
     enum Style: Int {
         case name, detail, meta, tag
+        case hintKey, hintTitle, status, flash
     }
 
     static let shared = SearchBarTextCache()
@@ -230,6 +232,24 @@ final class SearchBarTextCache {
         context.restoreGState()
     }
 
+    /// Draws `text` untruncated with the top of its line box at `point`, in a flipped context.
+    func draw(_ text: String, style: Style, at point: NSPoint, color: NSColor) {
+        guard !text.isEmpty, let context = NSGraphicsContext.current?.cgContext else { return }
+        let entry = line(text, style: style, width: nil)
+        context.saveGState()
+        color.setFill()
+        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        context.textPosition = CGPoint(x: point.x, y: point.y + entry.ascent)
+        CTLineDraw(entry.line, context)
+        context.restoreGState()
+    }
+
+    /// Width and line height of `text` set on one line, untruncated.
+    func size(_ text: String, style: Style) -> NSSize {
+        let entry = line(text, style: style, width: nil)
+        return NSSize(width: entry.width, height: entry.ascent + entry.descent)
+    }
+
     func reset() {
         lines.removeAll(keepingCapacity: true)
         fonts.removeAll()
@@ -245,6 +265,7 @@ final class SearchBarTextCache {
         let line: CTLine
         let width: CGFloat
         let ascent: CGFloat
+        let descent: CGFloat
     }
 
     private var lines: [Key: Entry] = [:]
@@ -259,13 +280,17 @@ final class SearchBarTextCache {
         case .detail: .systemFont(ofSize: FontScale.size(11))
         case .meta: .monospacedDigitSystemFont(ofSize: FontScale.size(10.5), weight: .regular)
         case .tag: .systemFont(ofSize: FontScale.size(9.5), weight: .semibold)
+        case .hintKey: .systemFont(ofSize: FontScale.size(10, .chrome), weight: .semibold)
+        case .hintTitle: .systemFont(ofSize: FontScale.size(11, .chrome))
+        case .status: .monospacedDigitSystemFont(ofSize: FontScale.size(11, .chrome), weight: .regular)
+        case .flash: .systemFont(ofSize: FontScale.size(11, .chrome), weight: .semibold)
         }
         fonts[style.rawValue] = font
         return font
     }
 
-    private func line(_ text: String, style: Style, width: CGFloat) -> Entry {
-        let key = Key(text: text, style: style.rawValue, width: Int(width))
+    private func line(_ text: String, style: Style, width: CGFloat?) -> Entry {
+        let key = Key(text: text, style: style.rawValue, width: width.map { Int($0) } ?? -1)
         if let cached = lines[key] {
             return cached
         }
@@ -275,13 +300,14 @@ final class SearchBarTextCache {
         ]
         let full = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attrs))
         var line = full
-        if CTLineGetTypographicBounds(full, nil, nil, nil) > width {
+        if let width, CTLineGetTypographicBounds(full, nil, nil, nil) > width {
             let ellipsis = CTLineCreateWithAttributedString(NSAttributedString(string: "…", attributes: attrs))
             line = CTLineCreateTruncatedLine(full, width, style == .meta ? .end : .middle, ellipsis) ?? full
         }
         var ascent: CGFloat = 0
-        let lineWidth = CTLineGetTypographicBounds(line, &ascent, nil, nil)
-        let entry = Entry(line: line, width: lineWidth, ascent: ascent)
+        var descent: CGFloat = 0
+        let lineWidth = CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+        let entry = Entry(line: line, width: lineWidth, ascent: ascent, descent: descent)
         if lines.count > 1500 {
             lines.removeAll(keepingCapacity: true)
         }
@@ -292,13 +318,15 @@ final class SearchBarTextCache {
 
 // MARK: - SearchBarRowView
 
-/// A result row: a selection highlight that is only shown or hidden, under content that redraws
-/// only when the row's file or what's known about it changes. Moving the selection draws nothing.
+/// A result row as three layers: a selection highlight that is only shown or hidden, an icon whose
+/// bitmap is swapped in without drawing, and text that redraws only when the row's file, its size
+/// and date, or the text size change. Moving the selection or an icon arriving draws nothing.
 final class SearchBarRowView: NSTableRowView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         addSubview(selectionView)
+        addSubview(iconView)
         addSubview(content)
         selectionView.isHidden = true
     }
@@ -307,8 +335,6 @@ final class SearchBarRowView: NSTableRowView {
     required init?(coder _: NSCoder) {
         fatalError()
     }
-
-    static let identifier = NSUserInterfaceItemIdentifier("SearchBarRow")
 
     override var isOpaque: Bool {
         false
@@ -328,11 +354,15 @@ final class SearchBarRowView: NSTableRowView {
     }
 
     let content = SearchBarRowContent()
+    let iconView = SearchBarIconView()
     let selectionView = SearchBarSelectionView()
 
     var path: FilePath? {
         get { content.path }
-        set { content.path = newValue }
+        set {
+            content.path = newValue
+            refreshIcon()
+        }
     }
 
     var isStashed: Bool {
@@ -353,13 +383,79 @@ final class SearchBarRowView: NSTableRowView {
 
     override func layout() {
         super.layout()
+        let side = SearchBarRowStyle.shared.iconSide
         selectionView.frame = bounds.insetBy(dx: 6, dy: 1)
+        iconView.frame = NSRect(x: 14, y: ((bounds.height - side) / 2).rounded(), width: side, height: side)
         content.frame = bounds
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        iconView.layer?.contentsScale = backingScale
+        refreshIcon()
     }
 
     override func accessibilityLabel() -> String? {
         guard let path else { return nil }
         return "\(path.name.string), \(path.dir.shellString)"
+    }
+
+    func refreshIcon() {
+        guard let path = content.path else {
+            iconView.image = nil
+            return
+        }
+        let style = SearchBarRowStyle.shared
+        iconView.image = style.iconImage(for: path, side: style.iconSide, scale: backingScale)
+    }
+
+    /// Same file, possibly fresher icon, size or date.
+    func refresh() {
+        refreshIcon()
+        content.refreshIfStale()
+    }
+
+    private var backingScale: CGFloat {
+        window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    }
+}
+
+// MARK: - SearchBarIconView
+
+/// Shows a ready bitmap as its layer's contents: changing it composites, nothing is drawn.
+final class SearchBarIconView: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError()
+    }
+
+    override var wantsUpdateLayer: Bool {
+        true
+    }
+    override var allowsVibrancy: Bool {
+        false
+    }
+
+    var image: CGImage? {
+        didSet {
+            guard image !== oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
+    override func hitTest(_: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func updateLayer() {
+        layer?.contents = image
+        layer?.contentsGravity = .resizeAspect
     }
 }
 
@@ -403,14 +499,14 @@ final class SearchBarSelectionView: NSView {
 
 // MARK: - SearchBarRowContent
 
-/// Icon, name, folder, kind, size and date, drawn in one pass.
+/// Name, folder, kind, size and date, drawn in one pass.
 final class SearchBarRowContent: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
-        // On an XDR display the default backing is 16 bits per channel; text and icons don't need
-        // it and drawing into half the bytes is twice as cheap.
+        // On an XDR display the default backing is 16 bits per channel; text doesn't need it and
+        // drawing into half the bytes is twice as cheap.
         layer?.contentsFormat = .RGBA8Uint
     }
 
@@ -447,6 +543,15 @@ final class SearchBarRowContent: NSView {
         nil
     }
 
+    /// The layer only redraws on request, so a new width (the bar resized) has to ask for it.
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize != frame.size
+        super.setFrameSize(newSize)
+        if changed {
+            needsDisplay = true
+        }
+    }
+
     override func draw(_: NSRect) {
         guard let path else { return }
         #if DEBUG || SEARCHBAR_BENCH
@@ -455,14 +560,9 @@ final class SearchBarRowContent: NSView {
         let style = SearchBarRowStyle.shared
         let text = SearchBarTextCache.shared
         let bounds = bounds
+        drawnGeneration = style.generation
 
-        let iconSide = style.iconSide
-        let iconRect = NSRect(x: 14, y: (bounds.height - iconSide) / 2, width: iconSide, height: iconSide)
-        let icon = style.iconImage(for: path, side: iconSide, scale: window?.backingScaleFactor ?? 2)
-        icon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-        drawnIcon = ObjectIdentifier(icon)
-
-        let textX = iconRect.maxX + 10
+        let textX = 14 + style.iconSide + 10
         let showMeta = bounds.width > 420
         let metaWidth = showMeta ? style.metaWidth : 0
         let textWidth = max(bounds.width - textX - metaWidth - 20, 40)
@@ -484,9 +584,8 @@ final class SearchBarRowContent: NSView {
         let metaX = bounds.width - metaWidth - 16
         let kind = style.kind(of: path, isDir: FilePathBackgroundTasks.shared.knownIsDir(path))
         if isStashed {
-            let tag = "Stash"
-            text.draw(tag, style: .tag, in: NSRect(x: metaX, y: top + 2, width: metaWidth, height: style.nameLineHeight), color: .systemOrange)
             let tagWidth = style.stashTagWidth
+            text.draw("Stash", style: .tag, in: NSRect(x: metaX, y: top + 2, width: metaWidth, height: style.nameLineHeight), color: .systemOrange)
             text.draw(
                 kind, style: .meta,
                 in: NSRect(x: metaX + tagWidth + 6, y: top + 1, width: max(metaWidth - tagWidth - 6, 10), height: style.nameLineHeight),
@@ -504,18 +603,16 @@ final class SearchBarRowContent: NSView {
         )
     }
 
-    /// Redraws only when the icon or the size and date line changed since the last draw.
+    /// Redraws only when the size and date line or the row style changed since the last draw.
     func refreshIfStale() {
         guard let path else { return }
-        let style = SearchBarRowStyle.shared
-        let icon = style.iconImage(for: path, side: style.iconSide, scale: window?.backingScaleFactor ?? 2)
-        if ObjectIdentifier(icon) != drawnIcon || metaLine(path) != drawnMeta {
+        if SearchBarRowStyle.shared.generation != drawnGeneration || (drawnMeta != nil && metaLine(path) != drawnMeta) {
             needsDisplay = true
         }
     }
 
-    private var drawnIcon: ObjectIdentifier?
     private var drawnMeta: String?
+    private var drawnGeneration = -1
 
     private func metaLine(_ path: FilePath) -> String {
         let isDir = FilePathBackgroundTasks.shared.knownIsDir(path) == true
@@ -549,7 +646,9 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
         tableView.rowHeight = SearchBarRowStyle.shared.rowHeight
         tableView.allowsMultipleSelection = true
         tableView.allowsEmptySelection = true
-        tableView.selectionHighlightStyle = .regular
+        // Rows draw their own highlight; the regular style would also build AppKit's selection
+        // background view in every selected row.
+        tableView.selectionHighlightStyle = .none
         tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         tableView.focusRingType = .none
         tableView.dataSource = self
@@ -597,12 +696,17 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
     /// still there, otherwise it lands on the given row (or nothing for -1).
     func setItems(_ newItems: [FilePath], select row: Int?, scrollToTop: Bool) {
         let previouslySelected = Set(selectedPaths)
+        let oldItems = items
         items = newItems
+        suppressSelectionCallback = true
         if SearchBarRowStyle.shared.rowHeight != tableView.rowHeight {
             tableView.rowHeight = SearchBarRowStyle.shared.rowHeight
+            tableView.reloadData()
+        } else if !applyInsertionsAndRemovals(from: oldItems, to: newItems) {
+            let shown = scrollToTop ? 0 : max(tableView.rows(in: tableView.visibleRect).location, 0)
+            reservedPaths = Set(newItems[min(shown, newItems.count) ..< min(shown + visibleRowCount + 4, newItems.count)])
+            tableView.reloadData()
         }
-        suppressSelectionCallback = true
-        tableView.reloadData()
 
         var selection = IndexSet()
         if let row {
@@ -628,7 +732,7 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
     func refreshVisibleRows() {
         forEachVisibleRow { row, view in
             view.isStashed = stashed.contains(items[row])
-            view.content.refreshIfStale()
+            view.refresh()
         }
     }
 
@@ -655,19 +759,39 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
         items.count
     }
 
-    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        let view = (tableView.makeView(withIdentifier: SearchBarRowView.identifier, owner: nil) as? SearchBarRowView) ?? {
-            let view = SearchBarRowView()
-            view.identifier = SearchBarRowView.identifier
-            view.wantsLayer = true
-            view.layerContentsRedrawPolicy = .onSetNeedsDisplay
-            return view
-        }()
+    /// Row views go back to a pool keyed by the file they show. A list that comes back reordered
+    /// (live index changes, a refined search keeping most results) gets each file's already drawn
+    /// row back, so only rows for files new to the screen draw anything.
+    func tableView(_: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         let path = items[row]
+        let view: SearchBarRowView
+        if let pooled = freeRows.removeValue(forKey: path) {
+            #if DEBUG || SEARCHBAR_BENCH
+                SearchBarBenchmark.count("rowReused")
+            #endif
+            freeOrder.removeAll { $0 == path }
+            view = pooled
+            view.refresh()
+        } else if let index = freeOrder.firstIndex(where: { !reservedPaths.contains($0) }) {
+            view = freeRows.removeValue(forKey: freeOrder.remove(at: index))!
+        } else {
+            view = SearchBarRowView()
+        }
         view.path = path
         view.isStashed = stashed.contains(path)
         view.strongSelection = strongSelection
         return view
+    }
+
+    /// Called for every row leaving the table, whether scrolled away or dropped by a reload.
+    func tableView(_: NSTableView, didRemove rowView: NSTableRowView, forRow _: Int) {
+        guard let view = rowView as? SearchBarRowView, let path = view.path else { return }
+        if freeRows.updateValue(view, forKey: path) == nil {
+            freeOrder.append(path)
+        }
+        if freeOrder.count > Self.maxPooledRows {
+            freeRows.removeValue(forKey: freeOrder.removeFirst())
+        }
     }
 
     func tableView(_: NSTableView, viewFor _: NSTableColumn?, row _: Int) -> NSView? {
@@ -687,7 +811,49 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
         items[safe: row]?.url as NSURL?
     }
 
+    private static let maxPooledRows = 64
+
     private var suppressSelectionCallback = false
+    private var freeRows: [FilePath: SearchBarRowView] = [:]
+    private var freeOrder: [FilePath] = []
+    /// Files about to be shown, whose pooled rows shouldn't be handed to another file.
+    private var reservedPaths: Set<FilePath> = []
+
+    /// A list that only gained or lost a few files, the rest in the same order (a file created or
+    /// deleted while the bar is open), is applied as row inserts and removals: rows already on
+    /// screen keep their drawing and only slide. A reload would remove and redraw every row.
+    private func applyInsertionsAndRemovals(from old: [FilePath], to new: [FilePath]) -> Bool {
+        let limit = 32
+        guard !old.isEmpty, !new.isEmpty, old != new else { return old == new }
+        guard abs(old.count - new.count) <= limit, max(old.count, new.count) <= 5000 else { return false }
+
+        let newSet = Set(new)
+        var removed = IndexSet()
+        for (i, path) in old.enumerated() where !newSet.contains(path) {
+            removed.insert(i)
+            if removed.count > limit {
+                return false
+            }
+        }
+        let oldSet = Set(old)
+        var inserted = IndexSet()
+        for (i, path) in new.enumerated() where !oldSet.contains(path) {
+            inserted.insert(i)
+            if inserted.count > limit {
+                return false
+            }
+        }
+        // Everything else has to keep its relative order, otherwise rows moved and a reload is simpler.
+        let keptOld = old.indices.lazy.filter { !removed.contains($0) }.map { old[$0] }
+        let keptNew = new.indices.lazy.filter { !inserted.contains($0) }.map { new[$0] }
+        guard keptOld.elementsEqual(keptNew) else { return false }
+
+        tableView.beginUpdates()
+        tableView.removeRows(at: removed, withAnimation: [])
+        tableView.insertRows(at: inserted, withAnimation: [])
+        tableView.endUpdates()
+        return true
+    }
 
     private func forEachVisibleRow(_ body: (Int, SearchBarRowView) -> Void) {
         let range = tableView.rows(in: tableView.visibleRect)

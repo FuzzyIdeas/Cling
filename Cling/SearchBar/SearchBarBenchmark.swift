@@ -73,6 +73,10 @@
                 }
             }
 
+            static func processCPUTime() -> Double {
+                processCPU()
+            }
+
             func finish(extra: String = "") {
                 let duration = CACurrentMediaTime() - startTime
                 SearchBarBenchmark.recording = false
@@ -211,6 +215,11 @@
             log("index: \(FUZZY.indexedCount) files, FDA \(FUZZY.hasFullDiskAccess), ready after \(Int(Date().timeIntervalSince(readyBy.addingTimeInterval(-240))))s")
             try? await Task.sleep(for: .seconds(2))
 
+            // After launch the index catches up on changes in the background for a while, which
+            // would land in whichever scenario runs then.
+            let quiet = await waitForQuiet()
+            log("background quiet after \(quiet)s")
+
             let savedAppearance = Defaults[.windowAppearance]
             let savedPreview = Defaults[.searchBarShowPreview]
             let savedPinned = Defaults[.searchBarPinned]
@@ -251,6 +260,8 @@
                 for preview in previews {
                     Defaults[.searchBarShowPreview] = preview
                     try? await Task.sleep(for: .milliseconds(100))
+                    // The churn of the previous idle scenarios leaves the index rescanning folders.
+                    _ = await waitForQuiet()
                     let tag = "\(appearance.rawValue.lowercased())\(preview ? "+preview" : "")"
                     log("")
                     log("## \(tag)")
@@ -268,6 +279,9 @@
                     }
                     if wants("list-updates") {
                         await listUpdates(tag)
+                    }
+                    if wants("list-inserts") {
+                        await listInserts(tag)
                     }
                 }
                 if wants("idle-expanded") {
@@ -392,12 +406,18 @@
         private static func arrows(_ tag: String) async {
             await setQuery("swift")
             let meter = Meter("arrows", tag)
-            for _ in 0 ..< 60 {
-                SB.moveSelection(by: 1)
+            let moves = max(UserDefaults.standard.integer(forKey: "searchBarBenchmarkArrowMoves"), 60)
+            let rows = max(SB.results.items.count, 1)
+            for i in 0 ..< moves {
+                // Down through the list and back up, so long runs keep scrolling.
+                SB.moveSelection(by: (i / max(rows - 1, 1)) % 2 == 0 ? 1 : -1)
                 try? await Task.sleep(for: .milliseconds(33))
             }
             await settle(300)
-            meter.finish(extra: "rows \(SB.results.items.count)")
+            let table = SB.results.tableView
+            let selected = table.selectedRow
+            let shown = selected >= 0 ? table.rowView(atRow: selected, makeIfNecessary: false)?.isSelected : nil
+            meter.finish(extra: "rows \(SB.results.items.count), selected row highlighted: \(shown.map { "\($0)" } ?? "n/a")")
         }
 
         private static func listUpdates(_ tag: String) async {
@@ -408,9 +428,53 @@
                 return
             }
             let meter = Meter("list-updates", tag)
-            for i in 0 ..< 30 {
+            let updates = max(UserDefaults.standard.integer(forKey: "searchBarBenchmarkListUpdates"), 30)
+            for i in 0 ..< updates {
                 let shift = (i * 7) % base.count
                 FUZZY.results = Array(base[shift...] + base[..<shift])
+                try? await Task.sleep(for: .milliseconds(60))
+            }
+            await settle(200)
+            meter.finish()
+            FUZZY.results = base
+        }
+
+        /// Files appearing at the top and disappearing further down, the way live index changes
+        /// reach a list sorted by date.
+        /// Waits until the process used under a tenth of a core for a whole second, at most 90s.
+        /// Returns the seconds waited.
+        private static func waitForQuiet() async -> Int {
+            let quietBy = Date().addingTimeInterval(90)
+            var lastCPU = Meter.processCPUTime()
+            var waited = 0
+            while Date() < quietBy {
+                try? await Task.sleep(for: .seconds(1))
+                waited += 1
+                let cpu = Meter.processCPUTime()
+                defer { lastCPU = cpu }
+                if cpu - lastCPU < 0.1 {
+                    break
+                }
+            }
+            return waited
+        }
+
+        private static func listInserts(_ tag: String) async {
+            await setQuery("config")
+            let base = FUZZY.results
+            guard base.count > 20 else {
+                log("list-inserts: skipped, \(base.count) results")
+                return
+            }
+            let meter = Meter("list-inserts", tag)
+            var list = base
+            for i in 0 ..< 30 {
+                if i % 3 == 2 {
+                    list.remove(at: min(5, list.count - 1))
+                } else {
+                    list.insert(FilePath("/private/tmp/cling-bench-churn/inserted-\(i).txt"), at: 0)
+                }
+                FUZZY.results = list
                 try? await Task.sleep(for: .milliseconds(60))
             }
             await settle(200)

@@ -232,8 +232,12 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             installKeyMonitor()
         }
 
+        // First responder before ordering in, so showing the panel doesn't pick a key view first
+        // only for it to be replaced.
+        if root.field.currentEditor() == nil {
+            panel.makeFirstResponder(root.field)
+        }
         panel.makeKeyAndOrderFront(nil)
-        panel.makeFirstResponder(root.field)
         root.field.currentEditor()?.selectAll(nil)
         pillPanel?.orderOut(nil)
         signpost("expand")
@@ -602,7 +606,10 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             panel.standardWindowButton(button)?.isHidden = true
         }
-        panel.isMovableByWindowBackground = true
+        // Moved by SearchBarRootView's own drag. A movable titled window has AppKit work out which
+        // parts of its titlebar strip can drag it, from scratch whenever a view moves under it, and
+        // here that was every row scrolling in or out.
+        panel.isMovable = false
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]

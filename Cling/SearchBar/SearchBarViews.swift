@@ -101,7 +101,6 @@ final class SearchBarHintBar: NSView {
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         layer?.contentsFormat = .RGBA8Uint
-        rebuildFonts()
     }
 
     @available(*, unavailable)
@@ -137,48 +136,58 @@ final class SearchBarHintBar: NSView {
     }
 
     override func draw(_: NSRect) {
-        if scale != FontScale.current {
-            rebuildFonts()
-        }
-        hintRects.removeAll(keepingCapacity: true)
+        let text = SearchBarTextCache.shared
+        var rects: [(SearchBarHint.ID, NSRect)] = []
 
-        let statusText = (flashText ?? status) as NSString
-        let statusAttrs = flashText == nil ? statusFont : flashFont
-        let statusSize = statusText.size(withAttributes: statusAttrs)
+        let statusText = flashText ?? status
+        let statusStyle: SearchBarTextCache.Style = flashText == nil ? .status : .flash
+        let statusSize = text.size(statusText, style: statusStyle)
         let statusX = bounds.width - statusSize.width - 14
-        statusText.draw(at: NSPoint(x: statusX, y: (bounds.height - statusSize.height) / 2), withAttributes: statusAttrs)
+        text.draw(
+            statusText, style: statusStyle, at: NSPoint(x: statusX, y: (bounds.height - statusSize.height) / 2),
+            color: flashText == nil ? .tertiaryLabelColor : .controlAccentColor
+        )
 
         var x: CGFloat = 12
         let limit = statusX - 12
         let capHeight = round(bounds.height * 0.6)
+        let capFill = NSColor.labelColor.withAlphaComponent(0.08)
         for hint in hints {
-            let key = hint.key as NSString
-            let title = hint.title as NSString
-            let keySize = key.size(withAttributes: keyFont)
-            let titleSize = title.size(withAttributes: titleFont)
+            let keySize = text.size(hint.key, style: .hintKey)
+            let titleSize = text.size(hint.title, style: .hintTitle)
             let capWidth = max(keySize.width + 8, capHeight)
             let width = capWidth + 5 + titleSize.width
             guard x + width <= limit else { break }
 
             let capRect = NSRect(x: x, y: (bounds.height - capHeight) / 2, width: capWidth, height: capHeight)
-            NSColor.labelColor.withAlphaComponent(0.08).setFill()
+            capFill.setFill()
             NSBezierPath(roundedRect: capRect, xRadius: 4, yRadius: 4).fill()
-            key.draw(
-                at: NSPoint(x: capRect.midX - keySize.width / 2, y: capRect.midY - keySize.height / 2),
-                withAttributes: keyFont
+            text.draw(
+                hint.key, style: .hintKey,
+                at: NSPoint(x: capRect.midX - keySize.width / 2, y: capRect.midY - keySize.height / 2), color: .secondaryLabelColor
             )
-            title.draw(at: NSPoint(x: capRect.maxX + 5, y: (bounds.height - titleSize.height) / 2), withAttributes: titleFont)
+            text.draw(
+                hint.title, style: .hintTitle,
+                at: NSPoint(x: capRect.maxX + 5, y: (bounds.height - titleSize.height) / 2), color: .secondaryLabelColor
+            )
 
-            hintRects.append((hint.id, NSRect(x: x - 4, y: 0, width: width + 8, height: bounds.height)))
+            rects.append((hint.id, NSRect(x: x - 4, y: 0, width: width + 8, height: bounds.height)))
             x += width + 16
         }
-        window?.invalidateCursorRects(for: self)
+        // Cursor rects are part of the window's structural regions, which AppKit recomputes in
+        // full when they're invalidated, so only when the hints actually moved.
+        if !rects.elementsEqual(hintRects, by: { $0.0 == $1.0 && $0.1 == $1.1 }) {
+            hintRects = rects
+            window?.invalidateCursorRects(for: self)
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if let hit = hintRects.first(where: { $0.1.contains(point) }) {
             onHint?(hit.0)
+        } else {
+            super.mouseDown(with: event)
         }
     }
 
@@ -202,19 +211,6 @@ final class SearchBarHintBar: NSView {
     private var hintRects: [(SearchBarHint.ID, NSRect)] = []
     private var flashText: String?
     private var flashTask: DispatchWorkItem?
-    private var scale: Double = 0
-    private var keyFont: [NSAttributedString.Key: Any] = [:]
-    private var titleFont: [NSAttributedString.Key: Any] = [:]
-    private var statusFont: [NSAttributedString.Key: Any] = [:]
-    private var flashFont: [NSAttributedString.Key: Any] = [:]
-
-    private func rebuildFonts() {
-        scale = FontScale.current
-        keyFont = [.font: NSFont.systemFont(ofSize: FontScale.size(10, .chrome), weight: .semibold), .foregroundColor: NSColor.secondaryLabelColor]
-        titleFont = [.font: NSFont.systemFont(ofSize: FontScale.size(11, .chrome)), .foregroundColor: NSColor.secondaryLabelColor]
-        statusFont = [.font: NSFont.monospacedDigitSystemFont(ofSize: FontScale.size(11, .chrome), weight: .regular), .foregroundColor: NSColor.tertiaryLabelColor]
-        flashFont = [.font: NSFont.systemFont(ofSize: FontScale.size(11, .chrome), weight: .semibold), .foregroundColor: NSColor.controlAccentColor]
-    }
 }
 
 // MARK: - SearchBarSeparator
@@ -410,6 +406,27 @@ final class SearchBarRootView: NSView {
             previewDivider.isHidden = !showsPreview
             needsLayout = true
         }
+    }
+
+    /// Clicks that reach the background drag the window. The panel isn't movable by AppKit (see
+    /// SearchBarController.ensurePanel), so this follows the cursor itself until the button is up.
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        let startMouse = NSEvent.mouseLocation
+        let startOrigin = window.frame.origin
+        var moved = false
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), next.type == .leftMouseDragged {
+            let mouse = NSEvent.mouseLocation
+            let dx = mouse.x - startMouse.x
+            let dy = mouse.y - startMouse.y
+            guard moved || abs(dx) > 2 || abs(dy) > 2 else { continue }
+            moved = true
+            window.setFrameOrigin(NSPoint(x: startOrigin.x + dx, y: startOrigin.y + dy))
+        }
+    }
+
+    override func acceptsFirstMouse(for _: NSEvent?) -> Bool {
+        true
     }
 
     override func layout() {
