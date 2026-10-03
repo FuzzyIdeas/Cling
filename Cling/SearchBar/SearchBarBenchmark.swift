@@ -25,6 +25,7 @@
     import Lowtech
     import OSLog
     import QuartzCore
+    import SwiftUI
     import System
 
     private let signposter = OSSignposter(subsystem: clingSubsystem, category: "SearchBarBenchmark")
@@ -193,6 +194,11 @@
         private static var lines: [String] = []
         private static let outPath = CommandLine.arguments.firstIndex(of: "-searchBarBenchmarkOut")
             .flatMap { CommandLine.arguments[safe: $0 + 1] } ?? "/private/tmp/cling-searchbar-bench.txt"
+
+        /// Opens the bar on `query` with the second result selected and leaves it on screen, for screenshots of the real
+        /// window, since offscreen renders lose the glass and blur. Theme and preview come from launch arguments
+        /// (`-windowAppearance Vibrant -searchBarShowPreview '<false/>'`), and `-searchBarShowcaseDark` shows it dark.
+        private static var showcaseWindow: NSWindow?
 
         /// Appends as it goes, so a run that dies half way still leaves what it measured.
         private static func log(_ line: String) {
@@ -627,9 +633,24 @@
             }.value
         }
 
-        /// Opens the bar on `query` with the second result selected and leaves it on screen, for screenshots of the real
-        /// window, since offscreen renders lose the glass and blur. Theme and preview come from launch arguments
-        /// (`-windowAppearance Vibrant -searchBarShowPreview '<false/>'`), and `-searchBarShowcaseDark` shows it dark.
+        /// Scrolls the tallest scroll view of the visible windows to its end.
+        private static func scrollToEnd() {
+            func scrollViews(in view: NSView) -> [NSScrollView] {
+                view.subviews.flatMap { sub -> [NSScrollView] in
+                    let own = (sub as? NSScrollView).map { [$0] } ?? []
+                    return own + scrollViews(in: sub)
+                }
+            }
+            let windows = NSApp.windows.filter { $0.isVisible && !($0 is NSPanel) }
+            let tallest = windows.compactMap(\.contentView).flatMap(scrollViews(in:))
+                .max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
+            guard let scrollView = tallest, let document = scrollView.documentView else { return }
+            let clip = scrollView.contentView
+            let y = document.isFlipped ? max(document.frame.height - clip.bounds.height, 0) : 0
+            clip.scroll(to: NSPoint(x: 0, y: y))
+            scrollView.reflectScrolledClipView(clip)
+        }
+
         private static func showcase(_ query: String) async {
             if CommandLine.arguments.contains("-searchBarShowcaseDark") {
                 NSApp.appearance = NSAppearance(named: .darkAqua)
@@ -638,28 +659,34 @@
                 SettingsNavigation.shared.selection = SettingsCategory(rawValue: pane) ?? .general
                 WM.open("settings")
                 await settle(1500)
-                /// Scrolled to the end, where General's Search bar section is.
-                func scrollViews(in view: NSView) -> [NSScrollView] {
-                    view.subviews.flatMap { sub -> [NSScrollView] in
-                        let own = (sub as? NSScrollView).map { [$0] } ?? []
-                        return own + scrollViews(in: sub)
-                    }
-                }
-                let windows = NSApp.windows.filter { $0.isVisible && !($0 is NSPanel) }
-                let tallest = windows.compactMap(\.contentView).flatMap(scrollViews(in:))
-                    .max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
-                if let scrollView = tallest, let document = scrollView.documentView {
-                    let clip = scrollView.contentView
-                    let y = document.isFlipped ? max(document.frame.height - clip.bounds.height, 0) : 0
-                    clip.scroll(to: NSPoint(x: 0, y: y))
-                    scrollView.reflectScrolledClipView(clip)
-                }
+                // Scrolled to the end, where General's Search bar section is.
+                scrollToEnd()
                 return
             }
             if CommandLine.arguments.contains("-searchBarShowcaseWindow") {
                 FUZZY.query = query
                 WM.open("main")
                 return
+            }
+            if CommandLine.arguments.contains("-searchBarShowcaseCheatsheet") {
+                let window = NSWindow(contentViewController: NSHostingController(rootView: QuerySyntaxCheatsheet().frame(height: 560)))
+                window.title = "Search syntax"
+                window.center()
+                window.makeKeyAndOrderFront(nil)
+                showcaseWindow = window
+                await settle(800)
+                scrollToEnd()
+                return
+            }
+            if CommandLine.arguments.contains("-searchBarShowcaseEverything") {
+                // Everything turns on once Pro is confirmed, a moment after launch.
+                let deadline = Date().addingTimeInterval(60)
+                while Date() < deadline, !EVERYTHING.enabled || EVERYTHING.loading || EVERYTHING.engine == nil {
+                    if !EVERYTHING.enabled, proactive {
+                        EVERYTHING.toggle()
+                    }
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
             }
             // `-` leaves the bar closed, for the pinned field.
             guard query != "-" else { return }
