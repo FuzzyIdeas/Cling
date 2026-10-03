@@ -192,10 +192,6 @@ class AppDelegate: LowtechProAppDelegate {
             .sink { _ in
                 AM.update()
             }.store(in: &observers)
-        pub(.instantMode)
-            .sink { [self] change in
-                mainWindow?.animationBehavior = change.newValue ? .none : .default
-            }.store(in: &observers)
 
         UM.updater = updateController.updater
         PM.pro = pro
@@ -307,20 +303,17 @@ class AppDelegate: LowtechProAppDelegate {
     }
 
     func hideOrCloseMainWindow(_ window: NSWindow) {
-        // Measured while the table is still laid out: outside instant mode the next window starts without one.
+        // Measured while the table is still laid out.
         _ = cursorAnchor(in: window)
         EVERYTHING.windowHidden()
         WM.noteInactive()
         FUZZY.cancelPendingSearch()
-        if Defaults[.instantMode] {
-            window.animationBehavior = .none
-            window.alphaValue = 0
-            window.ignoresMouseEvents = true
-            window.orderOut(nil)
-            WM.mainWindowActive = false
-        } else {
-            window.close()
-        }
+        // Hidden rather than closed, so the next summon shows it at once.
+        window.animationBehavior = .none
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.orderOut(nil)
+        WM.mainWindowActive = false
     }
 
     /// Called after the main window is dismissed. If Settings is still open, keep
@@ -366,7 +359,7 @@ class AppDelegate: LowtechProAppDelegate {
             mainWindow.resignMain()
             hideOrCloseMainWindow(mainWindow)
             handBackFocusAfterMainDismiss()
-        } else if Defaults[.instantMode], mainWindow != nil {
+        } else if mainWindow != nil {
             focusWindow()
         } else {
             pendingDisplay = displayForMainWindow()
@@ -433,17 +426,12 @@ class AppDelegate: LowtechProAppDelegate {
         pendingDisplay = nil
         EVERYTHING.windowShown()
         window.collectionBehavior.insert(.moveToActiveSpace)
-        if Defaults[.instantMode] {
-            window.animationBehavior = .none
-            window.ignoresMouseEvents = false
-            window.alphaValue = 1
-            window.orderFrontRegardless()
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        } else {
-            window.makeKeyAndOrderFront(nil)
-            window.orderFrontRegardless()
-        }
+        window.animationBehavior = .none
+        window.ignoresMouseEvents = false
+        window.alphaValue = 1
+        window.orderFrontRegardless()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     /// The display the search window should come up on, per Settings > General. Read before Cling activates.
@@ -640,7 +628,7 @@ class AppDelegate: LowtechProAppDelegate {
                     mainWindowDelegateProxy = proxy
                 }
             }
-            window.animationBehavior = Defaults[.instantMode] ? .none : .default
+            window.animationBehavior = .none
             WM.size = window.frame.size
 
             if let until = keepSettingsFrontUntil, Date.now < until {
@@ -777,9 +765,6 @@ final class MainWindowDelegateProxy: NSObject, NSWindowDelegate {
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         MainActor.assumeIsolated {
-            guard Defaults[.instantMode] else {
-                return original?.windowShouldClose?(sender) ?? true
-            }
             WM.pinned = false
             AppDelegate.shared?.hideOrCloseMainWindow(sender)
             AppDelegate.shared?.handBackFocusAfterMainDismiss()

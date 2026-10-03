@@ -695,7 +695,6 @@ extension Defaults.Keys {
     static let showDockIcon = Key<Bool>("showDockIcon", default: false)
     static let showMenuBarIcon = Key<Bool>("showMenuBarIcon", default: false)
     static let keepWindowOpenWhenDefocused = Key<Bool>("keepWindowOpenWhenDefocused", default: false)
-    static let instantMode = Key<Bool>("instantMode", default: true)
     static let windowDisplay = Key<WindowDisplay>("windowDisplay", default: .cursor)
     /// Where the window lands on that display; see `WindowPosition.current` for `.cursor` on another display.
     static let windowPosition = Key<WindowPosition>("windowPosition", default: .centered)

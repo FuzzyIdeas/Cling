@@ -749,12 +749,6 @@ private struct GeneralSettingsPane: View {
                     isOn: $showWindowAtLaunch
                 )
 
-                DescriptiveToggle(
-                    title: "Instant mode",
-                    detail: "Hide the window instead of closing it, so the next hotkey summon is instant.",
-                    isOn: $instantMode
-                )
-
                 SettingRow(
                     title: "Reset selection after",
                     detail: selectionResetDetail(resetSelectionAfter)
@@ -805,7 +799,6 @@ private struct GeneralSettingsPane: View {
     @Default(.showDockIcon) private var showDockIcon
     @Default(.showMenuBarIcon) private var showMenuBarIcon
     @Default(.keepWindowOpenWhenDefocused) private var keepWindowOpenWhenDefocused
-    @Default(.instantMode) private var instantMode
     @Default(.windowDisplay) private var windowDisplay
     @Default(.windowPosition) private var windowPosition
     @Default(.resetSelectionAfter) private var resetSelectionAfter
