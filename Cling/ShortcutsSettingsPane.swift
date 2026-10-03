@@ -57,6 +57,7 @@ struct ShortcutsSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .labeledContentStyle(ShortcutRowStyle())
         .scrollContentBackground(.hidden)
     }
 

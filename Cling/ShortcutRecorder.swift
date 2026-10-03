@@ -33,6 +33,20 @@ struct ShortcutRecorder: NSViewRepresentable {
     }
 }
 
+// MARK: - ShortcutRowStyle
+
+/// A grouped Form's LabeledContent puts a recorder on a line of its own below its label; this keeps the two on one row,
+/// like the Form's other controls.
+struct ShortcutRowStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack {
+            configuration.label
+            Spacer()
+            configuration.content
+        }
+    }
+}
+
 // MARK: - ClickToRecordRecorder
 
 /// Hosts a `KeyboardShortcuts.RecorderCocoa` and takes over its mouse handling.

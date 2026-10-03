@@ -60,6 +60,7 @@ struct SearchBarSettingsSection: View {
             LabeledContent("Search bar hotkey") {
                 ShortcutRecorder(name: .clSearchBar, label: "Search bar hotkey")
             }
+            .labeledContentStyle(ShortcutRowStyle())
 
             Toggle("Pin to desktop", isOn: $pinned)
             if pinned {
