@@ -133,6 +133,9 @@ class AppDelegate: LowtechProAppDelegate {
         assignFilterUUIDsIfNeeded()
         ClingShortcuts.setup()
         FUZZY.start()
+        if !SWIFTUI_PREVIEW {
+            CatchUpAgent.sync()
+        }
         setupCleanup()
         QuickLookSupport.shared.warmUp()
 

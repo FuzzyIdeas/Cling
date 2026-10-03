@@ -550,6 +550,8 @@ class FuzzyClient {
     @ObservationIgnored var liveUpdater: LiveIndexUpdater?
     /// Folders the walks skip whose changes the stream leaves out.
     @ObservationIgnored var unwatched = UnwatchedFolders()
+    /// The changes the background agent gathered while Cling was closed, applied when the stream first starts.
+    @ObservationIgnored var launchJournal: ChangeJournal?
     /// Since when the updater has counted changes in the folders the walks skip.
     @ObservationIgnored var skippedCountedSince = Date()
     @ObservationIgnored var lastLiveSave = Date()
@@ -1169,9 +1171,14 @@ class FuzzyClient {
                 // replaying would cost more than walking.
                 let state = ScopeIndexState.read()
                 let now = FSEventsGetCurrentEventId()
+                // What the background agent gathered while Cling was closed stands in for that part of the history: a
+                // scope it covers only replays what came after.
+                let journal = ChangeJournal.read().flatMap { $0.usable ? $0 : nil }
+                launchJournal = journal
                 for (scope, id) in state?.replayable ?? [:] where scopeEngines[scope] != nil && liveBase[scope] == nil {
                     let fingerprint = rulesFingerprint(scope)
-                    guard state?.rules[scope.rawValue] == fingerprint, now - id <= Self.maxReplayGap else { continue }
+                    let reached = journal.map { $0.header.start <= id ? max(id, $0.header.end) : id } ?? id
+                    guard state?.rules[scope.rawValue] == fingerprint, now - reached <= Self.maxReplayGap else { continue }
                     liveBase[scope] = id
                     liveRules[scope] = fingerprint
                 }
@@ -1727,7 +1734,14 @@ class FuzzyClient {
         stopWatchingFiles()
 
         // Replay from the oldest position among the engines; changes they already hold apply again harmlessly.
-        let since = Defaults[.searchScopes].compactMap { scopeEngines[$0] != nil ? liveBase[$0] : nil }.min()
+        var since = Defaults[.searchScopes].compactMap { scopeEngines[$0] != nil ? liveBase[$0] : nil }.min()
+        // The background agent's changes from while Cling was closed, when every engine is at or past where they start:
+        // they are applied first, and the replay starts where the agent stopped.
+        let journal = launchJournal.flatMap { journal in since.map { journal.header.start <= $0 } == true ? journal : nil }
+        launchJournal = nil
+        if let journal, let oldest = since {
+            since = max(oldest, journal.header.end)
+        }
         // Changes buffered before the restart describe the index we just cleared, so flushing
         // them would re-add paths into a fresh seenPaths/removedFiles.
         fsEventsQueue.async { [self] in
@@ -1752,6 +1766,10 @@ class FuzzyClient {
             }
         )
         liveUpdater = updater
+        if let journal {
+            log.info("Live index: applying \(journal.changes.count) paths changed while Cling was closed")
+            updater.enqueue(journal.changes.map { FSChange(path: $0.key, flags: EonilFSEventsEventFlags(rawValue: $0.value), id: journal.header.end) })
+        }
 
         // Folders left out last time stay out, from the replay on, while the rules still skip them. The replay counts
         // the others since the indexes were saved, and the busiest are left out once it is done.
