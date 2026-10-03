@@ -168,6 +168,12 @@
         }
 
         static func startIfRequested() {
+            if let query = argument("-searchBarShowcase") {
+                Task { @MainActor in
+                    await showcase(query)
+                }
+                return
+            }
             guard requested else { return }
             Task { @MainActor in
                 await run()
@@ -619,6 +625,52 @@
                 }
                 try? FileManager.default.removeItem(atPath: dir)
             }.value
+        }
+
+        /// Opens the bar on `query` with the second result selected and leaves it on screen, for screenshots of the real
+        /// window, since offscreen renders lose the glass and blur. Theme and preview come from launch arguments
+        /// (`-windowAppearance Vibrant -searchBarShowPreview '<false/>'`), and `-searchBarShowcaseDark` shows it dark.
+        private static func showcase(_ query: String) async {
+            if CommandLine.arguments.contains("-searchBarShowcaseDark") {
+                NSApp.appearance = NSAppearance(named: .darkAqua)
+            }
+            if let pane = argument("-searchBarShowcaseSettings") {
+                SettingsNavigation.shared.selection = SettingsCategory(rawValue: pane) ?? .general
+                WM.open("settings")
+                await settle(1500)
+                /// Scrolled to the end, where General's Search bar section is.
+                func scrollViews(in view: NSView) -> [NSScrollView] {
+                    view.subviews.flatMap { sub -> [NSScrollView] in
+                        let own = (sub as? NSScrollView).map { [$0] } ?? []
+                        return own + scrollViews(in: sub)
+                    }
+                }
+                let windows = NSApp.windows.filter { $0.isVisible && !($0 is NSPanel) }
+                let tallest = windows.compactMap(\.contentView).flatMap(scrollViews(in:))
+                    .max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
+                if let scrollView = tallest, let document = scrollView.documentView {
+                    let clip = scrollView.contentView
+                    let y = document.isFlipped ? max(document.frame.height - clip.bounds.height, 0) : 0
+                    clip.scroll(to: NSPoint(x: 0, y: y))
+                    scrollView.reflectScrolledClipView(clip)
+                }
+                return
+            }
+            if CommandLine.arguments.contains("-searchBarShowcaseWindow") {
+                FUZZY.query = query
+                WM.open("main")
+                return
+            }
+            // `-` leaves the bar closed, for the pinned field.
+            guard query != "-" else { return }
+            let readyBy = Date().addingTimeInterval(120)
+            while Date() < readyBy, FUZZY.indexedCount == 0 || FUZZY.indexing {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            await settle(1000)
+            await setQuery(query)
+            await settle(1500)
+            SB.moveSelection(by: 1)
         }
 
         private static func argument(_ name: String) -> String? {
