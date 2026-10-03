@@ -139,6 +139,12 @@ class AppDelegate: LowtechProAppDelegate {
         }
         setupCleanup()
         QuickLookSupport.shared.warmUp()
+        if !SWIFTUI_PREVIEW {
+            // Written every launch whether or not the switch is on, so an agent can find Cling and read
+            // how to ask for permission rather than guessing.
+            MCPInstaller.writeServerCard()
+            MCPInstaller.migrateInstalledClients()
+        }
 
         if !SWIFTUI_PREVIEW {
             paddleVendorID = "122873"
@@ -205,7 +211,11 @@ class AppDelegate: LowtechProAppDelegate {
             .removeDuplicates()
             .dropFirst()
             .debounce(for: .seconds(1), scheduler: RunLoop.main)
-            .sink { _ in FUZZY.syncScopeEngines() }
+            .sink { _ in
+                FUZZY.syncScopeEngines()
+                // The card written at launch predates the licence check, and agents read its `pro`.
+                MCPInstaller.writeServerCard()
+            }
             .store(in: &observers)
         if !SWIFTUI_PREVIEW {
             pro.checkProLicense()
@@ -346,6 +356,12 @@ class AppDelegate: LowtechProAppDelegate {
     }
 
     func handleURLs(_ application: NSApplication, _ urls: [URL]) {
+        // `cling://mcp/...` URLs are commands, not folders to filter by.
+        let urls = urls.filter { !MCPInstaller.handle(url: $0) }
+        guard !urls.isEmpty else {
+            application.reply(toOpenOrPrint: .success)
+            return
+        }
         let filePaths = urls.compactMap(\.existingFilePath)
         guard !filePaths.isEmpty else {
             application.reply(toOpenOrPrint: .failure)

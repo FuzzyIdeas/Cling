@@ -563,7 +563,7 @@ private func extensionTailSplits(_ q: String) -> [(head: String, tail: [UInt8])]
     return splits
 }
 
-private func tokenizeQuery(_ s: String) -> [String] {
+func tokenizeQuery(_ s: String) -> [String] {
     var tokens: [String] = []
     var cur = ""
     var inQuote = false
@@ -597,7 +597,7 @@ private func tokenizeQuery(_ s: String) -> [String] {
 /// stays as typed, so a query that already had one means what it did before.
 ///
 /// The token comes from the lowercased query and goes back lowercased, as `\x41` decodes to an uppercase A.
-private func decodeQueryEscapes(_ token: String) -> String {
+func decodeQueryEscapes(_ token: String) -> String {
     guard token.utf8.contains(0x5C) else { return token }
     let src = Array(token.utf8)
     var out: [UInt8] = []
@@ -658,7 +658,7 @@ private func decodeQueryEscapes(_ token: String) -> String {
 }
 
 /// Whether the last character of a token is escaped: an odd run of backslashes right before it.
-private func lastIsEscaped(_ token: String) -> Bool {
+func lastIsEscaped(_ token: String) -> Bool {
     var backslashes = 0
     for b in token.utf8.dropLast().reversed() {
         guard b == 0x5C else { break }

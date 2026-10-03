@@ -20,11 +20,27 @@ final class SearchCoordinator: @unchecked Sendable {
         let isDir: Bool
     }
 
+    /// What a request asks the engines for once its saved filters are applied.
+    struct Resolved {
+        let query: String
+        let folderPrefixes: [String]?
+        let dirsOnly: Bool
+    }
+
     var count: Int {
         lock.withLock { _count }
     }
     var indexing: Bool {
         lock.withLock { _indexing }
+    }
+
+    /// Fold suffix into query as extension tokens so multi-suffix works: ".png .jpeg" -> "query .png .jpeg"
+    static func folding(suffix: String?, into query: String) -> String {
+        guard let sfx = suffix, !sfx.isEmpty else { return query }
+        let extTokens = sfx.replacingOccurrences(of: "|", with: " ").replacingOccurrences(of: ",", with: " ")
+            .split(separator: " ").filter { $0.hasPrefix(".") }.map(String.init)
+        guard !extTokens.isEmpty else { return query }
+        return (query.isEmpty ? "" : query + " ") + extTokens.joined(separator: " ")
     }
 
     func setIndexing(_ value: Bool) {
@@ -87,15 +103,7 @@ final class SearchCoordinator: @unchecked Sendable {
         }
         guard !engines.isEmpty else { return [] }
 
-        // Fold suffix into query as extension tokens so multi-suffix works: ".png .jpeg" -> "query .png .jpeg"
-        var effectiveQuery = query
-        if let sfx = suffixPattern, !sfx.isEmpty {
-            let extTokens = sfx.replacingOccurrences(of: "|", with: " ").replacingOccurrences(of: ",", with: " ")
-                .split(separator: " ").filter { $0.hasPrefix(".") }.map(String.init)
-            if !extTokens.isEmpty {
-                effectiveQuery = (effectiveQuery.isEmpty ? "" : effectiveQuery + " ") + extTokens.joined(separator: " ")
-            }
-        }
+        let effectiveQuery = Self.folding(suffix: suffixPattern, into: query)
 
         let n = engines.count
         let resultStore = UnsafeMutablePointer<[SearchResult]>.allocate(capacity: n)
@@ -141,6 +149,43 @@ final class SearchCoordinator: @unchecked Sendable {
         allResults.sort(by: >)
         var seen = Set<String>()
         return allResults.prefix(maxResults * 2).filter { seen.insert($0.path).inserted }.prefix(maxResults).map { $0 }
+    }
+
+    /// The engines a search over `scopeLabels` would use, every one when nil.
+    func engines(scopeLabels: [String]?) -> [EngineEntry] {
+        filteredEngines(scopeLabels: scopeLabels)
+    }
+
+    /// The query the search window would run: the typed text inside the quick filter's own tokens, searched in the
+    /// folder filter's folders, built the way `FuzzyClient.performSearch` builds it. A request with neither filter
+    /// keeps its own options.
+    func resolve(_ request: ClingRequest) -> Result<Resolved, ClingError> {
+        var query = request.query ?? ""
+        var folderPrefixes = request.folderPrefixes
+        var dirsOnly = request.dirsOnly ?? false
+        guard request.quickFilter != nil || request.folderFilter != nil else {
+            return .success(Resolved(query: query, folderPrefixes: folderPrefixes, dirsOnly: dirsOnly))
+        }
+        // `constructQuery`, which the window runs on every query before the filter wraps it.
+        query = query.replacingOccurrences(of: "~/", with: "\(HOME.string)/")
+        if let name = request.quickFilter {
+            guard let qf = Defaults[.quickFilters].first(where: { $0.id.lowercased() == name.lowercased() }) else {
+                return .failure(ClingError("no quick filter named '\(name)'. Quick filters: \(Defaults[.quickFilters].map(\.id).joined(separator: ", "))"))
+            }
+            query = [qf.queryPrefix, query, qf.querySuffix].filter { !$0.isEmpty }.joined(separator: " ")
+            dirsOnly = dirsOnly || qf.searchDirsOnly
+        }
+        if let name = request.folderFilter {
+            guard let ff = Defaults[.folderFilters].first(where: { $0.id.lowercased() == name.lowercased() }) else {
+                return .failure(ClingError("no folder filter named '\(name)'. Folder filters: \(Defaults[.folderFilters].map(\.id).joined(separator: ", "))"))
+            }
+            folderPrefixes = (folderPrefixes ?? []) + ff.folders.map(\.string)
+            // The window passes the depth as a parameter; a depth token narrows the same way.
+            if let depth = ff.maxDepth {
+                query += " depth:\(depth)"
+            }
+        }
+        return .success(Resolved(query: query, folderPrefixes: folderPrefixes, dirsOnly: dirsOnly))
     }
 
     /// Remove a path from engines. If scopeLabels is provided, only those engines are checked.
@@ -260,7 +305,7 @@ private extension Decodable {
 
 // MARK: - CLICalls
 
-private enum CLICalls {
+enum CLICalls {
     /// Threads answering calls at once, each serving the port from its own run loop. One used to
     /// answer every call in turn, so a reindex waiting on the main thread held every search behind
     /// it. Past this many, calls wait in the port's queue and their sender gives up after its send
@@ -329,14 +374,19 @@ extension FuzzyClient {
         case .loading:
             return ClingResponse(error: "the Everything index is still loading")
         case let .ready(engine, building):
+            let resolved: SearchCoordinator.Resolved
+            switch coord.resolve(request) {
+            case let .success(r): resolved = r
+            case let .failure(error): return ClingResponse(error: error.message)
+            }
             let t0 = CFAbsoluteTimeGetCurrent()
             let results = CLICalls.searchLock.withLock {
                 coord.search(
-                    query: request.query ?? "",
+                    query: resolved.query,
                     maxResults: request.maxResults ?? 30,
-                    folderPrefixes: request.folderPrefixes,
+                    folderPrefixes: resolved.folderPrefixes,
                     suffixPattern: request.suffixPattern,
-                    dirsOnly: request.dirsOnly ?? false,
+                    dirsOnly: resolved.dirsOnly,
                     only: .init(engine: engine, label: "Everything", scoreBias: 0)
                 )
             }
@@ -351,12 +401,20 @@ extension FuzzyClient {
     }
 
     nonisolated static func handleCLIRequest(_ request: ClingRequest, coordinator coord: SearchCoordinator) -> ClingResponse {
+        if let refusal = mcpRefusal(request) {
+            return ClingResponse(error: refusal)
+        }
         switch request.command {
         case .search:
             if request.everything == true {
                 return searchEverything(request, coordinator: coord)
             }
-            let query = request.query ?? ""
+            let resolved: SearchCoordinator.Resolved
+            switch coord.resolve(request) {
+            case let .success(r): resolved = r
+            case let .failure(error): return ClingResponse(error: error.message)
+            }
+            let query = resolved.query
             let maxResults = request.maxResults ?? 30
 
             let t0 = CFAbsoluteTimeGetCurrent()
@@ -364,9 +422,9 @@ extension FuzzyClient {
                 coord.search(
                     query: query,
                     maxResults: maxResults,
-                    folderPrefixes: request.folderPrefixes,
+                    folderPrefixes: resolved.folderPrefixes,
                     suffixPattern: request.suffixPattern,
-                    dirsOnly: request.dirsOnly ?? false,
+                    dirsOnly: resolved.dirsOnly,
                     scopeLabels: request.scopes
                 )
             }
@@ -688,6 +746,9 @@ extension FuzzyClient {
                 }
             }
             return ClingResponse(status: messages.joined(separator: "\n"), indexCount: coord.count)
+
+        case .explain where request.action == "diagnose", .why, .settings, .filters, .scripts, .volumes, .scopes, .ignore, .shortcuts:
+            return CLIConfig.handle(request, coordinator: coord)
 
         case .explain:
             guard let paths = request.paths, !paths.isEmpty else {

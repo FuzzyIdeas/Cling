@@ -22,6 +22,15 @@ public enum ClingCommand: String, Codable {
     case indexRemove
     case indexHas
     case explain
+    /// Ranks one query the way the engines do and says where a path landed and why.
+    case why
+    case settings
+    case filters
+    case scripts
+    case volumes
+    case scopes
+    case ignore
+    case shortcuts
 }
 
 // MARK: - ClingRequest
@@ -39,7 +48,13 @@ public struct ClingRequest: Codable {
         dirsOnly: Bool? = nil,
         scopes: [String]? = nil,
         paths: [String]? = nil,
-        everything: Bool? = nil
+        everything: Bool? = nil,
+        action: String? = nil,
+        key: String? = nil,
+        value: String? = nil,
+        payload: String? = nil,
+        quickFilter: String? = nil,
+        folderFilter: String? = nil
     ) {
         self.command = command
         self.query = query
@@ -53,6 +68,12 @@ public struct ClingRequest: Codable {
         self.scopes = scopes
         self.paths = paths
         self.everything = everything
+        self.action = action
+        self.key = key
+        self.value = value
+        self.payload = payload
+        self.quickFilter = quickFilter
+        self.folderFilter = folderFilter
     }
 
     public let command: ClingCommand
@@ -68,6 +89,18 @@ public struct ClingRequest: Codable {
     public var paths: [String]?
     /// Search the Everything index (every file on the local disks) instead of the normal one.
     public var everything: Bool?
+    /// What a configuration command should do: list, show, write, delete, set and so on.
+    public var action: String?
+    public var key: String?
+    public var value: String?
+    /// A JSON-encoded spec for the writes that carry more than a key and a value (filters, scripts).
+    public var payload: String?
+    /// Saved filters to apply the way the search window does, so a search complaint can be reproduced.
+    public var quickFilter: String?
+    public var folderFilter: String?
+    /// `mcp` when the call came through the bundled MCP server. The app refuses changes carrying it until
+    /// the user allows them; a person running the CLI needs no permission from anyone.
+    public var origin: String?
 
 }
 
@@ -178,7 +211,8 @@ public struct ClingResponse: Codable {
         scopes: [ClingScopeStatus]? = nil,
         volumes: [ClingVolumeStatus]? = nil,
         everything: String? = nil,
-        everythingCount: Int? = nil
+        everythingCount: Int? = nil,
+        payload: String? = nil
     ) {
         self.results = results
         self.status = status
@@ -191,6 +225,7 @@ public struct ClingResponse: Codable {
         self.volumes = volumes
         self.everything = everything
         self.everythingCount = everythingCount
+        self.payload = payload
     }
 
     public var results: [ClingSearchResult]?
@@ -205,5 +240,8 @@ public struct ClingResponse: Codable {
     /// State of the Everything index: unloaded, loading, indexing or ready.
     public var everything: String?
     public var everythingCount: Int?
+    /// The configuration commands' answer as JSON, for `--json` and the MCP server. `status` carries the
+    /// same answer worded for a terminal.
+    public var payload: String?
 
 }
