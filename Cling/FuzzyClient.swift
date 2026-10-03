@@ -1221,9 +1221,12 @@ class FuzzyClient {
 
         // The indexes follow file changes as they happen, so nothing is walked on a timer; this only writes them
         // to disk now and then, and walks what has no position to replay from.
+        // Read at launch: the option has no switch in Settings yet.
         let idleDelay = Self.idleUnloadDelay
-        idleUnloadChecker = Repeater(every: idleDelay > 0 && idleDelay < 240 ? max(5, idleDelay / 4) : 60, name: "Idle Index Unload", tolerance: 5) { [self] in
-            unloadIndexIfIdle()
+        if idleDelay > 0 {
+            idleUnloadChecker = Repeater(every: idleDelay < 240 ? max(5, idleDelay / 4) : 60, name: "Idle Index Unload", tolerance: 5) { [self] in
+                unloadIndexIfIdle()
+            }
         }
         indexChecker = Repeater(every: 60 * 60, name: "Index Checker", tolerance: 60 * 60) { [self] in
             saveLiveIndexIfWorthIt()
