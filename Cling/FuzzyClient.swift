@@ -2380,9 +2380,16 @@ class FuzzyClient {
         return built.compactMap { $0.checkExists ? ($0.fp.exists ? $0.fp : nil) : $0.fp }
     }
 
+    /// The same results drawn again, with the icons, sizes and dates that arrived for them since.
     func reloadResults() {
         scoredResults = scoredResults
-        results = sortedResults()
+        let sorted = sortedResults()
+        if sorted == results {
+            // Observation skips a write of an equal value, so nothing would draw the rows again.
+            withMutation(keyPath: \.results) {}
+        } else {
+            results = sorted
+        }
     }
 
     // MARK: - Rename
