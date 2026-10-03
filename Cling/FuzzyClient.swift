@@ -536,6 +536,10 @@ class FuzzyClient {
     /// The rules each scope engine in memory was walked by (see `rulesFingerprint`).
     @ObservationIgnored var liveRules: [SearchScope: String] = [:]
     @ObservationIgnored var liveUpdater: LiveIndexUpdater?
+    /// Folders the walks skip whose changes the stream leaves out.
+    @ObservationIgnored var unwatched = UnwatchedFolders()
+    /// Since when the updater has counted changes in the folders the walks skip.
+    @ObservationIgnored var skippedCountedSince = Date()
     @ObservationIgnored var lastLiveSave = Date()
     @ObservationIgnored var lastHistoryLossWalk: Date?
     @ObservationIgnored var updatingFilters = false
@@ -1176,6 +1180,7 @@ class FuzzyClient {
         // to disk now and then, and walks what has no position to replay from.
         indexChecker = Repeater(every: 60 * 60, name: "Index Checker", tolerance: 60 * 60) { [self] in
             saveLiveIndexIfWorthIt()
+            chooseUnwatched()
             guard batteryLevel() > 0.3 else { return }
             let missing = Defaults[.searchScopes].filter { liveBase[$0] == nil }
             if !missing.isEmpty {
@@ -1679,6 +1684,29 @@ class FuzzyClient {
     /// Rules changed without a walk (an exclusion or a re-add): the live updates follow the new ones.
     func refreshLiveRoutes() {
         liveUpdater?.setRoutes(liveRoutes())
+        chooseUnwatched(counted: false)
+    }
+
+    /// Leaves the busiest folders the walks skip out of the stream, chosen from what was counted since the last time
+    /// (the launch replay, then every hour). A folder the rules no longer skip is followed again straight away and
+    /// brought up to date, as its changes went unseen meanwhile.
+    func chooseUnwatched(counted: Bool = true) {
+        guard let updater = liveUpdater, let liveStream else { return }
+        let valid = unwatched.folders.filter { updater.isUnwatchable($0.path) }
+        let dropped = unwatched.paths.filter { path in !valid.contains { $0.path == path } }
+        var next = UnwatchedFolders(folders: valid)
+        if counted {
+            let hours = max(Date().timeIntervalSince(skippedCountedSince) / 3600, 1)
+            skippedCountedSince = Date()
+            next = next.choosing(from: updater.takeSkipped(), hours: hours)
+        }
+        guard Set(next.paths) != Set(unwatched.paths) else { return }
+
+        unwatched = next
+        unwatched.save()
+        liveStream.restart(excluding: next.paths)
+        updater.rescan(dropped)
+        log.info("Live index: leaving out changes in \(next.paths.joined(separator: ", "))")
     }
 
     func watchFiles() {
@@ -1707,13 +1735,27 @@ class FuzzyClient {
                 }
                 Task { @MainActor in self.liveIndexApplied(changes) }
             },
+            caughtUp: { [weak self] in
+                Task { @MainActor in self?.chooseUnwatched() }
+            },
             historyLost: { [weak self] in
                 Task { @MainActor in self?.liveHistoryLost() }
             }
         )
         liveUpdater = updater
 
-        liveStream = FSChangeStream(paths: ["/"], since: since, latency: 1, queue: fsEventsQueue) { [self] events in
+        // Folders left out last time stay out, from the replay on, while the rules still skip them. The replay counts
+        // the others since the indexes were saved, and the busiest are left out once it is done.
+        let saved = UnwatchedFolders.read()
+        unwatched = UnwatchedFolders(folders: saved.folders.filter { updater.isUnwatchable($0.path) })
+        if unwatched.paths != saved.paths {
+            unwatched.save()
+            updater.rescan(saved.paths.filter { !unwatched.paths.contains($0) })
+        }
+        let savedAt = (try? FileManager.default.attributesOfItem(atPath: ScopeIndexState.file.string))?[.modificationDate] as? Date
+        skippedCountedSince = since != nil ? savedAt ?? Date() : Date()
+
+        liveStream = FSChangeStream(paths: ["/"], since: since, latency: 1, excluding: unwatched.paths, queue: fsEventsQueue) { [self] events in
             updater.enqueue(events)
             followChanges(events, updater: updater)
         }

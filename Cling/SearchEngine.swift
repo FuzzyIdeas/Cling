@@ -765,6 +765,14 @@ struct WalkRules: @unchecked Sendable {
     /// letting the matcher find out cost a stat per entry.
     let ignoreCheck: ((String, Bool) -> Bool)?
 
+    /// The same rules with no `.gitignore` files read.
+    var withoutGitignore: WalkRules {
+        WalkRules(
+            walkRoot: walkRoot, ignoreFile: ignoreFile, ignoreRoot: ignoreRoot, skipDir: skipDir,
+            applyBlocklist: applyBlocklist, discoverGitignore: false
+        )
+    }
+
     /// Whether the walk goes inside a folder the ignore file leaves out.
     func entersIgnored(_ dir: String) -> Bool {
         guard let ignoreBase else { return false }
