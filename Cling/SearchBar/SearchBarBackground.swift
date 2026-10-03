@@ -90,6 +90,76 @@ final class SearchBarTintView: NSView {
     }
 }
 
+// MARK: - SearchBarWashView
+
+/// The active filters' colours over the whole bar, as the window lays them behind its results: one hue, or two blending
+/// from the top two thirds into the bottom third. Scaled by the tint strength in Settings > Style.
+final class SearchBarWashView: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError()
+    }
+
+    struct Wash: Equatable {
+        let top: FilterColor
+        let bottom: FilterColor
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
+    override var allowsVibrancy: Bool {
+        false
+    }
+
+    var wash: Wash? {
+        didSet {
+            guard wash != oldValue else { return }
+            // The window eases between filters the same way.
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = 0.18
+            layer?.add(fade, forKey: "wash")
+            needsDisplay = true
+        }
+    }
+
+    var strength = 1.0 {
+        didSet {
+            guard strength != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
+    var cornerRadius: CGFloat = 0 {
+        didSet { layer?.cornerRadius = cornerRadius }
+    }
+
+    override func hitTest(_: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func draw(_: NSRect) {
+        guard let wash, strength > 0 else { return }
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let opacity = FilterColor.tintOpacity(dark: dark) * strength
+        let stops = FilterColor.washStops(top: wash.top, bottom: wash.bottom, dark: dark)
+        guard let gradient = NSGradient(
+            colors: stops.map { NSColor($0.color).withAlphaComponent(opacity) },
+            atLocations: stops.map { CGFloat($0.location) },
+            colorSpace: .sRGB
+        ) else { return }
+        gradient.draw(from: NSPoint(x: bounds.midX, y: bounds.minY), to: NSPoint(x: bounds.midX, y: bounds.maxY), options: [])
+    }
+}
+
 // MARK: - SearchBarBackgroundView
 
 /// Glass, vibrant blur or the plain window colour, matching `WindowBackground` in the main window:

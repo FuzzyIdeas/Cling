@@ -163,12 +163,12 @@ enum MCPSettingsBridge {
         )),
         bool("dimStatusBar", .dimStatusBar, row(
             .interface, "Window", "Dim status bar",
-            note: "Fades the status bar until the pointer reaches it.",
+            note: "Fades the window's status bar and the search bar's hint bar until the pointer reaches them.",
             keywords: ["status bar", "hints", "fade"], ui: true
         )),
         double("filterWindowTintStrength", .filterWindowTintStrength, 0 ... 1, row(
             .interface, "Window", "Tint strength when a filter is active",
-            note: "0 turns the tint off and leaves only the filter's coloured icon.",
+            note: "Applies to the window and the search bar. 0 turns the tint off and leaves only the filter's coloured icon.",
             keywords: ["filter", "colour", "color", "wash"], ui: true
         )),
         bool("showFilePreview", .showFilePreview, row(

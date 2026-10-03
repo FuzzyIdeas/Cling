@@ -77,6 +77,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         var filterText: String
         var scopeIcon: String?
         var scopeHue: Double?
+        var wash: SearchBarWashView.Wash?
         var everything: Bool
         /// Only the search row shows: nothing typed, nothing chosen for the bar to show before typing and nothing stashed.
         var fieldOnly: Bool
@@ -193,6 +194,13 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         }.store(in: &observers)
         pub(.fontScale).sink { [weak self] _ in
             mainAsync { self?.fontScaleChanged() }
+        }.store(in: &observers)
+        // Style's Window section, which the bar follows too.
+        pub(.dimStatusBar).sink { [weak self] change in
+            mainAsync { self?.root?.hintBar.dims = change.newValue }
+        }.store(in: &observers)
+        pub(.filterWindowTintStrength).sink { [weak self] change in
+            mainAsync { self?.root?.wash.strength = change.newValue }
         }.store(in: &observers)
         pub(.searchBarShowPreview).sink { [weak self] _ in
             mainAsync { self?.updatePreviewVisibility() }
@@ -957,6 +965,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         root.resizeOverlay.minSize = Self.minSize
         root.resizeOverlay.onResizeEnd = { [weak self] in self?.storeSize() }
         root.hintBar.onHint = { [weak self] id in self?.performHint(id) }
+        root.hintBar.dims = Defaults[.dimStatusBar]
+        root.wash.strength = Defaults[.filterWindowTintStrength]
 
         results.onSelectionChange = { [weak self] in self?.selectionChanged() }
         results.tableView.onDoubleClick = { [weak self] _ in
@@ -1098,6 +1108,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             filterText: parts.joined(separator: " "),
             scopeIcon: scope?.icon,
             scopeHue: scope?.color.hue,
+            wash: fuzzy.scopeWash.map { SearchBarWashView.Wash(top: $0.top, bottom: $0.bottom) },
             everything: EVERYTHING.enabled,
             fieldOnly: defaultList && defaultResults == .empty && STASH.files.isEmpty,
             stashOnly: defaultList && defaultResults == .empty && !STASH.files.isEmpty
@@ -1164,6 +1175,10 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         // Spinner.
         if inputs.searching != previous?.searching {
             inputs.searching ? root.spinner.startAnimation(nil) : root.spinner.stopAnimation(nil)
+        }
+
+        if inputs.wash != previous?.wash || previous == nil {
+            root.wash.wash = inputs.wash
         }
 
         // Filter button, filter chip and Everything.

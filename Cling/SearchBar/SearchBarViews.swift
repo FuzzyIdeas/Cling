@@ -225,6 +225,14 @@ final class SearchBarHintBar: NSView {
 
     var onHint: ((SearchBarHint.ID) -> Void)?
 
+    /// Faded until the pointer reaches it, like the window's status bar with Dim status bar on.
+    var dims = false {
+        didSet {
+            guard dims != oldValue else { return }
+            updateDimming()
+        }
+    }
+
     var hints: [SearchBarHint] = [] {
         didSet {
             guard hints != oldValue else { return }
@@ -239,6 +247,25 @@ final class SearchBarHintBar: NSView {
         }
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+
+    override func mouseEntered(with _: NSEvent) {
+        hovering = true
+    }
+
+    override func mouseExited(with _: NSEvent) {
+        hovering = false
+    }
+
+    override func setFrameOrigin(_ newOrigin: NSPoint) {
+        super.setFrameOrigin(newOrigin)
+        checkHover()
+    }
+
     /// Drawn only on request, so a new size has to ask: otherwise the old drawing is stretched over it, and the next
     /// one lands on top of that.
     override func setFrameSize(_ newSize: NSSize) {
@@ -246,6 +273,7 @@ final class SearchBarHintBar: NSView {
         super.setFrameSize(newSize)
         if changed {
             needsDisplay = true
+            checkHover()
         }
     }
 
@@ -344,6 +372,25 @@ final class SearchBarHintBar: NSView {
     private var hintRects: [(SearchBarHint.ID, NSRect)] = []
     private var flashText: String?
     private var flashTask: DispatchWorkItem?
+
+    private var hovering = false {
+        didSet {
+            guard hovering != oldValue else { return }
+            updateDimming()
+        }
+    }
+
+    private func updateDimming() {
+        alphaValue = dims && !hovering ? 0.45 : 1
+    }
+
+    /// Entering and exiting miss a bar that grows out from under a still pointer: the row passes under it on the way
+    /// and never hears that it left. So every move of the row asks where the pointer is.
+    private func checkHover() {
+        guard let window else { return }
+        hovering = bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+    }
+
 }
 
 // MARK: - SearchBarCardView
@@ -504,6 +551,7 @@ final class SearchBarRootView: NSView {
         wantsLayer = true
 
         addSubview(background)
+        addSubview(wash)
         addSubview(field)
         addSubview(ghostLabel)
         addSubview(completionHints)
@@ -562,6 +610,7 @@ final class SearchBarRootView: NSView {
 
     let results: SearchBarResultsController
     let background = SearchBarBackgroundView()
+    let wash = SearchBarWashView()
     let field = SearchBarField()
     let filterButton = SearchBarIconButton()
     let spinner = NSProgressIndicator()
@@ -646,10 +695,12 @@ final class SearchBarRootView: NSView {
         // centred and the corners round off at half the height.
         let rowHeight = min(searchRowHeight, h)
         background.cornerRadius = min(SearchBarMetrics.windowRadius, h / 2)
+        wash.cornerRadius = background.cornerRadius
         let hintHeight = hintBarHeight
         let inset = SearchBarMetrics.inset
 
         background.frame = bounds
+        wash.frame = bounds
         resizeOverlay.frame = bounds
         sheetHost.frame = NSRect(x: 0, y: 0, width: 1, height: 1)
 
