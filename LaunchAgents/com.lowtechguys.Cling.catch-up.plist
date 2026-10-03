@@ -16,7 +16,7 @@
 		<string>com.lowtechguys.Cling</string>
 	</array>
 	<key>StartInterval</key>
-	<integer>1800</integer>
+	<integer>900</integer>
 	<key>ProcessType</key>
 	<string>Background</string>
 	<key>LowPriorityIO</key>

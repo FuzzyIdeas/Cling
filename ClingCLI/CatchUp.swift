@@ -8,20 +8,20 @@ private let log = Logger(subsystem: "com.lowtechguys.Cling", category: "CatchUp"
 
 // MARK: - CatchUp
 
-/// Run by launchd every half hour (Contents/Library/LaunchAgents/com.lowtechguys.Cling.catch-up.plist). While Cling is
+/// Run by launchd every quarter hour (Contents/Library/LaunchAgents/com.lowtechguys.Cling.catch-up.plist). While Cling is
 /// closed it gathers the file changes since the saved indexes into the change journal, once every three hours: it
-/// waits for a few minutes nobody touches the Mac when it can, and runs anyway past six. With Cling open it does
+/// waits for half an hour nobody touches the Mac when it can, and runs anyway past six. With Cling open it does
 /// nothing, Cling follows the changes itself.
 struct CatchUp: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "catch-up",
-        abstract: "Gather the file changes made while Cling is closed",
+        abstract: "Gather the file events that happened while Cling was closed and update the index",
         shouldDisplay: false
     )
 
     static let interval: TimeInterval = 3 * 60 * 60
     static let deadline: TimeInterval = 6 * 60 * 60
-    static let idleEnough: TimeInterval = 5 * 60
+    static let idleEnough: TimeInterval = 30 * 60
     /// Further back, there is too much to read for a background job, and Cling walks its scopes instead.
     static let maxBacklog: UInt64 = 100_000_000
     /// A replay that hasn't finished by then is kept as far as it got.

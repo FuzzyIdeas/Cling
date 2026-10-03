@@ -925,7 +925,7 @@ private struct SearchSettingsPane: View {
                 proScopeRow(.system, label: "System", detail: "`/System`")
                 proScopeRow(.root, label: "Root", detail: "`/usr`, `/bin`, `/sbin`, `/opt`, `/etc`, `/Library`, `/var`, `/private`")
 
-                Toggle("Update while closed", isOn: $updateWhileClosed)
+                Toggle("Watch file events in the background", isOn: $updateWhileClosed)
                     .onChange(of: updateWhileClosed) { CatchUpAgent.sync() }
             }
 
