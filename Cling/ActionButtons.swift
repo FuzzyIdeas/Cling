@@ -742,6 +742,11 @@ struct ActionButtons: View {
                         if action.id == .togglePreview {
                             continue
                         }
+                        // ⌘S saves the query from the search field, in ContentView's monitor, whichever of the two
+                        // monitors sees the key first.
+                        if action.id == .shelve, mods == .command, chars == "s", commandSSavesQuery(fromField: focus == .search) {
+                            continue
+                        }
                         guard let bound = KeyboardShortcuts.getShortcut(for: ClingShortcuts.name(for: action.id)),
                               bound == pressed, isAvailable(action.id) else { continue }
                         execute(action.id)

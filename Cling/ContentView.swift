@@ -1741,10 +1741,8 @@ struct ContentView: View {
                 }
                 return event
             }
-            // ⌘S → save current query as Quick Filter (when applicable)
-            if mods == .command, chars == "s",
-               !fuzzy.query.isEmpty, showingResults, proactive
-            {
+            // ⌘S → save current query as Quick Filter from the search field; from the results it stashes
+            if mods == .command, chars == "s", showingResults, commandSSavesQuery(fromField: focused == .search) {
                 prefillQuickFilter()
                 return nil
             }

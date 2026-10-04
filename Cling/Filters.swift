@@ -488,6 +488,13 @@ enum FilterDraftFromQuery {
     }
 }
 
+/// Whether ⌘S saves the query as a filter. It does from the search field, in the window and the bar alike; from the
+/// results, or with no query to save, ⌘S is left to Stash, which it is bound to by default.
+@MainActor
+func commandSSavesQuery(fromField fieldFocused: Bool) -> Bool {
+    fieldFocused && proactive && !FUZZY.query.trimmingCharacters(in: .whitespaces).isEmpty
+}
+
 /// Saves a quick filter drafted from the query when its sheet closes, if it has a name and narrows something, and
 /// clears the query it came from since the filter now does that job.
 @MainActor

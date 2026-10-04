@@ -122,10 +122,14 @@ extension SearchBarController {
     }
 
     /// ⌘S: the window's editor for a quick filter, or a folder filter when the query is only `in:` folders, filled in
-    /// from the query.
-    /// As in the window: with a query and Pro. Otherwise ⌘S is left to Shelve, which it is bound to by default.
+    /// from the query. Needs a query and Pro; the menu item offers it from either side.
     var canSaveQueryAsFilter: Bool {
-        proactive && !FUZZY.query.trimmingCharacters(in: .whitespaces).isEmpty
+        commandSSavesQuery(fromField: true)
+    }
+
+    /// ⌘S saves the query from the field, as in the window, and stashes from the list.
+    var commandSSaves: Bool {
+        commandSSavesQuery(fromField: !listFocused)
     }
 
     func saveQueryAsFilter() {
@@ -346,7 +350,11 @@ extension SearchBarController {
             SearchBarSheets.shared.request = .copyTo(controller.selection)
         })
         menu.addItem(item(action: .moveTo, title: "Move Files To...", enabled: hasSelection))
-        menu.addItem(item(action: .shelve, enabled: hasSelection))
+        let stash = item(action: .shelve, enabled: hasSelection)
+        if commandSSaves, stash.keyEquivalent == "s", stash.keyEquivalentModifierMask == .command {
+            stash.keyEquivalent = ""
+        }
+        menu.addItem(stash)
         menu.addItem(item(action: .dropToFocusedElement, enabled: hasSelection))
         menu.addItem(item(action: .dropToZone, enabled: hasSelection))
 
@@ -371,7 +379,8 @@ extension SearchBarController {
         }
 
         menu.addItem(.separator())
-        menu.addItem(item("Save current query as a Quick Filter…", enabled: canSaveQueryAsFilter, keyEquivalent: "s", modifiers: .command) { controller in
+        // ⌘S shows on whichever of this and Stash it runs right now.
+        menu.addItem(item("Save current query as a Quick Filter…", enabled: canSaveQueryAsFilter, keyEquivalent: commandSSaves ? "s" : "", modifiers: .command) { controller in
             controller.saveQueryAsFilter()
         })
         menu.addItem(item("Search syntax reference", enabled: true, keyEquivalent: "/", modifiers: .command) { controller in

@@ -1402,7 +1402,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             case "k":
                 showActionsMenu()
                 return nil
-            case "s" where canSaveQueryAsFilter:
+            case "s" where commandSSaves:
                 saveQueryAsFilter()
                 return nil
             case "/":
