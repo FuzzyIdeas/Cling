@@ -310,7 +310,9 @@ struct FilterPicker: View {
                 return nil
             }
 
-            guard let ch = (event.charactersIgnoringModifiers ?? "").lowercased().first else {
+            // Applying a filter needs Pro. This monitor sees the key before the window's own gated handler,
+            // so without the check here ⌥ keys would apply filters and pick volumes for free.
+            guard proactive, let ch = (event.charactersIgnoringModifiers ?? "").lowercased().first else {
                 return event
             }
 

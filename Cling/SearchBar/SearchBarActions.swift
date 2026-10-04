@@ -463,7 +463,7 @@ extension SearchBarController {
             menu.addItem(.sectionHeader(title: "Volumes"))
             for (i, volume) in ([FilePath.root] + volumes).enumerated() {
                 let name = volume == .root ? (volume.url.volumeName ?? "Root") : volume.name.string
-                let entry = item(name, enabled: !FUZZY.volumesIndexing.contains(volume)) { _ in
+                let entry = item(name, enabled: proactive && !FUZZY.volumesIndexing.contains(volume)) { _ in
                     FUZZY.volumeFilter = FUZZY.volumeFilter == volume ? nil : volume
                 }
                 entry.state = FUZZY.volumeFilter == volume ? .on : .off
