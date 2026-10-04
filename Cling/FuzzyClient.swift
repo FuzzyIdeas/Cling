@@ -1380,7 +1380,7 @@ class FuzzyClient {
                     // Once per drive: the pass reads every path in the index, which is otherwise left on disk until
                     // the drive is searched.
                     if !Defaults[.metadataPrunedVolumes].contains(volume) {
-                        let removed = eng.removeSubtrees(Array(driveMetadataFolders(volume)))
+                        let removed = eng.removeSubtrees(Array(driveMetadataFolders(volume))) + eng.removeAppleDoubleFiles()
                         if removed > 0 {
                             eng.saveBinaryIndex(to: file.url)
                             log.info("Removed \(removed) metadata entries from \(volume.string)'s index")

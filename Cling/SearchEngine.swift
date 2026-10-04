@@ -1328,6 +1328,35 @@ final class SearchEngine: @unchecked Sendable {
         return ids.count
     }
 
+    /// Remove the `._` files macOS writes beside each file on a drive that can't hold the file's metadata (exFAT, FAT,
+    /// some network shares), returning how many went. One pass over the entries.
+    @discardableResult
+    func removeAppleDoubleFiles() -> Int {
+        var ids: [Int] = []
+        lock.lock()
+        defer { lock.unlock() }
+        allBytes.withUnsafeBufferPointer { buf in
+            guard let base = buf.baseAddress else { return }
+            for i in 0 ..< entries.count where byteLengths[i] > 2 && !entries[i].isDir {
+                let path = base + byteOffsets[i]
+                var slash = byteLengths[i] - 1
+                while slash >= 0, path[slash] != 0x2F {
+                    slash -= 1
+                }
+                if slash + 3 < byteLengths[i], path[slash + 1] == 0x2E, path[slash + 2] == 0x5F {
+                    ids.append(i)
+                }
+            }
+        }
+        for id in ids {
+            _removeID(id)
+        }
+        if !ids.isEmpty {
+            sortedByPath = nil
+        }
+        return ids.count
+    }
+
     func clear() {
         lock.withLock {
             entries.removeAll()
@@ -1608,6 +1637,7 @@ final class SearchEngine: @unchecked Sendable {
         inheritedGitignores: [(file: String, ownerDir: String)] = [],
         skipGitDirs: Bool = true,
         skipJunkFiles: Bool = true,
+        skipAppleDouble: Bool = false,
         dedupe: Bool = true,
         progress: ((Int, String) -> Void)? = nil,
         cancelled: (() -> Bool)? = nil
@@ -1758,6 +1788,9 @@ final class SearchEngine: @unchecked Sendable {
                 {
                     continue
                 } // Icon\r
+                if skipAppleDouble, nameLen > 2, n[0] == 0x2E, n[1] == 0x5F {
+                    continue
+                } // ._name
 
                 if !ignoredExtensions.isEmpty {
                     var extStart = -1
@@ -1922,7 +1955,9 @@ final class SearchEngine: @unchecked Sendable {
                 let path = url.path
                 let name = url.lastPathComponent
 
-                if name == ".DS_Store" || name == ".localized" {
+                // Only drives are walked this way, and the `._` files are the metadata macOS writes beside each file on
+                // one that can't hold it, as the SMB walk skips them too.
+                if name == ".DS_Store" || name == ".localized" || name.hasPrefix("._") {
                     continue
                 }
                 if name.hasSuffix("\r"), name.hasPrefix("Icon") {

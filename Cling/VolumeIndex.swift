@@ -15,8 +15,9 @@ func volumeIndexFile(_ volume: FilePath) -> FilePath {
 }
 
 /// What macOS and Windows keep at the top of a drive for themselves: file system events, the Spotlight index, the trash,
-/// version history, installer scratch space. A drive's walk skips them, and a saved index that still holds them from
-/// before loses them once, on its first load.
+/// version history, installer scratch space. A drive's walk skips them, along with the `._` files macOS writes beside
+/// each file on an exFAT or FAT drive, and a saved index that still holds either from before loses them once, on its
+/// first load.
 let DRIVE_METADATA_FOLDERS = [
     ".fseventsd", ".Spotlight-V100", ".Trashes", ".TemporaryItems", ".DocumentRevisions-V100", ".MobileBackups",
     ".PKInstallSandboxManager", ".PKInstallSandboxManager-SystemSoftware", ".HFS+ Private Directory Data\r",
@@ -94,6 +95,7 @@ private func indexVolumeEngine(
             volumePath,
             ignoreFile: ignoreChecker,
             skipDir: skipDir,
+            skipAppleDouble: true,
             progress: progress,
             cancelled: cancelled
         )
