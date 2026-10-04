@@ -761,8 +761,12 @@ struct FilterEditorSheet: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         } icon: {
+            let dark = colorScheme == .dark
             Image(systemName: icon)
-                .foregroundStyle(color.accent(dark: colorScheme == .dark))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(color.accent(dark: dark))
+                .frame(width: 20, height: 20)
+                .filterIconBackground(color, dark: dark)
         }
     }
 
