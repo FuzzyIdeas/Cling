@@ -179,7 +179,7 @@ extension FuzzyClient {
         let quick = quickFilter.map { $0.color ?? .forName($0.id) }
         let folder = folderFilter.map { $0.color ?? .forName($0.id) }
         // Everything washes the top in orange, over whatever filter colours the bottom.
-        if EVERYTHING.enabled {
+        if EVERYTHING.applies {
             let below = quick ?? folder ?? volumeFilter.map { FilterColor.forName($0.string) }
             return (.everything, below ?? .everything)
         }

@@ -79,6 +79,15 @@ final class SearchBarRowStyle {
     /// Called once a burst of background renders has landed, so the visible rows redraw once.
     var onRastersReady: (() -> Void)?
 
+    /// Results can come from more than one drive, so a row from an external one names it where the kind goes.
+    var showsDrives = false {
+        didSet {
+            if showsDrives != oldValue {
+                generation += 1
+            }
+        }
+    }
+
     var textX: CGFloat {
         Self.iconX + iconSide + 10
     }
@@ -691,8 +700,12 @@ final class SearchBarRowContent: NSView {
             return
         }
         let metaX = bounds.width - metaWidth - 16
-        let kind = style.kind(of: path, isDir: FilePathBackgroundTasks.shared.knownIsDir(path))
-        text.draw(kind, style: .meta, in: NSRect(x: metaX, y: top + 1, width: metaWidth, height: style.nameLineHeight), color: .tertiaryLabelColor, alignRight: true)
+        if style.showsDrives, let drive = FUZZY.externalDrive(of: path) {
+            drawDrive(drive, maxX: metaX + metaWidth, top: top, style: style, text: text)
+        } else {
+            let kind = style.kind(of: path, isDir: FilePathBackgroundTasks.shared.knownIsDir(path))
+            text.draw(kind, style: .meta, in: NSRect(x: metaX, y: top + 1, width: metaWidth, height: style.nameLineHeight), color: .tertiaryLabelColor, alignRight: true)
+        }
         let meta = metaLine(path)
         drawnMeta = meta
         text.draw(
@@ -712,6 +725,32 @@ final class SearchBarRowContent: NSView {
 
     private var drawnMeta: String?
     private var drawnGeneration = -1
+
+    /// The drive's name and icon in a capsule, so which drive a file is on reads at a glance down the list. An unplugged
+    /// drive's is dimmed, with the crossed-out drive icon.
+    private func drawDrive(_ drive: (name: String, connected: Bool), maxX: CGFloat, top: CGFloat, style: SearchBarRowStyle, text: SearchBarTextCache) {
+        let color: NSColor = drive.connected ? .labelColor : .secondaryLabelColor
+        let config = NSImage.SymbolConfiguration(pointSize: FontScale.size(9), weight: .semibold)
+            .applying(.init(paletteColors: [color]))
+        let icon = NSImage(systemSymbolName: drive.connected ? "externaldrive.fill" : "externaldrive.badge.xmark", accessibilityDescription: nil)?
+            .withSymbolConfiguration(config)
+        let iconSize = icon?.size ?? .zero
+        let pad = FontScale.length(7), gap = FontScale.length(4)
+        let height = style.nameLineHeight + 2
+        let nameWidth = min(text.size(drive.name, style: .meta).width, style.metaWidth - pad * 2 - iconSize.width - gap)
+        let capsule = NSRect(x: maxX - (pad + iconSize.width + gap + nameWidth + pad), y: top - 1, width: pad + iconSize.width + gap + nameWidth + pad, height: height)
+        NSColor.labelColor.withAlphaComponent(drive.connected ? 0.09 : 0.05).setFill()
+        NSBezierPath(roundedRect: capsule, xRadius: height / 2, yRadius: height / 2).fill()
+        icon?.draw(
+            in: NSRect(x: capsule.minX + pad, y: capsule.midY - iconSize.height / 2, width: iconSize.width, height: iconSize.height),
+            from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil
+        )
+        text.draw(
+            drive.name, style: .meta,
+            in: NSRect(x: capsule.minX + pad + iconSize.width + gap, y: top + 1, width: nameWidth, height: style.nameLineHeight),
+            color: drive.connected ? .labelColor : .secondaryLabelColor
+        )
+    }
 
     private func metaLine(_ path: FilePath) -> String {
         let isDir = FilePathBackgroundTasks.shared.knownIsDir(path) == true

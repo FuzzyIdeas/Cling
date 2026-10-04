@@ -67,7 +67,6 @@ final class SearchBarPanel: NSPanel {
 final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
     enum State { case hidden, compact, expanded }
 
-    /// Everything the bar shows that comes from the shared search state.
     struct Inputs: Equatable {
         var list: [FilePath]
         var defaultList: Bool
@@ -79,6 +78,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         var scopeHue: Double?
         var wash: SearchBarWashView.Wash?
         var everything: Bool
+        /// Why the Everything button is off limits, while the search is limited to external drives.
+        var everythingBlocked: String?
         /// Only the search row shows: nothing typed, nothing chosen for the bar to show before typing and nothing stashed.
         var fieldOnly: Bool
         /// The stash is all there is to show, and the bar is only as tall as it needs.
@@ -93,6 +94,9 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         var copy = "⌘C"
         var pasteTarget: String?
     }
+
+    /// Everything the bar shows that comes from the shared search state.
+    static let everythingTip = "Everything: every file on the local disks, nothing excluded (⌘⇧E)"
 
     static let shared = SearchBarController()
 
@@ -972,7 +976,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         root.filterButton.configure(symbol: "line.3.horizontal.decrease.circle", accessibility: "Filters", target: self, action: #selector(showFilterMenu(_:)))
         root.filterButton.toolTip = "Quick Filters: narrow down results without typing often used queries"
         root.everythingButton.configure(symbol: "asterisk", accessibility: "Everything", target: self, action: #selector(toggleEverything(_:)))
-        root.everythingButton.toolTip = "Everything: every file on the local disks, nothing excluded (⌘⇧E)"
+        root.everythingButton.toolTip = Self.everythingTip
         root.sortButton.configure(symbol: "arrow.up.arrow.down", accessibility: "Sort", target: self, action: #selector(showSortMenu(_:)))
         root.sortButton.toolTip = "Sort"
         root.previewButton.configure(symbol: "sidebar.right", accessibility: "Toggle Preview", target: self, action: #selector(togglePreview(_:)))
@@ -1123,7 +1127,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             scopeIcon: scope?.icon,
             scopeHue: scope?.color.hue,
             wash: fuzzy.scopeWash.map { SearchBarWashView.Wash(top: $0.top, bottom: $0.bottom) },
-            everything: EVERYTHING.enabled,
+            everything: EVERYTHING.applies,
+            everythingBlocked: EVERYTHING.blockedReason,
             fieldOnly: defaultList && defaultResults == .empty && STASH.files.isEmpty,
             stashOnly: defaultList && defaultResults == .empty && !STASH.files.isEmpty
         )
@@ -1151,6 +1156,13 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         let previous = lastInputs
         lastInputs = inputs
         signpost("apply")
+        // Before any row is drawn for these results, and the rows already on screen redraw: a narrower filter often
+        // hands back the same files, which would otherwise keep the drive labels of the previous one.
+        let showsDrives = FUZZY.resultsSpanDrives
+        if SearchBarRowStyle.shared.showsDrives != showsDrives {
+            SearchBarRowStyle.shared.showsDrives = showsDrives
+            results.refreshVisibleRows()
+        }
 
         if inputs.fieldOnly != root.fieldOnly {
             root.fieldOnly = inputs.fieldOnly
@@ -1206,12 +1218,15 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
                 root.filterButton.tint = nil
             }
         }
-        if inputs.filterText != previous?.filterText || inputs.everything != previous?.everything || previous == nil {
+        if inputs.filterText != previous?.filterText || inputs.everything != previous?.everything
+            || inputs.everythingBlocked != previous?.everythingBlocked || previous == nil
+        {
             root.filterButton.label = inputs.filterText.isEmpty ? nil : inputs.filterText
             root.filterButton.tint = inputs.filterText.isEmpty ? nil : inputs.scopeHue.map { NSColor.searchBarFilter(hue: $0) }
             root.everythingButton.tint = inputs.everything ? .searchBarOrange : nil
             root.everythingButton.label = inputs.everything ? "Everything" : nil
-            root.everythingButton.isEnabled = proactive
+            root.everythingButton.isEnabled = proactive && inputs.everythingBlocked == nil
+            root.everythingButton.toolTip = inputs.everythingBlocked ?? Self.everythingTip
             root.needsLayout = true
         }
 

@@ -326,6 +326,8 @@ struct ContentView: View {
     /// measured). Only the rows follow the text size, this part doesn't.
     private static let stashChromeHeight: CGFloat = 43
 
+    private static let driveColumnID = "drive"
+
     @State private var pinHovering = false
 
     @State private var quitHovering = false
@@ -338,6 +340,7 @@ struct ContentView: View {
     @State private var renamedPaths: [FilePath]? = nil
     @State private var fuzzy: FuzzyClient = FUZZY
     @State private var everything = EVERYTHING
+    @State private var resultColumns = TableColumnCustomization<FilePath>()
     @State private var stash: StashManager = STASH
     @ObservedObject private var km = KM
     @State private var sortHintsVisible = false
@@ -583,6 +586,28 @@ struct ContentView: View {
             let name = path.name.string
             Text(name).font(.scaled(12)).lineLimit(1).truncationMode(.middle).help(name)
         }.width(min: FontScale.length(100), ideal: FontScale.length(200))
+    }
+
+    /// Which external drive each result is on, while results can come from more than one: hidden by default and shown
+    /// through `resultColumns`, since a column can't be left out conditionally before macOS 14.4. Sorts by path, which
+    /// keeps each drive's files together.
+    private var driveColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
+        TableColumn("Drive", value: \.dir.string) { path in
+            if let drive = fuzzy.externalDrive(of: path) {
+                Label(drive.name, systemImage: drive.connected ? "externaldrive.fill" : "externaldrive.badge.xmark")
+                    .font(.scaled(12)).lineLimit(1).truncationMode(.middle)
+                    .foregroundStyle(drive.connected ? .primary : .tertiary)
+                    .help(drive.connected ? drive.name : "\(drive.name), disconnected")
+            }
+        }
+        .width(min: FontScale.length(70), ideal: FontScale.length(110))
+        .customizationID(Self.driveColumnID)
+        .defaultVisibility(.hidden)
+    }
+
+    /// Shown while results can come from more than one drive and some of them are on an external one.
+    private var showsDriveColumn: Bool {
+        fuzzy.resultsSpanDrives && visibleResults.contains { $0.string.hasPrefix("/Volumes/") }
     }
 
     private var pathColumn: some TableColumnContent<FilePath, KeyPathComparator<FilePath>> {
@@ -1005,11 +1030,12 @@ struct ContentView: View {
             Image(systemName: "asterisk")
         }
         .buttonStyle(.plain)
-        .foregroundColor(everything.enabled ? .orange : .secondary)
+        .foregroundColor(everything.applies ? .orange : .secondary)
         .focusable(false)
-        .help("Everything: every file on the local disks, nothing excluded (⌘⇧E)")
+        .disabled(everything.blockedReason != nil)
+        .help(everything.blockedReason ?? "Everything: every file on the local disks, nothing excluded (⌘⇧E)")
         .accessibilityLabel("Everything")
-        .accessibilityToggle(isOn: everything.enabled)
+        .accessibilityToggle(isOn: everything.applies)
         .needsPro(clicked: $everything.showProPrompt)
     }
 
@@ -1140,7 +1166,7 @@ struct ContentView: View {
 
     private var searchBar: some View {
         HStack(spacing: 0) {
-            if everything.enabled {
+            if everything.applies {
                 everythingChip
             }
             searchField
@@ -1234,9 +1260,10 @@ struct ContentView: View {
                 }
                 VStack(spacing: 0) {
                     ZStack(alignment: .topTrailing) {
-                        Table(of: FilePath.self, selection: $selectedResultIDs, sortOrder: $sortOrder) {
+                        Table(of: FilePath.self, selection: $selectedResultIDs, sortOrder: $sortOrder, columnCustomization: $resultColumns) {
                             iconColumn
                             nameColumn
+                            driveColumn
                             pathColumn
                             sizeColumn
                             dateColumn
@@ -1249,6 +1276,9 @@ struct ContentView: View {
                         .scrollContentBackground(.hidden)
                         .alternatingRowBackgrounds(.disabled)
                         .accessibilityLabel("Results")
+                        .onChange(of: showsDriveColumn, initial: true) { _, shows in
+                            resultColumns[visibility: Self.driveColumnID] = shows ? .visible : .hidden
+                        }
                         // Fixed row height keeps NSTableView from measuring every inserted row
                         // (which would force synchronous per-row stat/icon fetches on a bulk
                         // result update and freeze the app — CLING-B). Rows are uniform single
@@ -1591,7 +1621,7 @@ struct ContentView: View {
 
     private func handleFilterKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
         // ⌥-letters type characters (å, ∫, ç…) in the filter and path sheets presented under these handlers.
-        guard keyPress.modifiers == [.option], mainWindowIsKey else { return .ignored }
+        guard keyPress.modifiers.subtracting(.numericPad) == [.option], mainWindowIsKey else { return .ignored }
         guard keyPress.key != .escape else {
             fuzzy.folderFilter = nil
             fuzzy.quickFilter = nil

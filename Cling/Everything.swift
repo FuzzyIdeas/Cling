@@ -79,6 +79,17 @@ final class EverythingIndex {
         enabled && engine != nil
     }
 
+    /// On, and not set aside by a search limited to external drives, which Everything has no index of. What the
+    /// toggle, the chip and the window's tint show.
+    var applies: Bool {
+        enabled && !FUZZY.searchLimitedToDrives
+    }
+
+    /// Why the toggle is off limits right now, for its tooltip; nil while it can be used.
+    var blockedReason: String? {
+        FUZZY.searchLimitedToDrives ? "External drives have no Everything index, so it stays off while searching them" : nil
+    }
+
     var state: String {
         loading ? "loading" : walking ? "indexing" : engine != nil ? "ready" : "unloaded"
     }
@@ -98,6 +109,10 @@ final class EverythingIndex {
     func toggle() {
         guard proactive else {
             showProPrompt = true
+            return
+        }
+        guard blockedReason == nil else {
+            NSSound.beep()
             return
         }
         enabled ? disable() : enable()

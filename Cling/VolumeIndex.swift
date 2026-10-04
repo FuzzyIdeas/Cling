@@ -255,6 +255,27 @@ extension FuzzyClient {
             && !folderFilters.contains { $0.key == ALL_DRIVES_KEY }
     }
 
+    /// The search is limited to external drives, one or all of them. Everything has no index of a drive of its own,
+    /// only of the disks mounted right now with nothing excluded, so it stays off while this holds.
+    var searchLimitedToDrives: Bool {
+        volumeFilter.map { $0 != .root } ?? false
+    }
+
+    /// Results can come from more than one drive, so each says which external drive it is on. Never while the search
+    /// is limited to a single drive, internal or external, where every result is on that one.
+    var resultsSpanDrives: Bool {
+        volumeFilter == nil || volumeFilter == .allDrives
+    }
+
+    /// The external drive a path is on and whether it is plugged in right now; nil for the Mac's own disk.
+    func externalDrive(of path: FilePath) -> (name: String, connected: Bool)? {
+        let string = path.string
+        guard string.hasPrefix("/Volumes/") else { return nil }
+        let name = string.dropFirst("/Volumes/".count).prefix { $0 != "/" }
+        guard !name.isEmpty else { return nil }
+        return (String(name), !disconnectedVolumes.contains(FilePath("/Volumes/\(name)")))
+    }
+
     /// What the volume filter is called after "on" in the window's filter line and the bar's.
     var volumeFilterName: String? {
         volumeFilter.map { $0 == .allDrives ? "external drives" : $0.name.string }

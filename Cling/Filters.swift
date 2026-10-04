@@ -323,7 +323,8 @@ struct FilterPicker: View {
                 return event
             }
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard mods == .option else { return event }
+            // A keypad digit carries .numericPad along with ⌥, and picks its volume the same as the top row.
+            guard mods.subtracting(.numericPad) == .option else { return event }
 
             // ⌥⎋ → clear all filters
             if event.keyCode == 53 {
