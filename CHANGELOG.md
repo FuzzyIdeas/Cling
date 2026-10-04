@@ -1,3 +1,92 @@
+# 2.8.0
+
+**[Download Cling 2.8.0 →](https://files.lowtechguys.com/releases/Cling-2.8.0.dmg)**
+## Features
+
+- **New index engine**: huge memory savings, energy impact and CPU usage improvements
+    > in-memory index goes from several GB of RAM to 60-100 MB
+    >
+    > full reindexing goes from several minutes down to less than 10 seconds
+    >
+    > energy impact on keeping the index up to date on file events becomes completely negligible
+
+- **the Everything index**: search every file on the local disks with no ignore rules, toggled with `⌘⇧E` or the ✱ in the search bar
+
+![Everything in the search bar](https://files.lowtechguys.com/changelog/cling/2.8.0-everything-index.png)
+
+- **Index size pruning**: click on the file count in the status bar to see how many files each scope and folder adds to the index and prune unwanted folders
+
+![index size](https://files.lowtechguys.com/changelog/cling/2.8.0-index-size-pruning.jpeg)
+
+- **External drives filter**: search all external drives and find which drive contains a specific file
+    > Pick *External drives* in the filter menu or press `⌥E`
+
+![External drives](https://files.lowtechguys.com/changelog/cling/2.8.0-external-drives.jpeg)
+
+- **Search bar**: a floating bar similar to Spotlight
+    > You can also pin it to the desktop as a small always available search field
+    > 
+    > `⌃ Tab` switches between the bar and the window
+
+![search bar](https://files.lowtechguys.com/changelog/cling/2.8.0-search-bar-query.jpeg)
+
+![empty search bar](https://files.lowtechguys.com/changelog/cling/2.8.0-search-bar-empty.png)
+
+![search bar pinned to the desktop](https://files.lowtechguys.com/changelog/cling/2.8.0-search-bar-pinned.png)
+
+- **MCP server** lets an AI agent work with Cling in plain language: search, explain why a file is missing, and change indexes, ignore rules, filters, scripts and settings
+    > Install it into common agents from Settings > MCP.
+    >
+    > Some things you can ask an agent like Claude or Codex to do with Cling:
+    > - `why doesn't my ~/.ssh/config show up when I search sshcfg?`
+    > - `stop indexing rust target folders but keep the binaries`
+    > - `index my external drive and refresh it every day`
+    > - `make a quick filter for Figma and Sketch files on Option F`
+    > - `write a script on Cmd Ctrl Z that zips the selected files into one archive on my Desktop`
+
+![Settings > MCP](https://files.lowtechguys.com/changelog/cling/2.8.0-mcp-settings.jpeg)
+
+- **Window position**: the window comes up centered on the display with the cursor
+    > Behaviour can be changed in Settings > General
+
+## Fixes
+
+- Indexing no longer waits for iCloud Drive, Dropbox or other cloud storage to download folders kept only online
+- `/` typed in the *Reindex excluded path* field no longer jumps to the search bar
+- Space and `⌥` letters typed in a sheet no longer open Quick Look or switch filters
+- `⌥` filter shortcuts worked in the window without Pro by mistake, and now need Pro like the filters themselves
+- Files inside an excluded folder no longer stay searchable until the next reindex
+- The live changes list and the file count no longer pick up changes in folders that aren't indexed
+- Xcode projects and other bundles no longer get a plain folder icon in the results and show their own instead
+- Results no longer flash a different list for a moment as you type with a quick filter on
+
+## Improvements
+
+- Filters in Settings > Filters carry their own icon and colour
+
+![Settings > Filters](https://files.lowtechguys.com/changelog/cling/2.8.0-filters-settings.png)
+
+- The window always stays ready between summons, so the *Instant mode* setting is gone and becomes the default
+- The action rows have their own pane in Settings > Action Bar, with a live preview of the rows that stays in view while you change them
+
+![Settings > Action Bar](https://files.lowtechguys.com/changelog/cling/2.8.0-action-bar-settings.png)
+
+- `cling logs persist on` keeps Cling's debug logs on disk when a problem needs them, `off` goes back to the macOS default
+- The index follows file changes as they happen and catches up on launch with what changed while Cling was closed, so it no longer walks every location again each hour
+- While Cling is closed, a background job gathers file changes every few hours, when the Mac is idle, so the index is current the moment Cling opens (*Watch file events in the background* in Settings > Search)
+- Following those changes in the background takes about a tenth of the CPU and energy it used to, and the busiest folders that aren't indexed, like temporary files and build output, no longer cost anything
+- Cling uses about a tenth of the memory it used to, around 60 MB with 1.6 million files indexed, and locations that aren't searched, like System and Root without Pro, are no longer indexed
+- Indexing Home and Library takes less than half the time
+- A `!` rule reaches inside an ignored folder only when it names a path there, like `!Library/Caches/Clop/*`, the same as in git
+- Allow character escapes in query: `\r`, `\n`, `\t`, `\xHH` for any byte and `\uHHHH` for any character
+- Settings and controls can be read and operated by VoiceOver and AI agents that use the Mac through accessibility
+- Reindexing an excluded path makes its files searchable within moments, without waiting for the whole location to reindex
+- `Home` and `End` select the first or last row, so the arrow keys carry on from there
+- Files in a Home folder that links elsewhere, like a `~/.ssh` kept in a dotfiles folder, show under the link's path, and `in:` works on that folder
+- Blocklist prefixes in Settings > Excluded Paths accept `~/` paths
+- Hidden system files on external drives are no longer indexed
+- CLI searches no longer wait behind a reindex or status command that is still running
+
 # 2.7.4
 
 **[Download Cling 2.7.4 →](https://files.lowtechguys.com/releases/Cling-2.7.4.dmg)**
