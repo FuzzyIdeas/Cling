@@ -459,8 +459,8 @@ struct ContentView: View {
         if let f = fuzzy.folderFilter {
             parts.append("in \(f.id)")
         }
-        if let v = fuzzy.volumeFilter {
-            parts.append("on \(v.name.string)")
+        if let v = fuzzy.volumeFilterName {
+            parts.append("on \(v)")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " ")
     }

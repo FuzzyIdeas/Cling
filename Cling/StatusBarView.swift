@@ -13,7 +13,9 @@ struct StatusBarView: View {
         let bar = HStack {
             if !fuzzy.backgroundIndexing {
                 Button(action: {
-                    if let volume = fuzzy.volumeFilter, fuzzy.enabledVolumes.contains(volume) {
+                    if fuzzy.volumeFilter == .allDrives {
+                        fuzzy.indexVolumes(fuzzy.connectedDrives)
+                    } else if let volume = fuzzy.volumeFilter, fuzzy.enabledVolumes.contains(volume) {
                         fuzzy.indexVolume(volume)
                     } else {
                         fuzzy.refresh()
@@ -21,7 +23,7 @@ struct StatusBarView: View {
                 }) {
                     Image(systemName: "arrow.clockwise").bold()
                 }
-                .help(fuzzy.volumeFilter != nil ? "Reindex \(fuzzy.volumeFilter!.name.string)" : "Reindex files")
+                .help(fuzzy.volumeFilter == .allDrives ? "Reindex connected drives" : fuzzy.volumeFilter != nil ? "Reindex \(fuzzy.volumeFilter!.name.string)" : "Reindex files")
                 .buttonStyle(.text(borderColor: .clear))
             }
 

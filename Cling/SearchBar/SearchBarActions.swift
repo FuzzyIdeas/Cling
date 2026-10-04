@@ -473,6 +473,15 @@ extension SearchBarController {
                 }
                 menu.addItem(entry)
             }
+            if FUZZY.offersAllDrivesFilter {
+                // Only the drive engines are searched, and those are left out of every search without Pro.
+                let entry = item("External drives", enabled: proactive) { _ in
+                    FUZZY.volumeFilter = FUZZY.volumeFilter == .allDrives ? nil : .allDrives
+                }
+                entry.state = FUZZY.volumeFilter == .allDrives ? .on : .off
+                entry.toolTip = "Searches in \(volumes.map(\.name.string).joined(separator: ", "))"
+                menu.addItem(entry)
+            }
         }
 
         menu.addItem(.separator())

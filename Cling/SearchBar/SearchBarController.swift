@@ -1108,8 +1108,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         if let f = fuzzy.folderFilter {
             parts.append("in \(f.id)")
         }
-        if let v = fuzzy.volumeFilter {
-            parts.append("on \(v.name.string)")
+        if let v = fuzzy.volumeFilterName {
+            parts.append("on \(v)")
         }
         let scope = fuzzy.scopeAppearance
 

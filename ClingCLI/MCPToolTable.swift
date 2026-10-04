@@ -21,7 +21,8 @@ extension MCPServer {
 
     - The index is split into scopes: home (~ without ~/Library), library (~/Library), applications, system \
     and root (/usr, /bin, /etc, /Library, /var, /private and the like). System and root need Cling Pro. \
-    External volumes are indexed separately and need Pro. Everything is a separate Pro index of every file on \
+    External volumes are indexed separately and need Pro; a volume's index stays searchable while it is unplugged, \
+    and cling_search allDrives searches all of them at once. Everything is a separate Pro index of every file on \
     the local disks, with no ignore rules, searched alone when it is on.
     - What the index leaves out is decided by, in order: the global blocklist (prefix and contains rules, \
     checked first and on every scope), then gitignore-style ignore files: ~/.fsignore for home and library, one \
@@ -98,6 +99,7 @@ extension MCPServer {
                 + (folders.isEmpty ? [] : ["--folders=\(folders.joined(separator: ","))"])
                 + flag(a, "dirsOnly", "--dirs-only")
                 + flag(a, "everything", "--everything")
+                + flag(a, "allDrives", "--all-drives")
                 + opt(a, "--quick-filter", "quickFilter")
                 + opt(a, "--folder-filter", "folderFilter")
                 + (scopes.isEmpty ? [] : ["--scope"] + scopes),
@@ -405,7 +407,10 @@ extension MCPServer {
                 + "filter's own tokens and this does the same. It does not apply the window's live tidying "
                 + "(results deleted or excluded since the last walk are hidden there), minQueryLength, or the "
                 + "500 result cap without Pro. Use cling_explain_search to see why a file ranks where it does. "
-                + "everything searches the Everything index alone (Pro), loading it first and building it on first use.",
+                + "everything searches the Everything index alone (Pro), loading it first and building it on first use. "
+                + "allDrives searches the saved index of every external drive alone (Pro), the ones unplugged right now "
+                + "too, and the status names each drive searched and marks the disconnected ones: use it to find which "
+                + "drive holds a file.",
             inputSchema: ["type": "object", "properties": [
                 "query": ["type": "string", "description": "the query as typed, operators included (.pdf, in:~/Documents, !foo, 'exact, ^start, end$)"],
                 "count": ["type": "integer", "description": "how many results, default 30"],
@@ -416,6 +421,11 @@ extension MCPServer {
                 "dirsOnly": ["type": "boolean", "description": "only folders"],
                 "scopes": ["type": "array", "items": ["type": "string"], "description": "only these scopes: \(scopeNames)"],
                 "everything": ["type": "boolean", "description": "search the Everything index instead (Pro)"],
+                "allDrives": [
+                    "type": "boolean",
+                    "description": "search only the external drives' saved indexes, connected or not (Pro). A result's path "
+                        + "starts with /Volumes/<drive name>, the drive it is on. Not with everything or scopes",
+                ],
             ], "required": ["query"]],
             handler: search
         ),

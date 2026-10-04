@@ -132,6 +132,9 @@ struct FilterPicker: View {
                 ForEach(volumes, id: \.1) { i, volume in
                     filterItem(volume, key: i > 9 ? nil : i.s.first)
                 }
+                if fuzzy.offersAllDrivesFilter {
+                    allDrivesItem(enabledVolumes)
+                }
             } label: { Text("Volume filter") }
                 .labelsHidden()
                 .pickerStyle(.inline)
@@ -219,6 +222,22 @@ struct FilterPicker: View {
         }
         .truncationMode(.tail)
         .disabled(status == .indexing)
+    }
+
+    /// Every drive's saved index at once, for finding which drive holds a file while most of them are unplugged.
+    /// No number key: those follow the drives' order, and one placed after them would move as drives come and go.
+    private func allDrivesItem(_ drives: [FilePath]) -> some View {
+        let disconnected = drives.filter { fuzzy.disconnectedVolumes.contains($0) }.count
+        let subtitle = disconnected > 0 ? "\(drives.count) drives, \(disconnected) disconnected" : "\(drives.count) drives"
+        return (
+            Text("External drives\n") +
+                Text(subtitle)
+                .foregroundStyle(.secondary)
+                .font(.caption)
+        )
+        .tag(FilePath.allDrives as FilePath?)
+        .help("Searches in \(drives.map(\.name.string).joined(separator: ", "))")
+        .truncationMode(.tail)
     }
 
     private func filterItem(_ filter: QuickFilter, applyShortcut: Bool = true) -> some View {

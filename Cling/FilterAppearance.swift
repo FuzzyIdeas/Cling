@@ -203,7 +203,7 @@ extension FuzzyClient {
             return (f.icon ?? "folder.fill", f.color ?? .forName(f.id))
         }
         if let v = volumeFilter {
-            return ("externaldrive.fill", .forName(v.string))
+            return (v == .allDrives ? "xserve" : "externaldrive.fill", .forName(v.string))
         }
         return nil
     }

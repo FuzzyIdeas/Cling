@@ -78,13 +78,13 @@ final class SearchCoordinator: @unchecked Sendable {
         suffixPattern: String? = nil,
         dirsOnly: Bool = false,
         scopeLabels: [String]? = nil,
-        only: EngineEntry? = nil,
+        only: [EngineEntry]? = nil,
         cancelled: (() -> Bool)? = nil
     ) -> [SearchResult] {
         let allEngines = lock.withLock { _engines }
         let engines: [EngineEntry]
         if let only {
-            engines = [only]
+            engines = only
         } else if let labels = scopeLabels, !labels.isEmpty {
             let lowered = Set(labels.map { $0.lowercased() })
             // Match scope labels against both raw values (e.g. "root") and display labels (e.g. "Root (/usr, ...)")
@@ -382,7 +382,7 @@ extension FuzzyClient {
                     folderPrefixes: resolved.folderPrefixes,
                     suffixPattern: request.suffixPattern,
                     dirsOnly: resolved.dirsOnly,
-                    only: .init(engine: engine, label: "Everything", scoreBias: 0)
+                    only: [.init(engine: engine, label: "Everything", scoreBias: 0)]
                 )
             }
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
@@ -395,12 +395,59 @@ extension FuzzyClient {
         }
     }
 
+    /// Searches every external drive's saved index alone, connected or not, the way the window's External drives
+    /// filter does. The status names each drive searched and marks the disconnected ones, so whoever asked can tell
+    /// which drive to go and plug in.
+    nonisolated static func searchDrives(_ request: ClingRequest, coordinator coord: SearchCoordinator) -> ClingResponse {
+        guard proactive else {
+            return ClingResponse(error: "Searching external drives needs Cling Pro")
+        }
+        let (engines, offline) = DispatchQueue.main.sync {
+            MainActor.assumeIsolated {
+                (
+                    FUZZY.driveEngines.map { SearchCoordinator.EngineEntry(engine: $0.engine, label: $0.label, scoreBias: $0.scoreBias) },
+                    Set(FUZZY.disconnectedVolumes.map(\.name.string))
+                )
+            }
+        }
+        guard !engines.isEmpty else {
+            return ClingResponse(error: "no external drive has been indexed yet")
+        }
+        let resolved: SearchCoordinator.Resolved
+        switch coord.resolve(request) {
+        case let .success(r): resolved = r
+        case let .failure(error): return ClingResponse(error: error.message)
+        }
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let results = CLICalls.searchLock.withLock {
+            coord.search(
+                query: resolved.query,
+                maxResults: request.maxResults ?? 30,
+                folderPrefixes: resolved.folderPrefixes,
+                suffixPattern: request.suffixPattern,
+                dirsOnly: resolved.dirsOnly,
+                only: engines
+            )
+        }
+        let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+        let drives = engines.map { offline.contains($0.label) ? "\($0.label) (disconnected)" : $0.label }
+        return ClingResponse(
+            results: results.map { ClingSearchResult(path: $0.path, isDir: $0.isDir, score: $0.score, quality: $0.quality) },
+            status: "drives: \(drives.joined(separator: ", "))",
+            indexCount: engines.reduce(0) { $0 + $1.engine.count },
+            searchMs: ms
+        )
+    }
+
     nonisolated static func handleCLIRequest(_ request: ClingRequest, coordinator coord: SearchCoordinator) -> ClingResponse {
         if let refusal = mcpRefusal(request) {
             return ClingResponse(error: refusal)
         }
         switch request.command {
         case .search:
+            if request.allDrives == true {
+                return searchDrives(request, coordinator: coord)
+            }
             if request.everything == true {
                 return searchEverything(request, coordinator: coord)
             }

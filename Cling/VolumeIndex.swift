@@ -18,6 +18,13 @@ private func volumeCheckpointFile(_ volume: FilePath) -> URL {
     volumeIndexFile(volume).url.deletingPathExtension().appendingPathExtension("checkpoint")
 }
 
+extension FilePath {
+    /// The volume filter that searches every external drive's saved index at once, connected or not, so a file can
+    /// be traced to the drive holding it while the drives sit in a drawer. It is the folder they all mount under,
+    /// so as a path it is true of every result, but it is never walked or indexed itself.
+    static let allDrives = FilePath("/Volumes")
+}
+
 // MARK: - VolumeIndexBatchTracker
 
 private final class VolumeIndexBatchTracker: @unchecked Sendable {
@@ -119,11 +126,17 @@ extension FuzzyClient {
         volumes.filter { volume in
             let index = volumeIndexFile(volume)
             let cpFile = index.url.deletingPathExtension().appendingPathExtension("checkpoint")
-            if FileManager.default.fileExists(atPath: cpFile.path) { return true } // interrupted indexing
+            if FileManager.default.fileExists(atPath: cpFile.path) {
+                return true
+            } // interrupted indexing
             guard index.exists else { return true }
             let size = (try? FileManager.default.attributesOfItem(atPath: index.string)[.size] as? Int) ?? 0
-            if size <= 64 { return true } // empty or header-only index
-            if let engine = volumeEngines[volume], engine.count == 0 { return true } // loaded but empty
+            if size <= 64 {
+                return true
+            } // empty or header-only index
+            if let engine = volumeEngines[volume], engine.count == 0 {
+                return true
+            } // loaded but empty
             let interval = Defaults[.reindexTimeIntervalPerVolume][volume] ?? DEFAULT_VOLUME_REINDEX_INTERVAL
             return (index.timestamp ?? 0) < Date().addingTimeInterval(-interval).timeIntervalSince1970
         }
@@ -174,7 +187,9 @@ extension FuzzyClient {
             for line in output.components(separatedBy: "\n") where line.contains("APFS Volume Role:") {
                 let role = line.components(separatedBy: ":").last?.trimmingCharacters(in: .whitespaces) ?? ""
                 // T=Backup (Time Machine), C=Sidecar (Time Machine)
-                if role.contains("T") || role.contains("C") { return true }
+                if role.contains("T") || role.contains("C") {
+                    return true
+                }
             }
         }
         return false
@@ -199,6 +214,31 @@ extension FuzzyClient {
 
     func getExternalIndexes() -> [FilePath] {
         enabledVolumes.map { volumeIndexFile($0) }
+    }
+
+    /// The engines the External drives filter searches: every enabled drive's index, which stays loaded from launch
+    /// whether or not the drive is mounted. Taken from the volume engines and not `activeEngines`, because
+    /// Everything replaces those while it is on and holds only the disks that are mounted.
+    var driveEngines: [(engine: SearchEngine, label: String, scoreBias: Int)] {
+        guard proactive else { return [] }
+        return enabledVolumes.compactMap { volume in
+            volumeEngines[volume].map { ($0, volume.name.string, -2) }
+        }
+    }
+
+    /// With a single drive the External drives filter would only repeat that drive's own entry.
+    var offersAllDrivesFilter: Bool {
+        enabledVolumes.count >= 2
+    }
+
+    /// What the volume filter is called after "on" in the window's filter line and the bar's.
+    var volumeFilterName: String? {
+        volumeFilter.map { $0 == .allDrives ? "external drives" : $0.name.string }
+    }
+
+    /// The enabled drives that are mounted, the only ones a walk can reach.
+    var connectedDrives: [FilePath] {
+        enabledVolumes.filter { !disconnectedVolumes.contains($0) }
     }
 
     private func startVolumeIndexTask(_ volume: FilePath, batchTracker: VolumeIndexBatchTracker? = nil) {
@@ -348,7 +388,9 @@ extension FuzzyClient {
         enabledVolumes.removeAll { $0 == volume }
         externalIndexes = getExternalIndexes()
 
-        if volumeFilter == volume { volumeFilter = nil }
+        if volumeFilter == volume || (volumeFilter == .allDrives && !offersAllDrivesFilter) {
+            volumeFilter = nil
+        }
 
         logActivity("Removed volume: \(volume.name.string)")
     }

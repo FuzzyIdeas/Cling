@@ -671,10 +671,13 @@ class FuzzyClient {
 
             if let volumeFilter {
                 // Auto-start indexing if not yet indexed
-                if volumeFilter != .root, volumeEngines[volumeFilter] == nil, !volumesIndexing.contains(volumeFilter) {
+                if volumeFilter == .allDrives {
+                    // As picking each one alone would. The disconnected ones keep the index they have.
+                    indexVolumes(connectedDrives.filter { volumeEngines[$0] == nil })
+                } else if volumeFilter != .root, volumeEngines[volumeFilter] == nil, !volumesIndexing.contains(volumeFilter) {
                     indexVolume(volumeFilter)
                 }
-                logActivity("Volume filter: \(volumeFilter.name.string)")
+                logActivity("Volume filter: \(volumeFilter == .allDrives ? "External drives" : volumeFilter.name.string)")
                 if folderFilter != nil {
                     folderFilter = nil
                 }
@@ -682,7 +685,7 @@ class FuzzyClient {
                 logActivity("Volume filter cleared")
             }
             // Skip search if volume is not yet indexed
-            guard volumeFilter == nil || volumeFilter == .root || volumeEngines[volumeFilter!] != nil else { return }
+            guard volumeFilter == nil || volumeFilter == .root || volumeFilter == .allDrives || volumeEngines[volumeFilter!] != nil else { return }
             performSearch()
         }
     }
@@ -2170,10 +2173,12 @@ class FuzzyClient {
         let extensionOnly = Self.isExtensionOnlyQuery(query)
         let maxResults = (proactive || extensionOnly) ? Defaults[.maxResultsCount] : min(Defaults[.maxResultsCount], 500)
         let folderPrefixes = folderFilter?.folders.map(\.string)
-        let volumePrefix = volumeFilter?.string
+        let allDrives = volumeFilter == .allDrives
+        // The drive engines hold nothing outside their drive, so External drives needs no prefix to narrow them.
+        let volumePrefix = allDrives ? nil : volumeFilter?.string
         // Everything follows deletions itself and honours no exclusions, and looking the paths up would make
         // its engine build a path index millions of entries long.
-        let removedPaths = EVERYTHING.active ? [] : removedFiles.union(excludedPaths)
+        let removedPaths = EVERYTHING.active && !allDrives ? [] : removedFiles.union(excludedPaths)
         let activeMaxDepth: Int? = {
             let q = quickFilter?.maxDepth
             let f = folderFilter?.maxDepth
@@ -2194,7 +2199,9 @@ class FuzzyClient {
 
         // Snapshot active engines, pre-filtered by volume/folder constraints
         let engines: [(engine: SearchEngine, label: String, scoreBias: Int)]
-        if let vp = volumePrefix {
+        if allDrives {
+            engines = driveEngines
+        } else if let vp = volumePrefix {
             let volumeMounted = volumeFilter?.exists ?? true
             // Only search engines whose paths could match the volume/folder prefix
             engines = activeEngines.filter { eng in
@@ -2235,7 +2242,16 @@ class FuzzyClient {
         searching = true
         searchTask = Task.detached(priority: .userInitiated) {
             guard !engines.isEmpty else {
-                await MainActor.run { self.searching = false }
+                await MainActor.run {
+                    // Nothing can answer under this filter (External drives before any drive is indexed, say), so
+                    // the last search's results must not stay on screen under it.
+                    self.scoredResults = []
+                    self.results = []
+                    self.searching = false
+                    if !self.emptyQuery || wantVolumeFilter {
+                        self.noQuery = false
+                    }
+                }
                 return
             }
 

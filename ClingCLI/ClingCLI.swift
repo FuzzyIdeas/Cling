@@ -245,6 +245,9 @@ struct Search: ParsableCommand {
     @Flag(name: .shortAndLong, help: "Search the Everything index: every file on the local disks, with no ignore rules (Pro). Loads it first when needed, and builds it on first use")
     var everything = false
 
+    @Flag(name: .long, help: "Search only the external drives' saved indexes, connected or not (Pro)")
+    var allDrives = false
+
     @Option(name: .long, help: "Apply a saved quick filter by name, the way the search window does")
     var quickFilter: String?
 
@@ -253,6 +256,12 @@ struct Search: ParsableCommand {
 
     @Flag(name: .long, help: "Output as JSON, with scores")
     var json = false
+
+    func validate() throws {
+        if allDrives, everything || !scope.isEmpty {
+            throw ValidationError("--all-drives cannot be combined with --everything or --scope")
+        }
+    }
 
     mutating func run() throws {
         if socket {
@@ -267,7 +276,7 @@ struct Search: ParsableCommand {
             command: .search, query: query, maxResults: count, verbose: verbose,
             suffixPattern: suffix, folderPrefixes: folders?.components(separatedBy: ","),
             dirsOnly: dirsOnly ? true : nil, scopes: scope.isEmpty ? nil : scope, everything: everything ? true : nil,
-            quickFilter: quickFilter, folderFilter: folderFilter
+            quickFilter: quickFilter, folderFilter: folderFilter, allDrives: allDrives ? true : nil
         )
 
         let t0 = CFAbsoluteTimeGetCurrent()
