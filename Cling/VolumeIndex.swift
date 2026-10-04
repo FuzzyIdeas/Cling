@@ -226,6 +226,19 @@ extension FuzzyClient {
         }
     }
 
+    /// What a volume filter searches: the drive's own saved index, or every drive's for External drives, even while
+    /// Everything is on. Everything stands in for `activeEngines` then, and it holds only the disks that are mounted,
+    /// so a disconnected drive searched through it found nothing. Nil for the internal disk, which Everything or the
+    /// scopes cover.
+    var volumeFilterEngines: [(engine: SearchEngine, label: String, scoreBias: Int)]? {
+        guard let volumeFilter, volumeFilter != .root else { return nil }
+        if volumeFilter == .allDrives {
+            return driveEngines
+        }
+        guard proactive, enabledVolumes.contains(volumeFilter), let engine = volumeEngines[volumeFilter] else { return [] }
+        return [(engine, volumeFilter.name.string, -2)]
+    }
+
     /// With a single drive the External drives filter would only repeat that drive's own entry.
     var offersAllDrivesFilter: Bool {
         enabledVolumes.count >= 2

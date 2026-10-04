@@ -2173,12 +2173,13 @@ class FuzzyClient {
         let extensionOnly = Self.isExtensionOnlyQuery(query)
         let maxResults = (proactive || extensionOnly) ? Defaults[.maxResultsCount] : min(Defaults[.maxResultsCount], 500)
         let folderPrefixes = folderFilter?.folders.map(\.string)
-        let allDrives = volumeFilter == .allDrives
-        // The drive engines hold nothing outside their drive, so External drives needs no prefix to narrow them.
-        let volumePrefix = allDrives ? nil : volumeFilter?.string
+        // A drive filter searches the drive's own index, or every drive's, and never Everything.
+        let driveFilterEngines = volumeFilterEngines
+        // A drive engine holds nothing outside its drive, so a drive filter needs no prefix to narrow it.
+        let volumePrefix = driveFilterEngines == nil ? volumeFilter?.string : nil
         // Everything follows deletions itself and honours no exclusions, and looking the paths up would make
         // its engine build a path index millions of entries long.
-        let removedPaths = EVERYTHING.active && !allDrives ? [] : removedFiles.union(excludedPaths)
+        let removedPaths = EVERYTHING.active && driveFilterEngines == nil ? [] : removedFiles.union(excludedPaths)
         let activeMaxDepth: Int? = {
             let q = quickFilter?.maxDepth
             let f = folderFilter?.maxDepth
@@ -2199,8 +2200,8 @@ class FuzzyClient {
 
         // Snapshot active engines, pre-filtered by volume/folder constraints
         let engines: [(engine: SearchEngine, label: String, scoreBias: Int)]
-        if allDrives {
-            engines = driveEngines
+        if let driveFilterEngines {
+            engines = driveFilterEngines
         } else if let vp = volumePrefix {
             let volumeMounted = volumeFilter?.exists ?? true
             // Only search engines whose paths could match the volume/folder prefix
