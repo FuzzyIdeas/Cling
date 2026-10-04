@@ -27,8 +27,9 @@ final class SearchCoordinator: @unchecked Sendable {
         let dirsOnly: Bool
     }
 
+    /// Summed on each read, since the live index adds and removes entries without swapping the engines.
     var count: Int {
-        lock.withLock { _count }
+        lock.withLock { _engines }.reduce(0) { $0 + $1.engine.count }
     }
     var indexing: Bool {
         lock.withLock { _indexing }
@@ -59,7 +60,6 @@ final class SearchCoordinator: @unchecked Sendable {
         let retired: [EngineEntry] = lock.withLock {
             let previous = _engines
             _engines = engines
-            _count = engines.reduce(0) { $0 + $1.engine.count }
             return previous
         }
         // Release the previous engines off the main thread: SearchEngine's deinit frees large index
@@ -197,9 +197,6 @@ final class SearchCoordinator: @unchecked Sendable {
                 removed.append(eng.label)
             }
         }
-        if !removed.isEmpty {
-            lock.withLock { _count = _engines.reduce(0) { $0 + $1.engine.count } }
-        }
         return removed
     }
 
@@ -222,7 +219,6 @@ final class SearchCoordinator: @unchecked Sendable {
         }
         guard let eng = engines.first else { return nil }
         eng.engine.addPath(path, isDir: isDir)
-        lock.withLock { _count = _engines.reduce(0) { $0 + $1.engine.count } }
         return eng.label
     }
 
@@ -240,7 +236,6 @@ final class SearchCoordinator: @unchecked Sendable {
 
     private let lock = NSLock()
     private var _engines: [EngineEntry] = []
-    private var _count = 0
     private var _recents: [RecentEntry] = []
     private var _indexing = false
 
