@@ -257,8 +257,12 @@ extension View {
     /// `glow` rings the disc and lifts it off the bar, for the search window's icon while a filter
     /// is actually on: the colour alone says which scope, the glow says that there is one.
     func filterIconBackground(_ color: FilterColor, dark: Bool, glow: Bool = false) -> some View {
-        let accent = color.accent(dark: dark)
-        return background(Circle().fill(accent.opacity(dark ? 0.24 : 0.16)))
+        filterIconBackground(accent: color.accent(dark: dark), dark: dark, glow: glow)
+    }
+
+    /// The same disc in a colour that isn't one filter's own, for the rows that stand for all of them.
+    func filterIconBackground(accent: Color, dark: Bool, glow: Bool = false) -> some View {
+        background(Circle().fill(accent.opacity(dark ? 0.24 : 0.16)))
             .overlay {
                 if glow {
                     Circle().strokeBorder(accent.opacity(dark ? 0.85 : 0.7), lineWidth: 1)

@@ -663,6 +663,8 @@
                 if CommandLine.arguments.contains("-searchBarShowcaseScrollToEnd") {
                     scrollToEnd()
                 }
+                // Nothing focused, so a Mac with keyboard navigation on draws no focus ring on the first control.
+                NSApp.keyWindow?.makeFirstResponder(nil)
                 return
             }
             if CommandLine.arguments.contains("-searchBarShowcaseWindow") {

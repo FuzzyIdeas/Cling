@@ -329,7 +329,9 @@ struct FilterPicker: View {
                 return nil
             }
 
-            guard let ch = (event.charactersIgnoringModifiers ?? "").lowercased().first else {
+            // Applying a filter needs Pro. This monitor sees the key before the window's own gated handler,
+            // so without the check here ⌥ keys would apply filters and pick volumes for free.
+            guard proactive, let ch = (event.charactersIgnoringModifiers ?? "").lowercased().first else {
                 return event
             }
 
@@ -684,7 +686,7 @@ struct FilterEditorSheet: View {
         List(selection: $selection) {
             Section("Quick Filters") {
                 NavigationLink(value: FilterEditorSelection.quickFilters) {
-                    Label("All Quick Filters", systemImage: "slider.horizontal.3")
+                    Label { Text("All Quick Filters") } icon: { sidebarIcon("slider.horizontal.3", accent: .accentColor) }
                 }
                 ForEach(quickFilters, id: \.uuid) { filter in
                     NavigationLink(value: FilterEditorSelection.quickFilter(filter.uuid)) {
@@ -700,7 +702,7 @@ struct FilterEditorSheet: View {
 
             Section("Folder Filters") {
                 NavigationLink(value: FilterEditorSelection.folderFilters) {
-                    Label("All Folder Filters", systemImage: "folder")
+                    Label { Text("All Folder Filters") } icon: { sidebarIcon("folder", accent: .accentColor) }
                 }
                 ForEach(folderFilters, id: \.uuid) { filter in
                     NavigationLink(value: FilterEditorSelection.folderFilter(filter.uuid)) {
@@ -717,7 +719,7 @@ struct FilterEditorSheet: View {
             if !disconnectedVolumes.isEmpty {
                 Section("Other") {
                     NavigationLink(value: FilterEditorSelection.disconnectedVolumes) {
-                        Label("Disconnected Volumes", systemImage: "externaldrive.badge.xmark")
+                        Label { Text("Disconnected Volumes") } icon: { sidebarIcon("externaldrive.badge.xmark", accent: .gray) }
                     }
                 }
             }
@@ -780,9 +782,17 @@ struct FilterEditorSheet: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         } icon: {
-            Image(systemName: icon)
-                .foregroundStyle(color.accent(dark: colorScheme == .dark))
+            sidebarIcon(icon, accent: color.accent(dark: colorScheme == .dark))
         }
+    }
+
+    /// A symbol on the pastel disc the filter icons use elsewhere, small enough inside it to keep clear of the edge.
+    private func sidebarIcon(_ symbol: String, accent: Color) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(accent)
+            .frame(width: 20, height: 20)
+            .filterIconBackground(accent: accent, dark: colorScheme == .dark)
     }
 
     private func emptySection(_ text: String) -> some View {
