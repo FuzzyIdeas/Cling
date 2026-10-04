@@ -214,7 +214,8 @@ func getFilterKey(id: String? = nil) -> SauceKey {
         return .escape
     }
 
-    let usedKeys = Set(Defaults[.quickFilters].compactMap(\.key) + Defaults[.folderFilters].compactMap(\.key))
+    // E is External drives' own key, which gives way to a filter only when the user puts it there.
+    let usedKeys = Set(Defaults[.quickFilters].compactMap(\.key) + Defaults[.folderFilters].compactMap(\.key) + [ALL_DRIVES_KEY])
 
     for char in id.lowercased() {
         if !usedKeys.contains(char), let key = SauceKey(rawValue: String(char)) {

@@ -25,6 +25,10 @@ extension FilePath {
     static let allDrives = FilePath("/Volumes")
 }
 
+/// ⌥E picks External drives. Not a digit: those count the volumes from 0, the internal disk, so one after them would
+/// move as drives come and go. A quick or folder filter the user put on E keeps it, and new ones are never given it.
+let ALL_DRIVES_KEY: Character = "e"
+
 // MARK: - VolumeIndexBatchTracker
 
 private final class VolumeIndexBatchTracker: @unchecked Sendable {
@@ -242,6 +246,13 @@ extension FuzzyClient {
     /// With a single drive the External drives filter would only repeat that drive's own entry.
     var offersAllDrivesFilter: Bool {
         enabledVolumes.count >= 2
+    }
+
+    /// Whether ⌥E picks External drives: while it is offered, and none of the user's own filters has E.
+    func allDrivesKeyApplies(quickFilters: [QuickFilter] = Defaults[.quickFilters], folderFilters: [FolderFilter] = Defaults[.folderFilters]) -> Bool {
+        offersAllDrivesFilter
+            && !quickFilters.contains { $0.key == ALL_DRIVES_KEY }
+            && !folderFilters.contains { $0.key == ALL_DRIVES_KEY }
     }
 
     /// What the volume filter is called after "on" in the window's filter line and the bar's.

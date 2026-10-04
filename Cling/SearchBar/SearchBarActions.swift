@@ -480,6 +480,10 @@ extension SearchBarController {
                 }
                 entry.state = FUZZY.volumeFilter == .allDrives ? .on : .off
                 entry.toolTip = "Searches in \(volumes.map(\.name.string).joined(separator: ", "))"
+                if FUZZY.allDrivesKeyApplies(quickFilters: quickFilters, folderFilters: folderFilters) {
+                    entry.keyEquivalent = String(ALL_DRIVES_KEY)
+                    entry.keyEquivalentModifierMask = .option
+                }
                 menu.addItem(entry)
             }
         }
@@ -536,6 +540,10 @@ extension SearchBarController {
         }
         if proactive, let filter = Defaults[.folderFilters].first(where: { $0.key == ch }) {
             FUZZY.folderFilter = filter
+            return true
+        }
+        if proactive, ch == ALL_DRIVES_KEY, FUZZY.allDrivesKeyApplies() {
+            FUZZY.volumeFilter = .allDrives
             return true
         }
         if proactive, let digit = ch.wholeNumberValue, !FUZZY.enabledVolumes.isEmpty {

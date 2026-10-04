@@ -239,6 +239,7 @@ struct ContentView: View {
                             folderFilters.compactMap(\.keyEquivalent) +
                                 quickFilters.compactMap(\.keyEquivalent) +
                                 (fuzzy.enabledVolumes.isEmpty ? [] : (0 ... fuzzy.enabledVolumes.count).compactMap(\.s.keyEquivalent)) +
+                                (fuzzy.offersAllDrivesFilter ? [KeyEquivalent(ALL_DRIVES_KEY)] : []) +
                                 [.escape]
                         ),
                         phases: [.down], action: handleFilterKeyPress
@@ -834,6 +835,7 @@ struct ContentView: View {
                     folderFilters.compactMap(\.keyEquivalent) +
                         quickFilters.compactMap(\.keyEquivalent) +
                         (fuzzy.enabledVolumes.isEmpty ? [] : (0 ... fuzzy.enabledVolumes.count).compactMap(\.s.keyEquivalent)) +
+                        (fuzzy.offersAllDrivesFilter ? [KeyEquivalent(ALL_DRIVES_KEY)] : []) +
                         [.escape]
                 ),
                 phases: [.down], action: handleFilterKeyPress
@@ -1610,6 +1612,10 @@ struct ContentView: View {
         }
         if proactive, let index = keyPress.key.character.wholeNumberValue, let filter = ([FilePath.root] + fuzzy.enabledVolumes)[safe: index] {
             fuzzy.volumeFilter = filter
+            result = .handled
+        }
+        if proactive, keyPress.key == KeyEquivalent(ALL_DRIVES_KEY), fuzzy.allDrivesKeyApplies(quickFilters: quickFilters, folderFilters: folderFilters) {
+            fuzzy.volumeFilter = .allDrives
             result = .handled
         }
 

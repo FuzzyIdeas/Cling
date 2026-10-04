@@ -133,7 +133,7 @@ struct FilterPicker: View {
                     filterItem(volume, key: i > 9 ? nil : i.s.first)
                 }
                 if fuzzy.offersAllDrivesFilter {
-                    allDrivesItem(enabledVolumes)
+                    allDrivesItem(enabledVolumes, key: fuzzy.allDrivesKeyApplies(quickFilters: quickFilters, folderFilters: folderFilters) ? ALL_DRIVES_KEY : nil)
                 }
             } label: { Text("Volume filter") }
                 .labelsHidden()
@@ -225,8 +225,8 @@ struct FilterPicker: View {
     }
 
     /// Every drive's saved index at once, for finding which drive holds a file while most of them are unplugged.
-    /// No number key: those follow the drives' order, and one placed after them would move as drives come and go.
-    private func allDrivesItem(_ drives: [FilePath]) -> some View {
+    /// `key` is nil when one of the user's own filters has taken E.
+    private func allDrivesItem(_ drives: [FilePath], key: Character?) -> some View {
         let disconnected = drives.filter { fuzzy.disconnectedVolumes.contains($0) }.count
         let subtitle = disconnected > 0 ? "\(drives.count) drives, \(disconnected) disconnected" : "\(drives.count) drives"
         return (
@@ -237,6 +237,10 @@ struct FilterPicker: View {
         )
         .tag(FilePath.allDrives as FilePath?)
         .help("Searches in \(drives.map(\.name.string).joined(separator: ", "))")
+        // Hint only; the NSEvent monitor does the actual handling.
+        .ifLet(key) { view, key in
+            view.keyboardShortcut(KeyEquivalent(key), modifiers: [.option])
+        }
         .truncationMode(.tail)
     }
 
@@ -343,6 +347,11 @@ struct FilterPicker: View {
             // Folder filters
             if let ff = Defaults[.folderFilters].first(where: { $0.key == ch }) {
                 FUZZY.folderFilter = ff
+                return nil
+            }
+            // External drives, after the user's own filters so one of theirs on E keeps it
+            if ch == ALL_DRIVES_KEY, FUZZY.allDrivesKeyApplies() {
+                FUZZY.volumeFilter = .allDrives
                 return nil
             }
             // Volumes (digit keys; index 0 = root, 1...n = enabled volumes)
