@@ -11,6 +11,9 @@ extension Defaults.Keys {
 final class SearchHistory {
     static let shared = SearchHistory()
     static let maxEntries = 200
+    /// How long a past search ↑ brought back has to stay before ↓ goes on into its results instead of forward
+    /// through the history. A quick ↓ is someone who went one too far.
+    static let settleDelay: TimeInterval = 1.5
 
     /// All history entries, most recent first
     private(set) var entries: [String] = Defaults[.searchHistory]
@@ -52,7 +55,9 @@ final class SearchHistory {
         return entries.filter { entry in
             let lower = entry.lowercased()
             // Match if input is a prefix, or if all input words appear in the entry
-            if lower.hasPrefix(q) { return true }
+            if lower.hasPrefix(q) {
+                return true
+            }
             let words = q.split(separator: " ")
             return words.allSatisfy { lower.contains($0) }
         }

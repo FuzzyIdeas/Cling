@@ -498,10 +498,14 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         case #selector(NSResponder.insertNewline(_:)):
             _ = performReturn(modifiers: [])
         case #selector(NSResponder.insertTab(_:)):
-            if let suggestion = inlineSuggestion {
+            // As in the window, ⇥ goes between the query and the results, after the ghost completion while there is one.
+            if listFocused {
+                setListFocused(false)
+            } else if let suggestion = inlineSuggestion {
                 complete(to: suggestion)
             } else {
-                drillIn()
+                settleHistory()
+                moveSelection(by: 1)
             }
         case #selector(NSResponder.insertBacktab(_:)):
             drillOut()
@@ -563,13 +567,17 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
 
     func moveSelection(by delta: Int, extend: Bool = false) {
         // As in the window, ↑ from the field goes back through past searches, whatever is typed, and ↓ comes forward
-        // again. The results only take the keyboard on ↓, so ⌘⌫ keeps editing the query.
+        // again until the past search has stayed a moment, then goes on into its results. The results only take the
+        // keyboard on ↓, so ⌘⌫ keeps editing the query.
         if delta == -1, !extend, !listFocused, stepHistory(back: true) {
             return
         }
         if delta > 0, !listFocused, historyIndex >= 0 {
-            _ = stepHistory(back: false)
-            return
+            if CACurrentMediaTime() - lastHistoryStep < SearchHistory.settleDelay {
+                _ = stepHistory(back: false)
+                return
+            }
+            settleHistory()
         }
         if delta == -1, !extend, listFocused, results.tableView.selectedRow <= 0 {
             // Up from the first result hands the keyboard back to the field.
@@ -611,8 +619,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         updateCompletion()
     }
 
-    /// Tab, or → in the list as in the window's table: search inside the selected folder. Tab leaves the keyboard in
-    /// the field to type more, → keeps it in the list to go on into a subfolder.
+    /// → in the list as in the window's table, or its hint: search inside the selected folder. → keeps the keyboard in
+    /// the list to go on into a subfolder, the hint leaves it in the field to type more.
     @discardableResult
     func drillIn(keepingListFocus: Bool = false) -> Bool {
         guard selection.count == 1, let folder = selection.first, isDirectory(folder) else { return false }
@@ -664,9 +672,9 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             }
             hints.append(.init(id: .showInFinder, key: keys.showInFinder, title: "Show in Finder"))
             hints.append(.init(id: .quickLook, key: listFocused ? "␣" : keys.quickLook, title: "QuickLook"))
-            // ⇥ takes the ghost completion while there is one.
-            if sel.count == 1, root.completion == nil, let path = sel.first, FilePathBackgroundTasks.shared.knownIsDir(path) == true {
-                hints.append(.init(id: .drill, key: listFocused ? "→" : "⇥", title: "Search in folder"))
+            // From the field, → moves the caret and ⇥ goes to the results.
+            if sel.count == 1, listFocused, let path = sel.first, FilePathBackgroundTasks.shared.knownIsDir(path) == true {
+                hints.append(.init(id: .drill, key: "→", title: "Search in folder"))
             }
             hints.append(.init(id: .copy, key: keys.copy, title: "Copy"))
         }
@@ -767,6 +775,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     private var drillStack: [String] = []
     private var lastDrillQuery: String?
     private var historyIndex = -1
+    private var lastHistoryStep: CFTimeInterval = 0
     private var querySaved = ""
 
     private var lastKeystroke: CFTimeInterval = 0
@@ -1899,9 +1908,17 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         }
     }
 
+    /// Keeps the past search ↑ brought back as the query, as if typed.
+    private func settleHistory() {
+        guard historyIndex >= 0 else { return }
+        historyIndex = -1
+        ghostDismissed = true
+    }
+
     private func stepHistory(back: Bool) -> Bool {
         let history = SearchHistory.shared.entries
         guard !history.isEmpty else { return false }
+        lastHistoryStep = CACurrentMediaTime()
         if back {
             if historyIndex == -1 {
                 querySaved = FUZZY.query

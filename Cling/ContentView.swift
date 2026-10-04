@@ -2509,6 +2509,7 @@ struct SearchBarKeyHandlers: ViewModifier {
                     navigatingHistory = true
                     query = history[newIndex]
                 }
+                lastHistoryStep = Date()
                 return .handled
             }
             .onKeyPress(.downArrow) {
@@ -2516,15 +2517,24 @@ struct SearchBarKeyHandlers: ViewModifier {
                 if isIMEComposing() {
                     return .ignored
                 }
+                // A quick ↓ comes forward through past searches again; once one has stayed a moment, ↓ keeps it and
+                // goes on into its results.
+                if historyIndex >= 0, Date().timeIntervalSince(lastHistoryStep) >= SearchHistory.settleDelay {
+                    historyIndex = -1
+                    focused.wrappedValue = tableFocusTarget
+                    return .handled
+                }
                 if historyIndex > 0 {
                     historyIndex -= 1
                     navigatingHistory = true
                     query = SearchHistory.shared.entries[historyIndex]
+                    lastHistoryStep = Date()
                     return .handled
                 } else if historyIndex == 0 {
                     historyIndex = -1
                     navigatingHistory = true
                     query = querySaved
+                    lastHistoryStep = Date()
                     return .handled
                 }
                 if showSuggestionsList, !historySuggestions.isEmpty {
@@ -2601,6 +2611,9 @@ struct SearchBarKeyHandlers: ViewModifier {
                 return .handled
             }
     }
+
+    @State private var lastHistoryStep = Date.distantPast
+
 }
 
 // MARK: - RunHistoryRow
