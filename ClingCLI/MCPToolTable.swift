@@ -119,6 +119,7 @@ extension MCPServer {
                 + opt(a, "--suffix", "suffix")
                 + (folders.isEmpty ? [] : ["--folders=\(folders.joined(separator: ","))"])
                 + flag(a, "dirsOnly", "--dirs-only")
+                + flag(a, "allDrives", "--all-drives")
                 + opt(a, "--quick-filter", "quickFilter")
                 + opt(a, "--folder-filter", "folderFilter")
                 + (scopes.isEmpty ? [] : ["--scope"] + scopes),
@@ -489,7 +490,8 @@ extension MCPServer {
                 + "quality. With path, also where that file lands in each engine and in the merged list, and why "
                 + "it was dropped when it was: no match, under the merge's quality gate, or past the result limit; "
                 + "when no engine matches it, the index report from cling_explain_path. This is the tool for "
-                + "reproducing 'searching for X does not find Y' or 'Y ranks below junk'. It reads the "
+                + "reproducing 'searching for X does not find Y' or 'Y ranks below junk', and with allDrives for "
+                + "'Y is on one of my drives but searching them all does not find it'. It reads the "
                 + "literalSearch, minQueryLength and maxResultsCount settings but changes nothing.",
             inputSchema: ["type": "object", "properties": [
                 "query": ["type": "string", "description": "the query exactly as the user typed it"],
@@ -500,6 +502,12 @@ extension MCPServer {
                 "suffix": ["type": "string"],
                 "dirsOnly": ["type": "boolean"],
                 "scopes": ["type": "array", "items": ["type": "string"], "description": scopeNames],
+                "allDrives": [
+                    "type": "boolean",
+                    "description": "the user had the External drives filter on: rank against the external drives' saved "
+                        + "indexes only, connected or not, as the window does even while Everything is on (Pro). The "
+                        + "notes name each drive searched and mark the disconnected ones. Not with scopes",
+                ],
                 "count": ["type": "integer", "description": "how many top results to list, default 15"],
             ], "required": ["query"]],
             handler: why

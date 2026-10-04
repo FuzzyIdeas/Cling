@@ -399,19 +399,11 @@ extension FuzzyClient {
     /// filter does. The status names each drive searched and marks the disconnected ones, so whoever asked can tell
     /// which drive to go and plug in.
     nonisolated static func searchDrives(_ request: ClingRequest, coordinator coord: SearchCoordinator) -> ClingResponse {
-        guard proactive else {
-            return ClingResponse(error: "Searching external drives needs Cling Pro")
-        }
-        let (engines, offline) = DispatchQueue.main.sync {
-            MainActor.assumeIsolated {
-                (
-                    FUZZY.driveEngines.map { SearchCoordinator.EngineEntry(engine: $0.engine, label: $0.label, scoreBias: $0.scoreBias) },
-                    Set(FUZZY.disconnectedVolumes.map(\.name.string))
-                )
-            }
-        }
-        guard !engines.isEmpty else {
-            return ClingResponse(error: "no external drive has been indexed yet")
+        let engines: [SearchCoordinator.EngineEntry]
+        let drives: String
+        switch cliDrives() {
+        case let .success(found): (engines, drives) = found
+        case let .failure(error): return ClingResponse(error: error.message)
         }
         let resolved: SearchCoordinator.Resolved
         switch coord.resolve(request) {
@@ -430,13 +422,33 @@ extension FuzzyClient {
             )
         }
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-        let drives = engines.map { offline.contains($0.label) ? "\($0.label) (disconnected)" : $0.label }
         return ClingResponse(
             results: results.map { ClingSearchResult(path: $0.path, isDir: $0.isDir, score: $0.score, quality: $0.quality) },
-            status: "drives: \(drives.joined(separator: ", "))",
+            status: "drives: \(drives)",
             indexCount: engines.reduce(0) { $0 + $1.engine.count },
             searchMs: ms
         )
+    }
+
+    /// The drive engines for `--all-drives`, with the drives named and the disconnected ones marked, or why there are
+    /// none to search.
+    nonisolated static func cliDrives() -> Result<(engines: [SearchCoordinator.EngineEntry], names: String), ClingError> {
+        guard proactive else {
+            return .failure(ClingError("Searching external drives needs Cling Pro"))
+        }
+        let (engines, offline) = DispatchQueue.main.sync {
+            MainActor.assumeIsolated {
+                (
+                    FUZZY.driveEngines.map { SearchCoordinator.EngineEntry(engine: $0.engine, label: $0.label, scoreBias: $0.scoreBias) },
+                    Set(FUZZY.disconnectedVolumes.map(\.name.string))
+                )
+            }
+        }
+        guard !engines.isEmpty else {
+            return .failure(ClingError("no external drive has been indexed yet"))
+        }
+        let names = engines.map { offline.contains($0.label) ? "\($0.label) (disconnected)" : $0.label }
+        return .success((engines, names.joined(separator: ", ")))
     }
 
     nonisolated static func handleCLIRequest(_ request: ClingRequest, coordinator coord: SearchCoordinator) -> ClingResponse {

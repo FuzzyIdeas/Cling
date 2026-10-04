@@ -103,11 +103,20 @@ struct Why: ParsableCommand {
     @Option(name: .long, parsing: .upToNextOption, help: "Search only in specific scopes (home, library, applications, system, root)")
     var scope: [String] = []
 
+    @Flag(name: .long, help: "Search only the external drives' saved indexes, connected or not, as the External drives filter does (Pro)")
+    var allDrives = false
+
     @Option(name: .shortAndLong, help: "How many of the top results to show")
     var count = 15
 
     @Flag(name: .long, help: "Output as JSON")
     var json = false
+
+    func validate() throws {
+        if allDrives, !scope.isEmpty {
+            throw ValidationError("--all-drives cannot be combined with --scope")
+        }
+    }
 
     mutating func run() throws {
         let target = path.map { p -> String in
@@ -119,7 +128,7 @@ struct Why: ParsableCommand {
             command: .why, query: query, maxResults: count, suffixPattern: suffix,
             folderPrefixes: folders?.components(separatedBy: ","), dirsOnly: dirsOnly ? true : nil,
             scopes: scope.isEmpty ? nil : scope, paths: target.map { [$0] },
-            quickFilter: quickFilter, folderFilter: folderFilter
+            quickFilter: quickFilter, folderFilter: folderFilter, allDrives: allDrives ? true : nil
         )
         try runConfig(request, json: json, recvTimeout: 60)
     }

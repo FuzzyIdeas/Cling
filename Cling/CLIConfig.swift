@@ -1324,7 +1324,16 @@ extension CLIConfig {
         let shown = req.maxResults ?? 15
         let target = req.paths?.first.map { (($0 as NSString).expandingTildeInPath as NSString).standardizingPath }
 
-        let engines = coord.engines(scopeLabels: req.scopes)
+        let engines: [SearchCoordinator.EngineEntry]
+        var drives: String?
+        if req.allDrives == true {
+            switch FuzzyClient.cliDrives() {
+            case let .success(found): (engines, drives) = (found.engines, found.names)
+            case let .failure(error): return ClingResponse(error: error.message)
+            }
+        } else {
+            engines = coord.engines(scopeLabels: req.scopes)
+        }
         // Deep enough that a target well below the window's cut-off still shows its real position.
         let depth = max(maxResults, 2000)
         var perEngine: [(entry: SearchCoordinator.EngineEntry, results: [SearchResult])] = []
@@ -1391,7 +1400,12 @@ extension CLIConfig {
         if query != typed {
             notes.append("The window wraps the query with the filters' own tokens, which is the effective query above.")
         }
-        notes.append("The window also hides results that were deleted or excluded since the last walk, and while Everything is on it searches only the Everything index.")
+        if let drives {
+            notes.append("Searched the saved index of every external drive, as the window's External drives filter does, Everything on or not: \(drives).")
+            notes.append("The window also hides results that were deleted or excluded since the last walk.")
+        } else {
+            notes.append("The window also hides results that were deleted or excluded since the last walk, and while Everything is on it searches only the Everything index.")
+        }
 
         let report = WhyReport(
             query: typed,
