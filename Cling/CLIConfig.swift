@@ -1324,12 +1324,16 @@ extension CLIConfig {
         let shown = req.maxResults ?? 15
         let target = req.paths?.first.map { (($0 as NSString).expandingTildeInPath as NSString).standardizingPath }
 
-        let engines: [SearchCoordinator.EngineEntry]
+        var engines: [SearchCoordinator.EngineEntry]
         var drives: String?
         if req.allDrives == true {
             switch FuzzyClient.cliDrives() {
             case let .success(found): (engines, drives) = (found.engines, found.names)
             case let .failure(error): return ClingResponse(error: error.message)
+            }
+            // Scopes named as well are ranked alongside the drives, the way `cling search` takes them.
+            if let scopes = req.scopes, !scopes.isEmpty {
+                engines += coord.engines(scopeLabels: scopes).filter { e in !engines.contains { $0.engine === e.engine } }
             }
         } else {
             engines = coord.engines(scopeLabels: req.scopes)

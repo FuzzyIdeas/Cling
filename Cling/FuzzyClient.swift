@@ -632,6 +632,11 @@ class FuzzyClient {
         if EVERYTHING.active, let engine = EVERYTHING.engine {
             return [(engine, "Everything", 0)]
         }
+        return indexEngines
+    }
+
+    /// The scope, drive and recents indexes, the ones Everything stands in for while it is on.
+    var indexEngines: [(engine: SearchEngine, label: String, scoreBias: Int)] {
         var result = [(SearchEngine, String, Int)]()
         for scope in searchableScopes {
             if let eng = scopeEngines[scope] {
@@ -941,9 +946,10 @@ class FuzzyClient {
     }
     /// Sync active engines to the SearchCoordinator (for CLI thread access)
     func syncCoordinator() {
-        searchCoordinator.setEngines(activeEngines.map {
-            SearchCoordinator.EngineEntry(engine: $0.engine, label: $0.label, scoreBias: $0.scoreBias)
-        })
+        let entry = { (e: (engine: SearchEngine, label: String, scoreBias: Int)) in
+            SearchCoordinator.EngineEntry(engine: e.engine, label: e.label, scoreBias: e.scoreBias)
+        }
+        searchCoordinator.setEngines(activeEngines.map(entry), index: indexEngines.map(entry))
     }
 
     func recomputeQuickFilterPool() {
@@ -1371,6 +1377,16 @@ class FuzzyClient {
                 }
                 let eng = SearchEngine()
                 if eng.loadBinaryIndex(from: file.url) {
+                    // Once per drive: the pass reads every path in the index, which is otherwise left on disk until
+                    // the drive is searched.
+                    if !Defaults[.metadataPrunedVolumes].contains(volume) {
+                        let removed = eng.removeSubtrees(Array(driveMetadataFolders(volume)))
+                        if removed > 0 {
+                            eng.saveBinaryIndex(to: file.url)
+                            log.info("Removed \(removed) metadata entries from \(volume.string)'s index")
+                        }
+                        await MainActor.run { Defaults[.metadataPrunedVolumes].append(volume) }
+                    }
                     let metaCacheFile = smbMetadataCacheFile(volume)
                     var metaCache: SMBMetadataCache?
                     if metaCacheFile.exists {
@@ -2103,6 +2119,7 @@ class FuzzyClient {
 
     /// Everything was switched on or off, or its engine changed: search again against what is now active.
     func everythingChanged() {
+        syncCoordinator()
         invalidateSearch()
         if !refreshPoolsAfterReindex(), !emptyQuery || volumeFilter != nil {
             performSearch()

@@ -14,6 +14,19 @@ func volumeIndexFile(_ volume: FilePath) -> FilePath {
     indexFolder / "\(volume.name.string.replacingOccurrences(of: " ", with: "-")).idx"
 }
 
+/// What macOS and Windows keep at the top of a drive for themselves: file system events, the Spotlight index, the trash,
+/// version history, installer scratch space. A drive's walk skips them, and a saved index that still holds them from
+/// before loses them once, on its first load.
+let DRIVE_METADATA_FOLDERS = [
+    ".fseventsd", ".Spotlight-V100", ".Trashes", ".TemporaryItems", ".DocumentRevisions-V100", ".MobileBackups",
+    ".PKInstallSandboxManager", ".PKInstallSandboxManager-SystemSoftware", ".HFS+ Private Directory Data\r",
+    "System Volume Information", "$RECYCLE.BIN",
+]
+
+func driveMetadataFolders(_ volume: FilePath) -> Set<String> {
+    Set(DRIVE_METADATA_FOLDERS.map { "\(volume.string)/\($0)" })
+}
+
 private func volumeCheckpointFile(_ volume: FilePath) -> URL {
     volumeIndexFile(volume).url.deletingPathExtension().appendingPathExtension("checkpoint")
 }
@@ -68,8 +81,9 @@ private func indexVolumeEngine(
     cancelled: @escaping () -> Bool
 ) async -> (added: Int, metadataCache: SMBMetadataCache?) {
     let volumePath = volume.string
-    let skipDir: ((String) -> Bool)? = ignoreChecker.map { checker in
-        { path in path.isIgnored(in: checker) }
+    let metadata = driveMetadataFolders(volume)
+    let skipDir: (String) -> Bool = { path in
+        metadata.contains(path) || (ignoreChecker.map { path.isIgnored(in: $0) } ?? false)
     }
     let isLocal = volume.url.isLocalVolume
 
@@ -346,6 +360,9 @@ extension FuzzyClient {
                     }
                     self.updateIndexedCount()
                     self.logActivity("Indexed volume: \(volumeName) (\(result.added.formatted()) files)", operationKey: opKey)
+                    if !Defaults[.metadataPrunedVolumes].contains(volume) {
+                        Defaults[.metadataPrunedVolumes].append(volume)
+                    }
                     if result.added > 0, !Defaults[.indexedVolumePaths].contains(volume) {
                         Defaults[.indexedVolumePaths].append(volume)
                     }

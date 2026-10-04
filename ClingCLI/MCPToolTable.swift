@@ -420,12 +420,17 @@ extension MCPServer {
                 "folders": ["type": "array", "items": ["type": "string"], "description": "only inside these folders"],
                 "suffix": ["type": "string", "description": "extensions, e.g. '.png .jpg'"],
                 "dirsOnly": ["type": "boolean", "description": "only folders"],
-                "scopes": ["type": "array", "items": ["type": "string"], "description": "only these scopes: \(scopeNames)"],
+                "scopes": [
+                    "type": "array", "items": ["type": "string"],
+                    "description": "only these scopes: \(scopeNames), or a drive by name or /Volumes path. A drive is "
+                        + "searched through its saved index, connected or not, even with everything",
+                ],
                 "everything": ["type": "boolean", "description": "search the Everything index instead (Pro)"],
                 "allDrives": [
                     "type": "boolean",
-                    "description": "search only the external drives' saved indexes, connected or not (Pro). A result's path "
-                        + "starts with /Volumes/<drive name>, the drive it is on. Not with everything or scopes",
+                    "description": "search the external drives' saved indexes, connected or not (Pro). A result's path "
+                        + "starts with /Volumes/<drive name>, the drive it is on. Scopes given with it are searched as "
+                        + "well, and everything is ignored, since Everything has no index of a drive",
                 ],
             ], "required": ["query"]],
             handler: search
@@ -506,7 +511,7 @@ extension MCPServer {
                     "type": "boolean",
                     "description": "the user had the External drives filter on: rank against the external drives' saved "
                         + "indexes only, connected or not, as the window does even while Everything is on (Pro). The "
-                        + "notes name each drive searched and mark the disconnected ones. Not with scopes",
+                        + "notes name each drive searched and mark the disconnected ones. Scopes given with it are ranked as well",
                 ],
                 "count": ["type": "integer", "description": "how many top results to list, default 15"],
             ], "required": ["query"]],

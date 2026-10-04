@@ -44,6 +44,20 @@ final class SearchCoordinator: @unchecked Sendable {
         return (query.isEmpty ? "" : query + " ") + extTokens.joined(separator: " ")
     }
 
+    /// The engines `labels` name: a scope by its raw value ("root") or its label ("Root (/usr, ...)"), a drive by its
+    /// name or its /Volumes path.
+    static func engines(named labels: [String], in pool: [EngineEntry]) -> [EngineEntry] {
+        let scopesByRawValue = Dictionary(uniqueKeysWithValues: SearchScope.allCases.map { ($0.rawValue.lowercased(), $0.label) })
+        let names = Set(labels.flatMap { label -> [String] in
+            var raw = label.lowercased()
+            if raw.hasPrefix("/volumes/") {
+                raw = String(raw.dropFirst("/volumes/".count).prefix { $0 != "/" })
+            }
+            return [raw] + (scopesByRawValue[raw].map { [$0.lowercased()] } ?? [])
+        })
+        return pool.filter { names.contains($0.label.lowercased()) }
+    }
+
     func setIndexing(_ value: Bool) {
         lock.withLock { _indexing = value }
     }
@@ -56,10 +70,13 @@ final class SearchCoordinator: @unchecked Sendable {
         lock.withLock { Array(_recents.prefix(maxResults)) }
     }
 
-    func setEngines(_ engines: [EngineEntry]) {
+    /// `engines` is what a search with no scopes goes over, the same as the window's; `index` is what scopes are
+    /// looked up in, so naming a scope or a drive still finds its own index while Everything is on.
+    func setEngines(_ engines: [EngineEntry], index: [EngineEntry]) {
         let retired: [EngineEntry] = lock.withLock {
-            let previous = _engines
+            let previous = _engines + _indexEngines
             _engines = engines
+            _indexEngines = index
             return previous
         }
         // Release the previous engines off the main thread: SearchEngine's deinit frees large index
@@ -81,26 +98,7 @@ final class SearchCoordinator: @unchecked Sendable {
         only: [EngineEntry]? = nil,
         cancelled: (() -> Bool)? = nil
     ) -> [SearchResult] {
-        let allEngines = lock.withLock { _engines }
-        let engines: [EngineEntry]
-        if let only {
-            engines = only
-        } else if let labels = scopeLabels, !labels.isEmpty {
-            let lowered = Set(labels.map { $0.lowercased() })
-            // Match scope labels against both raw values (e.g. "root") and display labels (e.g. "Root (/usr, ...)")
-            let scopesByRawValue = Dictionary(uniqueKeysWithValues: SearchScope.allCases.map { ($0.rawValue.lowercased(), $0.label) })
-            let resolvedLabels = lowered.flatMap { raw -> [String] in
-                var matches = [raw]
-                if let displayLabel = scopesByRawValue[raw] {
-                    matches.append(displayLabel.lowercased())
-                }
-                return matches
-            }
-            let matchSet = Set(resolvedLabels)
-            engines = allEngines.filter { matchSet.contains($0.label.lowercased()) }
-        } else {
-            engines = allEngines
-        }
+        let engines = only ?? filteredEngines(scopeLabels: scopeLabels)
         guard !engines.isEmpty else { return [] }
 
         let effectiveQuery = Self.folding(suffix: suffixPattern, into: query)
@@ -236,6 +234,8 @@ final class SearchCoordinator: @unchecked Sendable {
 
     private let lock = NSLock()
     private var _engines: [EngineEntry] = []
+    /// The scope, drive and recents indexes, which `_engines` holds too unless Everything stands in for them.
+    private var _indexEngines: [EngineEntry] = []
     private var _recents: [RecentEntry] = []
     private var _indexing = false
 
@@ -265,19 +265,9 @@ final class SearchCoordinator: @unchecked Sendable {
     }
 
     private func filteredEngines(scopeLabels: [String]?) -> [EngineEntry] {
-        let all = lock.withLock { _engines }
+        let (all, index) = lock.withLock { (_engines, _indexEngines) }
         guard let labels = scopeLabels, !labels.isEmpty else { return all }
-        let lowered = Set(labels.map { $0.lowercased() })
-        let scopesByRawValue = Dictionary(uniqueKeysWithValues: SearchScope.allCases.map { ($0.rawValue.lowercased(), $0.label) })
-        let resolved = lowered.flatMap { raw -> [String] in
-            var matches = [raw]
-            if let displayLabel = scopesByRawValue[raw] {
-                matches.append(displayLabel.lowercased())
-            }
-            return matches
-        }
-        let matchSet = Set(resolved)
-        return all.filter { matchSet.contains($0.label.lowercased()) }
+        return Self.engines(named: labels, in: index.isEmpty ? all : index)
     }
 
 }
@@ -355,7 +345,27 @@ extension FuzzyClient {
 
     /// Loads the Everything index when needed (waiting up to two minutes), then searches it alone. While its first
     /// build is still running, what is indexed so far is searched and the response says so.
+    ///
+    /// Everything has no index of a drive, only of the disks mounted now, so a drive named in the scopes is searched
+    /// through its own saved index instead, connected or not, rather than finding nothing. Everything is left out
+    /// when the scopes name only drives.
     nonisolated static func searchEverything(_ request: ClingRequest, coordinator coord: SearchCoordinator) -> ClingResponse {
+        let scopes = request.scopes ?? []
+        let driveEntries = scopes.isEmpty ? [] : ((try? cliDrives().get())?.engines ?? [])
+        let drives = SearchCoordinator.engines(named: scopes, in: driveEntries)
+        if !drives.isEmpty, scopes.allSatisfy({ !SearchCoordinator.engines(named: [$0], in: driveEntries).isEmpty }) {
+            var only = request
+            only.everything = nil
+            only.allDrives = nil
+            let response = handleCLIRequest(only, coordinator: coord)
+            guard response.error == nil else { return response }
+            return ClingResponse(
+                results: response.results,
+                status: "Everything has no index of external drives, searched their own: \(drives.map(\.label).joined(separator: ", "))",
+                indexCount: response.indexCount,
+                searchMs: response.searchMs
+            )
+        }
         let deadline = CFAbsoluteTimeGetCurrent() + 120
         var access = EverythingIndex.CLIAccess.loading
         while true {
@@ -382,7 +392,7 @@ extension FuzzyClient {
                     folderPrefixes: resolved.folderPrefixes,
                     suffixPattern: request.suffixPattern,
                     dirsOnly: resolved.dirsOnly,
-                    only: [.init(engine: engine, label: "Everything", scoreBias: 0)]
+                    only: [.init(engine: engine, label: "Everything", scoreBias: 0)] + drives
                 )
             }
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
@@ -398,12 +408,23 @@ extension FuzzyClient {
     /// Searches every external drive's saved index alone, connected or not, the way the window's External drives
     /// filter does. The status names each drive searched and marks the disconnected ones, so whoever asked can tell
     /// which drive to go and plug in.
+    ///
+    /// Flags it can't honour widen the search rather than refuse it: scopes are searched alongside the drives, and
+    /// Everything, which has no index of a drive, gives way to the drives' own.
     nonisolated static func searchDrives(_ request: ClingRequest, coordinator coord: SearchCoordinator) -> ClingResponse {
-        let engines: [SearchCoordinator.EngineEntry]
-        let drives: String
+        var engines: [SearchCoordinator.EngineEntry]
+        var drives: String
         switch cliDrives() {
         case let .success(found): (engines, drives) = found
         case let .failure(error): return ClingResponse(error: error.message)
+        }
+        let scoped = coord.engines(scopeLabels: request.scopes ?? []).filter { e in !engines.contains { $0.engine === e.engine } }
+        if !scoped.isEmpty, request.scopes?.isEmpty == false {
+            engines += scoped
+            drives += "; also searched \(scoped.map(\.label).joined(separator: ", "))"
+        }
+        if request.everything == true {
+            drives += "; Everything has no index of external drives, searched their own"
         }
         let resolved: SearchCoordinator.Resolved
         switch coord.resolve(request) {

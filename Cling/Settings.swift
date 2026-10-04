@@ -729,6 +729,9 @@ extension Defaults.Keys {
     static let externalVolumes = Key<[FilePath]>("externalVolumes", default: [])
     static let disabledVolumes = Key<[FilePath]>("disabledVolumes", default: [])
     static let indexedVolumePaths = Key<[FilePath]>("indexedVolumePaths", default: [])
+    /// Drives whose saved index no longer holds the drive's metadata folders: walked since the walk skipped them, or
+    /// cleared of them on a load.
+    static let metadataPrunedVolumes = Key<[FilePath]>("metadataPrunedVolumes", default: [])
     /// Every volume the app has encountered (mounted at least once while running).
     /// Lets opt-in mode detect a genuine first sighting and apply its policy exactly once per volume.
     static let knownVolumes = Key<[FilePath]>("knownVolumes", default: [])
