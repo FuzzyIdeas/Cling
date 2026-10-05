@@ -46,7 +46,7 @@ struct WebItem {
 // MARK: - WebViewKind
 
 /// How a browser shows a file it is sent inline, or `.none` for one it can only download.
-enum WebViewKind {
+enum WebViewKind: String {
     case image, video, audio, pdf, text, html, none
 
     /// `webkit` is Safari or any iOS browser, which also show HEIC, TIFF and AIFF.
@@ -74,13 +74,15 @@ enum WebViewKind {
 // MARK: - WebAccessServer
 
 final class WebAccessServer: @unchecked Sendable {
-    init(coordinator: SearchCoordinator, key: String, macName: String, icon: Data?) {
+    init(coordinator: SearchCoordinator, key: String, macName: String, icon: Data?, appIcon: CGImage?) {
         self.coordinator = coordinator
         _key = key
         self.macName = macName
         self.icon = icon
+        art = WebAppArt(icon: appIcon)
         assets = Self.loadAssets()
         assetVersion = Self.assetVersion(assets)
+        appHead = WebApp.head(version: assetVersion)
     }
 
     /// Locations that never leave the Mac this way, even for a browser that has the key: the files that would let
@@ -189,6 +191,9 @@ final class WebAccessServer: @unchecked Sendable {
 
     private let coordinator: SearchCoordinator
     private let icon: Data?
+    private let art: WebAppArt
+    /// The page's app tags, the same for every page until the assets change.
+    private let appHead: String
     private let assets: [String: Asset]
     private let assetVersion: String
     private let lock = NSLock()
@@ -325,6 +330,9 @@ final class WebAccessServer: @unchecked Sendable {
         if path.hasPrefix("/pair/") {
             return pair(request, String(path.dropFirst("/pair/".count)))
         }
+        if let response = await appRoute(request, path: path) {
+            return response
+        }
         guard authorized(request) else {
             // A page the htmx request can't show: reload into the signed-out page instead.
             if request.isHTMX {
@@ -372,6 +380,7 @@ final class WebAccessServer: @unchecked Sendable {
         case "/": return page(request, sid: sid)
         case "/results": return results(request, sid: sid)
         case "/selection": return selectionSheet(request, sid: sid)
+        case "/offline": return .html(WebPage.offline(macName: macName, assetVersion: assetVersion))
         default: break
         }
         if path.hasPrefix("/f/") {
@@ -453,6 +462,7 @@ final class WebAccessServer: @unchecked Sendable {
         let listing = listingHTML(request, q: q, folder: folder, from: 0, sid: sid)
         let html = WebPage.page(
             macName: macName,
+            appHead: appHead,
             query: q,
             folder: folder,
             results: listing,
@@ -807,6 +817,52 @@ final class WebAccessServer: @unchecked Sendable {
                 QLThumbnailGenerator.shared.cancel(request)
                 continuation.resume(returning: nil)
             }
+        }
+    }
+
+    // MARK: App
+
+    /// What installing the page as an app reads: open to any browser, since the icons and launch screens are only
+    /// Cling's, and a browser fetches some of them without its cookies. The manifest names the Mac and carries the key
+    /// only for one signed in.
+    private func appRoute(_ request: HTTPRequest, path: String) async -> HTTPResponse? {
+        guard request.method == "GET" || request.method == "HEAD" else { return nil }
+        let immutable = ("Cache-Control", "public, max-age=31536000, immutable")
+        switch path {
+        case "/manifest.webmanifest":
+            let signedIn = authorized(request)
+            let data = WebApp.manifest(
+                name: signedIn ? "Cling · \(macName)" : "Cling",
+                startURL: signedIn ? "/pair/\(key)" : "/",
+                version: assetVersion
+            )
+            return HTTPResponse(status: 200, headers: [("Content-Type", "application/manifest+json"), ("Cache-Control", "no-store")], body: .data(data))
+        case "/sw.js":
+            // Checked on every visit, so a new version of the page replaces the old one's cache.
+            let script = Data(WebApp.serviceWorker(version: assetVersion).utf8)
+            return HTTPResponse(status: 200, headers: [("Content-Type", "text/javascript; charset=utf-8"), ("Cache-Control", "no-cache")], body: .data(script))
+        default:
+            break
+        }
+        let art = art
+        let image: (@Sendable () -> Data?)? = switch path {
+        case "/apple-touch-icon.png": { art.fullBleedIcon(size: 180) }
+        case "/icon-maskable-512.png": { art.fullBleedIcon(size: 512) }
+        case "/icon-192.png": { art.icon(size: 192) }
+        case "/icon-512.png": { art.icon(size: 512) }
+        default:
+            if path.hasPrefix("/splash/"), path.hasSuffix(".png"),
+               let spec = WebApp.splashSpec(String(path.dropFirst("/splash/".count).dropLast(".png".count)))
+            {
+                { art.splash(width: spec.width, height: spec.height, dark: spec.dark) }
+            } else {
+                nil
+            }
+        }
+        guard let image else { return nil }
+        return await offload {
+            guard let data = image() else { return .text("Not found", status: 404) }
+            return HTTPResponse(status: 200, headers: [("Content-Type", "image/png"), immutable], body: .data(data))
         }
     }
 

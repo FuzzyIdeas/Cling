@@ -492,32 +492,35 @@ final class HTTPServer: @unchecked Sendable {
     /// Called on the main queue whenever one address's listener changes state.
     var onStateChange: ((String, ListenerState) -> Void)?
 
-    /// Listens on exactly `addresses`: new ones start, missing ones stop, and a new port restarts them all.
-    func listen(on addresses: [String], port: UInt16) {
+    /// Listens on exactly `addresses`, with TLS on those `tls` has an identity for: new ones start, missing ones stop,
+    /// one whose identity changed restarts, and a new port restarts them all.
+    func listen(on addresses: [String], port: UInt16, tls: [String: sec_identity_t] = [:]) {
         queue.async { [self] in
             if port != self.port {
-                for (address, listener) in listeners {
-                    listener.cancel()
+                for (address, current) in listeners {
+                    current.listener.cancel()
                     report(address, .stopped)
                 }
                 listeners.removeAll()
                 self.port = port
             }
-            for (address, listener) in listeners where !addresses.contains(address) {
-                listener.cancel()
+            wanted = Dictionary(uniqueKeysWithValues: addresses.map { ($0, Want(tls: tls[$0])) })
+            for (address, current) in listeners where !(wanted[address].map { Self.same($0.tls, current.tls) } ?? false) {
+                current.listener.cancel()
                 listeners[address] = nil
                 report(address, .stopped)
             }
-            for address in addresses where listeners[address] == nil {
-                start(address)
+            for (address, want) in wanted where listeners[address] == nil {
+                start(address, tls: want.tls)
             }
         }
     }
 
     func stop() {
         queue.async { [self] in
-            for (address, listener) in listeners {
-                listener.cancel()
+            wanted.removeAll()
+            for (address, current) in listeners {
+                current.listener.cancel()
                 report(address, .stopped)
             }
             listeners.removeAll()
@@ -528,13 +531,18 @@ final class HTTPServer: @unchecked Sendable {
         }
     }
 
+    private struct Want {
+        let tls: sec_identity_t?
+    }
+
     /// Past this many open connections, new ones are turned away. A browser opens six per address at most, so this is
     /// a handful of devices with room to spare.
     private static let maxConnections = 128
 
     private let handler: HTTPHandler
     private let queue = DispatchQueue(label: "com.lowtechguys.Cling.WebAccess.server")
-    private var listeners: [String: NWListener] = [:]
+    private var wanted: [String: Want] = [:]
+    private var listeners: [String: (listener: NWListener, tls: sec_identity_t?)] = [:]
     private var connections: [ObjectIdentifier: HTTPConnection] = [:]
     private var port: UInt16 = 0
 
@@ -548,6 +556,17 @@ final class HTTPServer: @unchecked Sendable {
         return error.localizedDescription
     }
 
+    private static func same(_ a: sec_identity_t?, _ b: sec_identity_t?) -> Bool {
+        (a as AnyObject?) === (b as AnyObject?)
+    }
+
+    private static func isInUse(_ error: NWError) -> Bool {
+        if case let .posix(code) = error {
+            return code == .EADDRINUSE
+        }
+        return false
+    }
+
     private func report(_ address: String, _ state: ListenerState) {
         guard let onStateChange else { return }
         DispatchQueue.main.async {
@@ -555,7 +574,9 @@ final class HTTPServer: @unchecked Sendable {
         }
     }
 
-    private func start(_ address: String) {
+    /// `attempt` counts tries after "in use": a listener restarting with a new certificate can find the one it
+    /// replaces still letting go of the port.
+    private func start(_ address: String, tls: sec_identity_t?, attempt: Int = 0) {
         guard let port = NWEndpoint.Port(rawValue: port) else { return }
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
@@ -565,7 +586,15 @@ final class HTTPServer: @unchecked Sendable {
         tcp.keepaliveIdle = 30
         tcp.keepaliveInterval = 10
         tcp.keepaliveCount = 6
-        let params = NWParameters(tls: nil, tcp: tcp)
+        var tlsOptions: NWProtocolTLS.Options?
+        if let tls {
+            let options = NWProtocolTLS.Options()
+            sec_protocol_options_set_local_identity(options.securityProtocolOptions, tls)
+            sec_protocol_options_set_min_tls_protocol_version(options.securityProtocolOptions, .TLSv12)
+            sec_protocol_options_add_tls_application_protocol(options.securityProtocolOptions, "http/1.1")
+            tlsOptions = options
+        }
+        let params = NWParameters(tls: tlsOptions, tcp: tcp)
         params.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(address), port: port)
         params.allowLocalEndpointReuse = true
         let listener: NWListener
@@ -579,16 +608,23 @@ final class HTTPServer: @unchecked Sendable {
             guard let self else { return }
             switch state {
             case .ready:
-                webLog.info("Listening on \(address, privacy: .public):\(port.rawValue)")
+                webLog.info("Listening on \(address, privacy: .public):\(port.rawValue)\(tls == nil ? "" : " with TLS", privacy: .public)")
                 report(address, .ready)
             case let .failed(error):
-                webLog.error("Listener on \(address, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-                report(address, .failed(Self.describe(error)))
                 listener?.cancel()
                 queue.async {
-                    if self.listeners[address] === listener {
+                    if self.listeners[address]?.listener === listener {
                         self.listeners[address] = nil
                     }
+                    if Self.isInUse(error), attempt < 4 {
+                        self.queue.asyncAfter(deadline: .now() + 0.5) {
+                            guard self.listeners[address] == nil, let want = self.wanted[address], Self.same(want.tls, tls) else { return }
+                            self.start(address, tls: tls, attempt: attempt + 1)
+                        }
+                        return
+                    }
+                    webLog.error("Listener on \(address, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                    self.report(address, .failed(Self.describe(error)))
                 }
             default:
                 break
@@ -609,7 +645,7 @@ final class HTTPServer: @unchecked Sendable {
             connections[ObjectIdentifier(client)] = client
             client.start()
         }
-        listeners[address] = listener
+        listeners[address] = (listener, tls)
         report(address, .starting)
         listener.start(queue: queue)
     }

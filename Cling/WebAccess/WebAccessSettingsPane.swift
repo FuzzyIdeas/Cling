@@ -28,19 +28,17 @@ struct WebAccessSettingsPane: View {
 
             if enabled {
                 Section("Devices") {
-                    if let address = current {
-                        let link = "http://\(address.host):\(port)/pair/\(key)"
-                        HStack(alignment: .top, spacing: 18) {
+                    if let current {
+                        Picker("Network", selection: hostBinding) {
+                            ForEach(web.links) { link in
+                                Text(link.title).tag(link.id)
+                            }
+                        }
+                        let link = current.pairingURL(port: port, key: key)
+                        HStack(spacing: 18) {
                             QRCodeView(text: link)
                                 .frame(width: 136, height: 136)
-                            VStack(alignment: .leading, spacing: 10) {
-                                Picker("Network", selection: $selection) {
-                                    ForEach(networks) { address in
-                                        Text("\(address.label) · \(address.address)").tag(address.id)
-                                    }
-                                }
-                                CopyablePill(value: link)
-                            }
+                            CopyablePill(value: link)
                         }
                         .padding(.vertical, 4)
                     } else {
@@ -65,25 +63,30 @@ struct WebAccessSettingsPane: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+        // A VPN's DNS can come up after its address does.
+        .onAppear {
+            if enabled {
+                web.lookUpHostnames()
+            }
+        }
     }
-
-    @State private var selection = ""
 
     @Default(.webAccessEnabled) private var enabled
     @Default(.webAccessPort) private var port
     @Default(.webAccessKey) private var key
+    @Default(.webAccessLinkHost) private var linkHost
 
     private var web: WebAccess {
         WebAccess.shared
     }
 
-    /// The addresses another device can use. This Mac's own loopback is what Open uses.
-    private var networks: [WebAddress] {
-        web.addresses.filter { !$0.isLoopback }
+    /// The picked host, or the first one while it's away (a DNS name before its lookup lands, a VPN that's off).
+    private var current: WebLink? {
+        web.links.first { $0.id == linkHost } ?? web.links.first
     }
 
-    private var current: WebAddress? {
-        networks.first { $0.id == selection } ?? networks.first
+    private var hostBinding: Binding<String> {
+        Binding(get: { current?.id ?? "" }, set: { linkHost = $0 })
     }
 
     private var portBinding: Binding<Int> {

@@ -54,6 +54,7 @@ NOT_EXPOSED = {
     "searchBarPillOrigin": "where the pinned search field sits, set by dragging it; the Style preview only shows it",
     "webAccessPort": "where the web server listens; only the user moves it, alongside the switch",
     "webAccessKey": "the key that signs a browser in to this Mac's files; it never goes to an agent",
+    "webAccessLinkHost": "which address or name the pairing link and QR code carry, picked beside them",
 }
 
 # Top-level CLI commands with no MCP tool.

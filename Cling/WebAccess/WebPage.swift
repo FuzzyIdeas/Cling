@@ -97,7 +97,7 @@ enum WebPage {
 
     // MARK: Page
 
-    static func page(macName: String, query: String, folder: String?, results: String, selectionBar: String, assetVersion: String) -> String {
+    static func page(macName: String, appHead: String, query: String, folder: String?, results: String, selectionBar: String, assetVersion: String) -> String {
         let scope = folder.map { folder in
             """
             <a class="scope" href="\(escape(pageURL(query: query, folder: nil)))" aria-label="Search everywhere">\
@@ -115,11 +115,12 @@ enum WebPage {
         <meta name="htmx-config" content='{"defaultTimeout": 30000, "includeIndicatorCSS": false}'>
         <title>Cling · \(escape(macName))</title>
         <link rel="icon" type="image/png" href="/icon.png">
+        \(appHead)
         <link rel="stylesheet" href="/assets/cling-web.css?v=\(assetVersion)">
         <script src="/assets/htmx.min.js?v=\(assetVersion)" defer></script>
         <script src="/assets/cling-web.js?v=\(assetVersion)" defer></script>
         </head>
-        <body>
+        <body data-mac="\(escape(macName))">
         \(sprite)
         <main id="results" class="results">\(results)</main>
         <footer class="dock">
@@ -154,6 +155,31 @@ enum WebPage {
         <main>
         <h1>\(escape(title))</h1>
         \(body.isEmpty ? "" : "<p>\(escape(body))</p>")
+        </main>
+        </body>
+        </html>
+        """
+    }
+
+    /// What the service worker shows in place of the page when the Mac doesn't answer. Kept in its cache, so it names
+    /// the Mac as it was called when the app last reached it.
+    static func offline(macName: String, assetVersion: String) -> String {
+        """
+        <!doctype html>
+        <html lang="en">
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+        <meta name="color-scheme" content="light dark">
+        <title>Cling</title>
+        <link rel="stylesheet" href="/assets/cling-web.css?v=\(assetVersion)">
+        <script src="/assets/cling-web.js?v=\(assetVersion)" defer></script>
+        </head>
+        <body class="message">
+        <main>
+        <h1>Can't reach \(escape(macName))</h1>
+        <p>It may be asleep, or this device isn't on its network or VPN.</p>
+        <p><a class="btn primary" href="/">Try again</a></p>
         </main>
         </body>
         </html>
@@ -223,7 +249,7 @@ enum WebPage {
         } else if item.browsable {
             #"<a class="main" href="\#(escape(pageURL(query: "", folder: item.path)))">"#
         } else if kind != .none {
-            #"<a class="main" href="\#(escape(viewURL(item.path)))">"#
+            #"<a class="main" href="\#(escape(viewURL(item.path)))" data-kind="\#(kind.rawValue)">"#
         } else {
             #"<a class="main" href="\#(escape(downloadURL(item.path)))" download>"#
         }
