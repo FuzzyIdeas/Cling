@@ -218,6 +218,7 @@ enum WebPage {
         <body data-mac="\(escape(macName))" data-confirm-over="\(confirmOver)">
         \(sprite)
         <main id="results" class="results">\(results)</main>
+        <aside id="preview" class="preview" aria-label="Preview"></aside>
         <footer class="dock">
         <div class="selecthead"><button class="link" type="button" data-select-all>Select All</button></div>
         \(selectionBar)
@@ -234,6 +235,7 @@ enum WebPage {
         \(optionsSheet(options, choices: choices))
         </form>
         <button class="select" type="button" aria-pressed="false">Select</button>
+        <button class="clear showpreview" type="button" aria-label="Show preview">\(icon("sidebar"))</button>
         </div>
         </footer>
         <dialog id="sheet" class="sheet"></dialog>
@@ -313,7 +315,8 @@ enum WebPage {
         var html = ""
         switch header {
         case .recent:
-            html += #"<header class="crumb"><h1>Recent</h1></header>"#
+            // The installed app adds its Downloads button here (cling-web.js), once it has kept some.
+            html += #"<header class="crumb recent"><h1>Recent</h1></header>"#
         case let .folder(folder):
             let parent = (folder as NSString).deletingLastPathComponent
             let back = folder == "/" ? "" : """
@@ -610,6 +613,7 @@ enum WebPage {
     <symbol id="i-send" viewBox="0 0 24 24"><path d="M20.5 3.5 3.9 10.2a.6.6 0 0 0 0 1.1l6.4 2.4 2.4 6.4a.6.6 0 0 0 1.1 0zM10.3 13.7 20.5 3.5"/></symbol>
     <symbol id="i-zip" viewBox="0 0 24 24"><path d="M4.5 8h15v10.5a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2zM3.5 4h17v4h-17zM10 12h4"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></symbol>
+    <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M14.5 5v14"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M6 12.5l4 4L18 8"/></symbol>
     <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4.5 7h15M7.5 12h9M10.5 17h3"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4.5 4.5"/></symbol>

@@ -27,7 +27,18 @@
     };
     const syncInsets = () => {
         const insets = Object.fromEntries(["top", "bottom", "left", "right"].map((side) => [side, measure(side)]));
+        // On its side an iPhone reports the notch's inset on both edges. The page keeps clear of the notch only and
+        // runs to the other edge: turned left (90°) the notch is on the left, turned right (270°) on the right.
+        // The side given up still has the screen's rounded corner, which a bar's button would sit under, so the bars
+        // keep a little room there (--corner-*); the list runs under it like a photo grid does.
+        const turned = screen.orientation?.angle ?? window.orientation;
+        const corner = { left: 0, right: 0 };
+        if (insets.left > 0 && insets.right > 0) {
+            if (turned === 90) [insets.right, corner.right] = [0, 16];
+            else if (turned === 270 || turned === -90) [insets.left, corner.left] = [0, 16];
+        }
         for (const [side, value] of Object.entries(insets)) root.style.setProperty(`--safe-${side}`, `${value}px`);
+        for (const [side, value] of Object.entries(corner)) root.style.setProperty(`--corner-${side}`, `${value}px`);
         return insets;
     };
     // Flipping viewport-fit for a frame counts as the geometry change WebKit waits for. Zero can also be the truth (a
@@ -43,6 +54,8 @@
         }
     }
     addEventListener("orientationchange", () => setTimeout(syncInsets, 300));
+    // Turning straight from one side to the other keeps the same size, so no resize comes to measure again.
+    screen.orientation?.addEventListener("change", () => setTimeout(syncInsets, 300));
 
     // The page is exactly as tall as the window, so the dock sits on its bottom edge. No CSS unit gets that right in an
     // installed iOS app (100vh counts the status bar it starts below), and iOS keeps the window tall while the
@@ -447,6 +460,117 @@
             });
     });
 
+    // MARK: Preview
+
+    // In landscape, wide enough for both, a file opens in a column beside the list instead of over it, as in Finder or
+    // Mail: the list stays put, and a tap on another row or the arrow keys show the next file. The column can be hidden,
+    // and stays hidden on this device until it's shown again. Its tap handler is on the window and registered before
+    // the download handlers below, so a row's tap shows the file instead of downloading it.
+    const preview = document.getElementById("preview");
+    const wide = matchMedia("(orientation: landscape) and (min-width: 720px)");
+    const previewHiddenKey = "cling:previewHidden";
+    let previewed = null;
+    let previewedURL = null;
+    try {
+        root.classList.toggle("preview-off", localStorage.getItem(previewHiddenKey) === "1");
+    } catch {}
+    const previewOn = () => !!preview && wide.matches && !root.classList.contains("preview-off");
+    const pausePreview = () => {
+        for (const media of preview?.querySelectorAll("video, audio") ?? []) media.pause();
+    };
+    wide.addEventListener("change", () => previewOn() || pausePreview());
+
+    const previewTemplate = `<header class="viewer-bar"><span class="viewer-name"></span><button class="clear" type="button" aria-label="Send securely"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg></button><a class="clear dl" download><svg class="i" aria-hidden="true"><use href="#i-download"/></svg></a><button class="clear hidepreview" type="button" aria-label="Hide preview"><svg class="i" aria-hidden="true"><use href="#i-sidebar"/></svg></button></header><div class="viewer-body"></div>`;
+
+    function emptyPreview() {
+        preview.innerHTML = previewTemplate;
+        wireFileButtons(preview.querySelector(".viewer-bar"), null, "");
+        preview.querySelector(".viewer-body").append(Object.assign(document.createElement("p"), { className: "viewer-missing", textContent: "No file selected" }));
+    }
+    if (preview) emptyPreview();
+
+    function setPreviewHidden(hidden) {
+        root.classList.toggle("preview-off", hidden);
+        try {
+            localStorage.setItem(previewHiddenKey, hidden ? "1" : "0");
+        } catch {}
+        if (hidden) pausePreview();
+    }
+
+    // The row the column shows, marked in the list.
+    function markPreviewed(link) {
+        for (const row of document.querySelectorAll("#results .row.current")) row.classList.remove("current");
+        previewed = link;
+        previewedURL = link?.href ?? null;
+        link?.closest(".row")?.classList.add("current");
+    }
+
+    function showPreview(link) {
+        if (link === previewed && preview.querySelector(".viewer-name").textContent) return;
+        pausePreview();
+        const row = link.closest(".row");
+        const name = row?.querySelector(".name")?.textContent || "";
+        markPreviewed(link);
+        preview.innerHTML = previewTemplate;
+        preview.querySelector(".viewer-name").textContent = name;
+        wireFileButtons(preview.querySelector(".viewer-bar"), row, name);
+        const body = preview.querySelector(".viewer-body");
+        const kind = link.dataset.kind;
+        if (kind && kind !== "none") renderFile(body, link.href, kind, name, false);
+        else previewCard(body, row, name);
+    }
+
+    // A file the browser can't show: the Mac's Quick Look picture of it, large, and what the row says about it.
+    function previewCard(body, row, name) {
+        const card = Object.assign(document.createElement("div"), { className: "preview-card" });
+        const glyph = row?.querySelector(".glyph")?.cloneNode(true);
+        const thumb = row?.querySelector("img.thumb");
+        if (thumb) {
+            const url = new URL(thumb.src);
+            url.searchParams.set("s", "320");
+            const image = Object.assign(document.createElement("img"), { className: "preview-thumb", src: url, alt: "" });
+            image.addEventListener("error", () => (glyph ? image.replaceWith(glyph) : image.remove()));
+            card.append(image);
+        } else if (glyph) {
+            card.append(glyph);
+        }
+        card.append(Object.assign(document.createElement("p"), { className: "preview-name", textContent: name }));
+        const meta = row?.querySelector(".meta")?.cloneNode(true);
+        if (meta) card.append(meta);
+        body.append(card);
+    }
+
+    addEventListener("click", (event) => {
+        if (!previewOn() || selecting() || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+        const link = event.target.closest?.("#results a.main");
+        // A folder opens as before.
+        if (!link || link.matches('[href="/"], [href^="/?"]')) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        showPreview(link);
+    }, true);
+
+    document.addEventListener("click", (event) => {
+        if (event.target.closest(".showpreview")) setPreviewHidden(false);
+        else if (event.target.closest(".hidepreview")) setPreviewHidden(true);
+    });
+
+    // The arrow keys move through the rows; the column follows once they stop on one.
+    let previewFollow = 0;
+    document.addEventListener("focusin", (event) => {
+        const link = event.target.closest?.("#results a.main");
+        if (!link || link === previewed || !previewOn() || link.matches('[href^="/?"]')) return;
+        clearTimeout(previewFollow);
+        previewFollow = setTimeout(() => document.activeElement === link && previewOn() && showPreview(link), 150);
+    });
+
+    // A new search or the next page replaces the rows: the one shown is marked again if it's still among them.
+    document.addEventListener("htmx:after:swap", () => {
+        if (!previewedURL || previewed?.isConnected) return;
+        const again = [...document.querySelectorAll("#results a.main")].find((link) => link.href === previewedURL);
+        if (again) markPreviewed(again);
+    });
+
     // MARK: Large downloads
 
     // A download over the size set in Settings > File server asks first, and so does a share link, which has the Mac
@@ -468,6 +592,8 @@
         if (!target || target.protocol === "blob:") return;
         // In selection mode a tap on a row picks it (see Selection) instead of downloading it.
         if (target.matches(".main") && document.body.classList.contains("selecting")) return;
+        // Already kept on this phone (see Kept downloads): nothing big comes over the network.
+        if (iosApp && target.matches("a[download]") && kept.has(target.href)) return;
         if (confirmedDownload === target) {
             confirmedDownload = null;
             return;
@@ -738,6 +864,12 @@
     async function fetchFile(url, held, label, signal, cancel) {
         // Shown before the Mac answers, which for a big folder's ZIP takes a while, with Cancel right away.
         toast.show(label(nameOf(url)), null, null, cancel);
+        const href = new URL(url, location.href).href;
+        const known = kept.get(href);
+        if (known && held + known.size <= inAppLimit && (await keptIsCurrent(href, known, signal))) {
+            const file = await keptFile(href);
+            if (file) return file;
+        }
         const response = await fetch(url, { signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const name = fileName(response, url);
@@ -763,7 +895,9 @@
             toast.show(label(name) + progress(received, total), null, null, cancel);
             markDownloading(url, total ? received / total : null);
         }
-        return new File(chunks, name, { type: response.headers.get("Content-Type") || "application/octet-stream" });
+        const file = new File(chunks, name, { type: response.headers.get("Content-Type") || "application/octet-stream" });
+        keep(href, file, response.headers.get("ETag"));
+        return file;
     }
 
     // The share sheet needs a tap of its own when the download took longer than the tap that started it counts for.
@@ -805,6 +939,205 @@
             toast.show(urls.length > 1 ? "Links copied" : "Link copied", null, null, null, 2500);
         });
     }
+
+    // MARK: Kept downloads
+
+    // The installed app keeps what it downloads, up to 1 GB, the least recently used going first. The same file again
+    // is handed over at once when the Mac says it hasn't changed (its ETag: one round trip with nothing in it), and
+    // when the Mac can't be reached at all, or no longer has it. Kept in IndexedDB, since the Cache API only exists
+    // over HTTPS and most of these pages are plain HTTP on a home network. A browser tab has its own Downloads.
+    const keptLimit = 1024 * 1024 * 1024;
+    // Everything but the files themselves, by absolute URL, so a tap can be decided without waiting on the database.
+    const kept = new Map();
+    let keptDB = null;
+
+    // Two stores: what the list shows ("info", by URL), and the files themselves ("data"), so reading the list at
+    // launch doesn't read every file.
+    function openKept() {
+        keptDB ??= new Promise((resolve) => {
+            try {
+                const request = indexedDB.open("cling-downloads", 1);
+                request.onupgradeneeded = () => {
+                    request.result.createObjectStore("info", { keyPath: "url" });
+                    request.result.createObjectStore("data");
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => resolve(null);
+            } catch {
+                resolve(null);
+            }
+        });
+        return keptDB;
+    }
+
+    // `work` gets the two stores and returns the request whose result is wanted. Null when there's no database or the
+    // write didn't fit.
+    async function keptStore(mode, work) {
+        const db = await openKept();
+        if (!db) return null;
+        return new Promise((resolve) => {
+            try {
+                const transaction = db.transaction(["info", "data"], mode);
+                const request = work(transaction.objectStore("info"), transaction.objectStore("data"));
+                transaction.oncomplete = () => resolve(request?.result ?? true);
+                transaction.onerror = transaction.onabort = () => resolve(null);
+            } catch {
+                resolve(null);
+            }
+        });
+    }
+
+    if (iosApp) {
+        keptStore("readonly", (info) => info.getAll()).then((records) => {
+            for (const record of Array.isArray(records) ? records : []) kept.set(record.url, record);
+            showDownloadsButton();
+        });
+    }
+
+    // Unchanged on the Mac, out of reach, or gone from it: in every case the kept copy is the file to hand over.
+    async function keptIsCurrent(href, known, signal) {
+        try {
+            const response = await fetch(href, { method: "HEAD", cache: "no-store", headers: { "If-None-Match": known.etag }, signal });
+            return response.status === 304 || response.status === 404;
+        } catch (error) {
+            if (error.name === "AbortError") throw error;
+            return true;
+        }
+    }
+
+    async function keptFile(href) {
+        const known = kept.get(href);
+        if (!known) return null;
+        const usedAt = Date.now();
+        const data = await keptStore("readwrite", (info, data) => {
+            info.put({ ...known, usedAt });
+            return data.get(href);
+        });
+        if (!(data instanceof Blob || data instanceof ArrayBuffer)) return null;
+        known.usedAt = usedAt;
+        return new File([data], known.name, { type: known.type });
+    }
+
+    async function keep(href, file, etag) {
+        if (!iosApp || !etag || file.size > keptLimit) return;
+        const thumb = [...document.querySelectorAll("#results a.dl")].find((link) => link.href === href)?.closest(".row")?.querySelector("img.thumb")?.getAttribute("src");
+        const record = { url: href, name: file.name, type: file.type, size: file.size, etag, thumb, savedAt: Date.now(), usedAt: Date.now() };
+        // The least recently used make room.
+        const others = [...kept.values()].filter((item) => item.url !== href).sort((a, b) => a.usedAt - b.usedAt);
+        let total = others.reduce((sum, item) => sum + item.size, 0) + file.size;
+        const evicted = [];
+        while (total > keptLimit && others.length) {
+            const item = others.shift();
+            total -= item.size;
+            evicted.push(item.url);
+        }
+        const store = (bytes) =>
+            keptStore("readwrite", (info, data) => {
+                for (const url of evicted) {
+                    info.delete(url);
+                    data.delete(url);
+                }
+                data.put(bytes, href);
+                return info.put(record);
+            });
+        // A file is kept on disk as it is, except where WebKit won't store one (a private window), which takes its bytes.
+        const stored = (await store(file)) || (await store(await file.arrayBuffer()));
+        if (!stored) return;
+        for (const url of evicted) kept.delete(url);
+        kept.set(href, record);
+        navigator.storage?.persist?.().catch(() => {});
+        showDownloadsButton();
+    }
+
+    async function forget(urls) {
+        await keptStore("readwrite", (info, data) => {
+            let request = null;
+            for (const url of urls) {
+                data.delete(url);
+                request = info.delete(url);
+            }
+            return request;
+        });
+        for (const url of urls) kept.delete(url);
+        showDownloadsButton();
+    }
+
+    // On Recent, beside its title, once something is kept.
+    function showDownloadsButton() {
+        const header = document.querySelector("#results header.crumb.recent");
+        if (!header) return;
+        const button = header.querySelector("[data-downloads]");
+        if (!kept.size) button?.remove();
+        else if (!button) header.insertAdjacentHTML("beforeend", `<button class="pill" type="button" data-downloads><svg class="i" aria-hidden="true"><use href="#i-download"/></svg><span>Downloads</span></button>`);
+    }
+    document.addEventListener("htmx:after:swap", showDownloadsButton);
+
+    const sizeText = (bytes) => (bytes < 1000 ? `${bytes} bytes` : bytes < 1e6 ? `${Math.round(bytes / 1e3)} KB` : bytes < 1e9 ? `${(bytes / 1e6).toFixed(1)} MB` : `${(bytes / 1e9).toFixed(2)} GB`);
+    const dayText = (time) => {
+        const date = new Date(time);
+        const today = new Date().toDateString() === date.toDateString();
+        return today ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : date.toLocaleDateString([], { day: "numeric", month: "short" });
+    };
+    const device = /iPad/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform)) ? "iPad" : "iPhone";
+
+    function openDownloads() {
+        const sheet = document.getElementById("sheet");
+        if (!sheet) return;
+        const items = [...kept.values()].sort((a, b) => b.savedAt - a.savedAt);
+        const total = items.reduce((sum, item) => sum + item.size, 0);
+        sheet.innerHTML = `<header class="crumb"><h1>Downloads</h1><button class="link" type="button" data-forget-all>Clear</button></header><p class="sheet-note"></p><ul class="list"></ul>`;
+        sheet.querySelector(".sheet-note").textContent = `${items.length} ${items.length === 1 ? "file" : "files"} · ${sizeText(total)} on this ${device}`;
+        const list = sheet.querySelector(".list");
+        for (const item of items) {
+            const row = document.createElement("li");
+            row.className = "row";
+            row.innerHTML = `<span class="main" role="button" tabindex="0"><span class="icon"><span class="glyph"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg></span></span><span class="text"><span class="name"></span><span class="meta"><span></span><span></span></span></span></span><button class="clear" type="button"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>`;
+            row.querySelector(".main").dataset.kept = item.url;
+            row.querySelector(".name").textContent = item.name;
+            const [size, day] = row.querySelectorAll(".meta span");
+            size.textContent = sizeText(item.size);
+            day.textContent = dayText(item.savedAt);
+            if (item.thumb) {
+                const image = Object.assign(document.createElement("img"), { className: "thumb", src: item.thumb, alt: "", decoding: "async" });
+                image.addEventListener("error", () => image.remove());
+                row.querySelector(".icon").append(image);
+            }
+            const remove = row.querySelector(".clear");
+            remove.dataset.forget = item.url;
+            remove.setAttribute("aria-label", `Remove ${item.name}`);
+            list.append(row);
+        }
+        field()?.blur();
+        if (!sheet.open) sheet.showModal();
+    }
+
+    document.addEventListener("click", async (event) => {
+        if (event.target.closest("[data-downloads]")) {
+            openDownloads();
+            return;
+        }
+        const sheet = document.getElementById("sheet");
+        const one = event.target.closest("[data-forget]");
+        if (one) {
+            await forget([one.dataset.forget]);
+            if (kept.size) openDownloads();
+            else sheet?.close();
+            return;
+        }
+        if (event.target.closest("[data-forget-all]")) {
+            await forget([...kept.keys()]);
+            sheet?.close();
+            toast.show("Downloads cleared", null, null, null, 2500);
+            return;
+        }
+        // Saved again from the copy here, whatever the Mac is doing. The sheet goes first, or the share sheet's own
+        // prompt to tap Save would sit under it.
+        const row = event.target.closest("[data-kept]");
+        if (!row) return;
+        const file = await keptFile(row.dataset.kept);
+        sheet?.close();
+        if (file) handOver([file]);
+    });
 
     // MARK: Viewer
 
@@ -855,7 +1188,6 @@
         const kind = link.dataset.kind;
         const row = link.closest(".row");
         const name = row?.querySelector(".name")?.textContent || "";
-        const download = row?.querySelector("a.dl");
         const replacing = !!viewer;
         if (viewer) teardown();
         viewing = link;
@@ -866,51 +1198,12 @@
         viewer.setAttribute("aria-label", name);
         viewer.innerHTML = `<header class="viewer-bar"><button class="clear" type="button" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button><span class="viewer-name"></span><button class="clear" type="button" aria-label="Send securely"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg></button><a class="clear dl" download><svg class="i" aria-hidden="true"><use href="#i-download"/></svg></a></header><div class="viewer-body"></div>`;
         viewer.querySelector(".viewer-name").textContent = name;
-        const save = viewer.querySelector("a.dl");
-        const share = viewer.querySelector('[aria-label="Send securely"]');
-        if (download) {
-            save.href = download.href;
-            save.setAttribute("aria-label", `Download ${name}`);
-            for (const key of ["size", "sizeLabel"]) {
-                if (download.dataset[key]) save.dataset[key] = share.dataset[key] = download.dataset[key];
-            }
-            share.dataset.link = decodeURIComponent(new URL(download.href).pathname.slice(2));
-            share.dataset.name = name;
-            // Already downloading in the results: the same progress here.
-            if (download.classList.contains("busy")) save.className = download.className.replace(/\bdl\b/, "clear dl");
-            save.style.cssText = download.style.cssText;
-        } else {
-            save.remove();
-            share.remove();
-        }
+        wireFileButtons(viewer.querySelector(".viewer-bar"), row, name);
         const close = viewer.querySelector(".clear");
         close.addEventListener("click", () => closeViewer(true));
 
         const body = viewer.querySelector(".viewer-body");
-        const missing = () => {
-            body.replaceChildren(Object.assign(document.createElement("p"), { className: "viewer-missing", textContent: "Not found" }));
-        };
-        let zoom = null;
-        if (kind === "image") {
-            const image = Object.assign(document.createElement("img"), { src: url, alt: name });
-            image.addEventListener("error", missing);
-            body.append(image);
-            zoom = zoomable(image, body);
-        } else if (kind === "video" || kind === "audio") {
-            const media = Object.assign(document.createElement(kind), { src: url, controls: true, autoplay: true, playsInline: true });
-            media.addEventListener("error", missing);
-            body.append(media);
-            if (kind === "video") zoom = zoomable(media, body);
-        } else if (kind === "text") {
-            const pre = document.createElement("pre");
-            body.append(pre);
-            fetch(url)
-                .then((response) => (response.ok ? response.text() : Promise.reject(response.status)))
-                .then((text) => (pre.textContent = text))
-                .catch(missing);
-        } else {
-            body.append(Object.assign(document.createElement("iframe"), { src: url, title: name }));
-        }
+        const zoom = renderFile(body, url, kind, name, true);
         // Text scrolls, so a pull down only closes it from the top. A PDF or a web page takes its own touches, which
         // leaves the bar to drag it by. Only pictures and videos swipe sideways to the next file.
         const draggable = kind === "text" ? () => body.scrollTop <= 0 : kind === "pdf" || kind === "html" ? () => false : () => !zoom?.zoomed;
@@ -920,6 +1213,95 @@
         toast.place();
         close.focus({ preventScroll: true });
         if (!replacing) history.pushState({ viewer: true }, "");
+    }
+
+    // Send securely and Download for the file in `row`, as the row's own download link has them: the size the download
+    // confirmation weighs, and the progress of a download already under way.
+    function wireFileButtons(bar, row, name) {
+        const download = row?.querySelector("a.dl");
+        const save = bar.querySelector("a.dl");
+        const share = bar.querySelector('[aria-label="Send securely"]');
+        if (!download) {
+            save?.remove();
+            share?.remove();
+            return;
+        }
+        save.href = download.href;
+        save.setAttribute("aria-label", `Download ${name}`);
+        for (const key of ["size", "sizeLabel"]) {
+            if (download.dataset[key]) save.dataset[key] = share.dataset[key] = download.dataset[key];
+        }
+        share.dataset.link = decodeURIComponent(new URL(download.href).pathname.slice(2));
+        share.dataset.name = name;
+        if (download.classList.contains("busy")) save.className = download.className.replace(/\bdl\b/, "clear dl");
+        save.style.cssText = download.style.cssText;
+    }
+
+    // The file itself: a picture or a video that zooms, a player, text (highlighted when it's code), or a page in a
+    // frame. `autoplay` in the viewer, where opening a video means watching it. Returns the zoom, for the gestures.
+    function renderFile(body, url, kind, name, autoplay) {
+        const missing = () => {
+            body.replaceChildren(Object.assign(document.createElement("p"), { className: "viewer-missing", textContent: "Not found" }));
+        };
+        if (kind === "image") {
+            const image = Object.assign(document.createElement("img"), { src: url, alt: name });
+            image.addEventListener("error", missing);
+            body.append(image);
+            return zoomable(image, body);
+        }
+        if (kind === "video" || kind === "audio") {
+            const media = Object.assign(document.createElement(kind), { src: url, controls: true, autoplay, playsInline: true });
+            media.addEventListener("error", missing);
+            body.append(media);
+            return kind === "video" ? zoomable(media, body) : null;
+        }
+        if (kind === "text") {
+            const pre = document.createElement("pre");
+            body.append(pre);
+            fetch(url)
+                .then((response) => (response.ok ? response.text() : Promise.reject(response.status)))
+                .then((text) => {
+                    pre.textContent = text;
+                    highlight(pre, text, name);
+                })
+                .catch(missing);
+            return null;
+        }
+        body.append(Object.assign(document.createElement("iframe"), { src: url, title: name }));
+        return null;
+    }
+
+    // highlight.js, fetched from the Mac the first time a text file is shown: most visits never need it.
+    let highlighting = null;
+    function highlighter() {
+        highlighting ??= new Promise((resolve) => {
+            const own = document.querySelector('script[src*="cling-web.js"]');
+            const script = document.createElement("script");
+            script.src = "/assets/highlight.min.js" + (own ? new URL(own.src).search : "");
+            script.onload = () => resolve(window.hljs || null);
+            script.onerror = () => {
+                highlighting = null;
+                resolve(null);
+            };
+            document.head.append(script);
+        });
+        return highlighting;
+    }
+
+    // Extensions highlight.js doesn't know by themselves, and the language that reads them best.
+    const languages = { m: "objectivec", mm: "objectivec", fish: "bash", conf: "ini", cfg: "ini", env: "ini", xcconfig: "ini", entitlements: "xml", svg: "xml", jsonc: "json", json5: "json", jsonl: "json", mdx: "markdown" };
+
+    // Colours the code in `pre` by its file's extension. Past a few hundred KB highlighting takes long enough to feel,
+    // and a text file that big is mostly a log anyway.
+    async function highlight(pre, text, name) {
+        const ext = name.includes(".") ? name.split(".").pop().toLowerCase() : "";
+        if (!ext || text.length > 256 * 1024) return;
+        const hljs = await highlighter();
+        const language = languages[ext] || ext;
+        const grammar = hljs?.getLanguage(language);
+        if (!grammar || grammar === hljs.getLanguage("plaintext") || !pre.isConnected) return;
+        pre.innerHTML = hljs.highlight(text, { language, ignoreIllegals: true }).value;
+        pre.classList.add("code");
     }
 
     // Down to put the viewer away, the way Photos does: the file follows the finger and shrinks a little while the

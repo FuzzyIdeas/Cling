@@ -229,6 +229,8 @@ final class WebAccessServer: @unchecked Sendable {
         var assets = [String: Asset]()
         for (file, type) in [
             ("htmx.min.js", "text/javascript; charset=utf-8"),
+            // highlight.js 11.11.1 (BSD-3-Clause), its common languages, loaded when a text file is first shown.
+            ("highlight.min.js", "text/javascript; charset=utf-8"),
             ("cling-web.js", "text/javascript; charset=utf-8"),
             ("cling-web.css", "text/css; charset=utf-8"),
         ] {
@@ -956,10 +958,12 @@ final class WebAccessServer: @unchecked Sendable {
             Self.work.async { continuation.resume(returning: Self.cleanPath(raw)) }
         }
         guard let path else { return notFound() }
-        let cacheKey = "\(path)|\(request.param("v") ?? "")" as NSString
+        // Points: a row's 48 by default, larger for the preview beside the list.
+        let points = min(max(Int(request.param("s") ?? "") ?? 48, 48), 512)
+        let cacheKey = "\(path)|\(request.param("v") ?? "")|\(points)" as NSString
         let png: Bool
         var data = thumbnails.object(forKey: cacheKey) as Data?
-        if data == nil, let made = await makeThumbnail(path) {
+        if data == nil, let made = await makeThumbnail(path, points: points) {
             data = made
             thumbnails.setObject(made as NSData, forKey: cacheKey, cost: made.count)
         }
@@ -972,10 +976,10 @@ final class WebAccessServer: @unchecked Sendable {
         ], body: .data(data))
     }
 
-    private func makeThumbnail(_ path: String) async -> Data? {
+    private func makeThumbnail(_ path: String, points: Int) async -> Data? {
         let request = QLThumbnailGenerator.Request(
             fileAt: URL(fileURLWithPath: path),
-            size: CGSize(width: 48, height: 48),
+            size: CGSize(width: points, height: points),
             scale: 3,
             representationTypes: .all
         )

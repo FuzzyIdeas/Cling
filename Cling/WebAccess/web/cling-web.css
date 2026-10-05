@@ -18,6 +18,15 @@
     --unchecked: #86868b;
     --dock: rgba(245, 245, 247, 0.84);
     --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    /* Code, in Xcode's default colours */
+    --code-keyword: #9b2393;
+    --code-string: #c41a16;
+    --code-comment: #5d6c79;
+    --code-number: #1c00cf;
+    --code-type: #0b4f79;
+    --code-function: #326d74;
+    --code-attribute: #815f03;
+    --code-meta: #643820;
     color-scheme: light dark;
 }
 
@@ -36,6 +45,14 @@
         --accent-soft: rgba(77, 141, 255, 0.2);
         --dock: rgba(18, 18, 20, 0.84);
         --orange: #ff9f0a;
+        --code-keyword: #ff7ab2;
+        --code-string: #ff8170;
+        --code-comment: #7f8c98;
+        --code-number: #d9c97c;
+        --code-type: #6bdfff;
+        --code-function: #67b7a4;
+        --code-attribute: #cc9768;
+        --code-meta: #fd8f3f;
     }
 }
 
@@ -1127,7 +1144,8 @@ html[data-standalone] .sheet {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: calc(6px + max(var(--safe-top), var(--edge))) calc(8px + var(--safe-right)) 6px calc(8px + var(--safe-left));
+    padding: calc(6px + max(var(--safe-top), var(--edge))) calc(8px + var(--safe-right) + var(--corner-right, 0px)) 6px
+        calc(8px + var(--safe-left) + var(--corner-left, 0px));
     background: var(--dock);
     border-bottom: 0.5px solid var(--separator);
 }
@@ -1283,4 +1301,194 @@ body.message .relink .btn {
 .alert-buttons .btn {
     flex: 1;
     justify-content: center;
+}
+
+/* A phone on its side uses its whole width: only the notch's side keeps clear (cling-web.js zeroes the other inset). */
+@media (orientation: landscape) and (max-height: 500px) {
+    .list,
+    .crumb,
+    .dock > * {
+        max-width: none;
+    }
+}
+
+/* Preview: in landscape, wide enough for both, a file shows in a column beside the list (cling-web.js). Hidden, the
+   list takes the width back and a button beside Select brings the column back. */
+.preview,
+.showpreview {
+    display: none;
+}
+
+@media (orientation: landscape) and (min-width: 720px) {
+    html:not(.preview-off) body {
+        display: grid;
+        grid-template-columns: calc(var(--safe-left) + clamp(300px, 40vw, 520px)) minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) auto;
+    }
+
+    html:not(.preview-off) .results {
+        grid-area: 1 / 1;
+        padding-right: 0;
+    }
+
+    html:not(.preview-off) .dock {
+        grid-area: 2 / 1;
+        padding-right: 12px;
+    }
+
+    html:not(.preview-off) .preview {
+        grid-area: 1 / 2 / 3 / 3;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+        border-left: 0.5px solid var(--separator);
+    }
+
+    html.preview-off .showpreview {
+        display: grid;
+    }
+}
+
+.preview .viewer-bar {
+    padding-left: 12px;
+}
+
+.preview .viewer-name {
+    text-align: left;
+}
+
+.preview .viewer-body {
+    padding-right: var(--safe-right);
+}
+
+/* The row the column shows */
+.row.current:not(:has(.pick input:checked)) {
+    background: var(--field);
+}
+
+.preview-card {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 24px;
+    text-align: center;
+}
+
+.preview-thumb {
+    max-width: min(320px, 100%);
+    max-height: 45vh;
+    margin-bottom: 10px;
+    object-fit: contain;
+}
+
+.preview-card .glyph .i {
+    width: 96px;
+    height: 96px;
+    margin-bottom: 10px;
+    color: var(--secondary);
+    stroke-width: 1.2;
+}
+
+.preview-name {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.preview-card .meta {
+    flex-wrap: wrap;
+    justify-content: center;
+    white-space: normal;
+}
+
+/* Code (highlight.js classes) */
+pre.code {
+    tab-size: 4;
+}
+
+.code .hljs-keyword,
+.code .hljs-literal,
+.code .hljs-selector-tag,
+.code .hljs-doctag {
+    color: var(--code-keyword);
+    font-weight: 600;
+}
+
+.code .hljs-string,
+.code .hljs-regexp,
+.code .hljs-char,
+.code .hljs-template-tag {
+    color: var(--code-string);
+}
+
+.code .hljs-comment,
+.code .hljs-quote {
+    color: var(--code-comment);
+}
+
+.code .hljs-number,
+.code .hljs-symbol,
+.code .hljs-bullet {
+    color: var(--code-number);
+}
+
+.code .hljs-type,
+.code .hljs-built_in,
+.code .hljs-title.class_,
+.code .hljs-title.class_.inherited__ {
+    color: var(--code-type);
+}
+
+.code .hljs-title,
+.code .hljs-title.function_ {
+    color: var(--code-function);
+}
+
+.code .hljs-attr,
+.code .hljs-attribute,
+.code .hljs-property,
+.code .hljs-variable,
+.code .hljs-template-variable,
+.code .hljs-name,
+.code .hljs-selector-class,
+.code .hljs-selector-id,
+.code .hljs-selector-attr,
+.code .hljs-selector-pseudo {
+    color: var(--code-attribute);
+}
+
+.code .hljs-meta,
+.code .hljs-meta .hljs-keyword {
+    color: var(--code-meta);
+}
+
+.code .hljs-section {
+    color: var(--code-keyword);
+    font-weight: 700;
+}
+
+.code .hljs-addition {
+    background: color-mix(in srgb, #34c759 18%, transparent);
+}
+
+.code .hljs-deletion {
+    background: color-mix(in srgb, #ff3b30 18%, transparent);
+}
+
+.code .hljs-emphasis {
+    font-style: italic;
+}
+
+.code .hljs-strong {
+    font-weight: 700;
+}
+
+/* Live state under a sheet's title: what Downloads holds on this phone */
+.sheet-note {
+    margin: -2px 18px 4px;
+    color: var(--secondary);
+    font-size: 13px;
 }
