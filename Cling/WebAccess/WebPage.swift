@@ -23,9 +23,96 @@ enum WebPage {
         let zipURL: String
     }
 
+    /// What the options sheet narrows a search to. It rides in the page's URL, so a reload keeps it.
+    struct Options {
+        init() {}
+
+        init(_ request: HTTPRequest) {
+            place = request.param("where") ?? ""
+            quickFilter = request.param("filter") ?? ""
+            folderFilter = request.param("folders") ?? ""
+        }
+
+        /// Empty for the window's own indexes, or "everything", "drives" (every external drive), "scope:<raw value>",
+        /// "drive:<name>".
+        var place = ""
+        var quickFilter = ""
+        var folderFilter = ""
+
+        var params: [String] {
+            var params = [String]()
+            if !place.isEmpty {
+                params.append("where=" + encodeQuery(place))
+            }
+            if !quickFilter.isEmpty {
+                params.append("filter=" + encodeQuery(quickFilter))
+            }
+            if !folderFilter.isEmpty {
+                params.append("folders=" + encodeQuery(folderFilter))
+            }
+            return params
+        }
+    }
+
+    /// What the options sheet offers, as the Mac's search window has it.
+    struct Choices {
+        /// A quick or folder filter as the window shows it: its SF Symbol and the hue of its colour.
+        struct Filter {
+            let name: String
+            let icon: String
+            let hue: Double
+        }
+
+        var scopes: [(value: String, label: String)] = []
+        var drives: [(name: String, connected: Bool)] = []
+        /// Every external drive at once, offered from two of them up.
+        var allDrives = false
+        var quickFilters: [Filter] = []
+        var folderFilters: [Filter] = []
+    }
+
+    /// How an icon in the options sheet is coloured: a filter's hue, Everything's orange, or plain grey.
+    enum SymbolColor {
+        case hue(Double)
+        case orange
+        case gray
+
+        var param: String {
+            switch self {
+            case let .hue(hue): String(format: "%.4f", hue)
+            case .orange: "orange"
+            case .gray: "gray"
+            }
+        }
+    }
+
+    /// An SF Symbol, drawn by the Mac in the colour each appearance gets (see `/sym/` in WebAccessServer), since a
+    /// browser has no SF Symbols and the page's CSP allows no inline styles to tint one.
+    static func symbol(_ name: String, _ color: SymbolColor) -> String {
+        let base = "/sym/\(encodeQuery(name)).png?c=\(color.param)"
+        return #"<picture class="sym"><source srcset="\#(escape(base))&amp;d=1" media="(prefers-color-scheme: dark)"><img src="\#(escape(base))&amp;d=0" alt=""></picture>"#
+    }
+
+    /// The icon each place to search in gets in the options sheet.
+    static func placeSymbol(_ place: String, choices: Choices) -> String {
+        switch place {
+        case "": symbol("magnifyingglass", .gray)
+        case "everything": symbol("asterisk", .orange)
+        case "drives": symbol("externaldrive.fill", .gray)
+        case "scope:home": symbol("house", .gray)
+        case "scope:library": symbol("building.columns", .gray)
+        case "scope:applications": symbol("square.grid.2x2", .gray)
+        case "scope:system": symbol("gearshape", .gray)
+        case "scope:root": symbol("terminal", .gray)
+        case let p where p.hasPrefix("drive:"):
+            symbol(choices.drives.contains { p == "drive:\($0.name)" && !$0.connected } ? "externaldrive.badge.xmark" : "externaldrive.fill", .gray)
+        default: symbol("magnifyingglass", .gray)
+        }
+    }
+
     // MARK: URLs
 
-    static func pageURL(query: String, folder: String?) -> String {
+    static func pageURL(query: String, folder: String?, options: Options = Options()) -> String {
         var params = [String]()
         if !query.isEmpty {
             params.append("q=" + encodeQuery(query))
@@ -33,14 +120,16 @@ enum WebPage {
         if let folder {
             params.append("in=" + encodeQuery(folder))
         }
+        params += options.params
         return params.isEmpty ? "/" : "/?" + params.joined(separator: "&")
     }
 
-    static func resultsURL(query: String, folder: String?, from: Int) -> String {
+    static func resultsURL(query: String, folder: String?, from: Int, options: Options) -> String {
         var params = ["q=" + encodeQuery(query)]
         if let folder {
             params.append("in=" + encodeQuery(folder))
         }
+        params += options.params
         if from > 0 {
             params.append("from=\(from)")
         }
@@ -97,7 +186,11 @@ enum WebPage {
 
     // MARK: Page
 
-    static func page(macName: String, appHead: String, query: String, folder: String?, results: String, selectionBar: String, assetVersion: String) -> String {
+    static func page(
+        macName: String, appHead: String, options: Options, choices: Choices, query: String, folder: String?, results: String,
+        selectionBar: String, assetVersion: String
+    ) -> String {
+        let summary = optionsSummary(options, choices: choices)
         let scope = folder.map { folder in
             """
             <a class="scope" href="\(escape(pageURL(query: query, folder: nil)))" aria-label="Search everywhere">\
@@ -110,7 +203,7 @@ enum WebPage {
         <html lang="en">
         <head>
         <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
         <meta name="color-scheme" content="light dark">
         <meta name="htmx-config" content='{"defaultTimeout": 30000, "includeIndicatorCSS": false}'>
         <title>Cling · \(escape(macName))</title>
@@ -125,16 +218,22 @@ enum WebPage {
         <main id="results" class="results">\(results)</main>
         <footer class="dock">
         \(selectionBar)
-        <form class="search" action="/" method="get" role="search">
+        <div class="searchrow">
+        <form id="search" class="search" action="/" method="get" role="search">
         \(icon("search", class: "glass"))
         \(scope)
         <input id="q" type="search" name="q" value="\(escape(query))" placeholder="Search files" aria-label="Search files"
          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" autofocus
          hx-get="/results" hx-trigger="input changed delay:90ms, search" hx-target="#results" hx-swap="innerHTML scroll:top"
          hx-sync="this:replace" hx-include="closest form">
+        <button class="opts\(summary.isEmpty ? "" : " on")" type="button" data-opens="options" aria-label="Search options">\
+        \(icon("filter"))<span class="opts-label">\(summary)</span></button>
+        \(optionsSheet(options, choices: choices))
         </form>
+        <button class="select" type="button" aria-pressed="false">Select</button>
+        </div>
         </footer>
-        <div id="sheet" class="sheet" popover></div>
+        <dialog id="sheet" class="sheet"></dialog>
         </body>
         </html>
         """
@@ -188,7 +287,8 @@ enum WebPage {
 
     // MARK: Listing
 
-    static func listing(header: Header?, items: [WebItem], selected: Set<String>, webkit: Bool, next: String?, searching: Bool) -> String {
+    /// `problem` stands in for "No results" when the search couldn't run as asked (Everything without Pro, say).
+    static func listing(header: Header?, items: [WebItem], selected: Set<String>, webkit: Bool, next: String?, searching: Bool, problem: String? = nil) -> String {
         var html = ""
         switch header {
         case .recent:
@@ -211,7 +311,7 @@ enum WebPage {
             } else {
                 "No results"
             }
-            return html + #"<p class="empty">\#(empty)</p>"#
+            return html + #"<p class="empty">\#(escape(problem ?? empty))</p>"#
         }
         return html + #"<ul class="list">"# + rows(items, selected: selected, webkit: webkit) + moreSentinel(next) + "</ul>"
     }
@@ -263,15 +363,92 @@ enum WebPage {
         <a class="dl" href="\(escape(downloadURL(item.path)))" download aria-label="Download \(name)">\(icon("download"))</a>
         """
 
+        // The checkbox sits in a column of its own that only selection mode opens (see cling-web.js), and the icon is
+        // part of the row's link, so tapping it opens the file like the rest of the row.
         return """
         <li class="row\(selected ? " on" : "")\(item.offline ? " offline" : "")">\
         <label class="pick" aria-label="Select \(name)">\
         <input type="checkbox" name="on" value="true"\(selected ? " checked" : "")\(item.offline ? " disabled" : "") \
         hx-post="/select" hx-vals="\(escape("{\"p\": \(json(item.path))}"))" hx-target="#selbar" hx-swap="outerHTML">\
-        <span class="glyph">\(icon(glyph))</span>\(thumb)<span class="check">\(icon("check"))</span></label>\
-        \(open)<span class="name">\(name)</span><span class="meta">\(meta.joined())</span>\(close)\
+        <span class="check">\(icon("check"))</span></label>\
+        \(open)<span class="icon"><span class="glyph">\(icon(glyph))</span>\(thumb)</span>\
+        <span class="text"><span class="name">\(name)</span><span class="meta">\(meta.joined())</span></span>\(close)\
         \(download)</li>
         """
+    }
+
+    // MARK: Search options
+
+    /// The options sheet: where to search and which filters to search with, one choice in each, laid out like the
+    /// window's filter menu. It sits inside the search form, so every search sends its radios along (htmx collects a
+    /// form's own descendants), and a change searches again (cling-web.js). A modal dialog rather than a popover, so a
+    /// tap beside it only closes it, instead of also landing on the file underneath.
+    static func optionsSheet(_ options: Options, choices: Choices) -> String {
+        func choice(_ name: String, _ value: String, _ label: String, _ symbol: String, current: String, note: String? = nil) -> String {
+            """
+            <li><label class="choice"><input type="radio" name="\(name)" value="\(escape(value))" data-label="\(escape(label))"\
+            \(value == current ? " checked" : "")>\(symbol)<span class="choice-label">\(escape(label))</span>\
+            \(note.map { #"<span class="choice-note">\#(escape($0))</span>"# } ?? "")\(icon("check"))</label></li>
+            """
+        }
+        func section(_ title: String, _ rows: [String]) -> String {
+            #"<section><h2>\#(title)</h2><ul class="choices">"# + rows.joined() + "</ul></section>"
+        }
+        func place(_ value: String, _ label: String, note: String? = nil) -> String {
+            choice("where", value, label, placeSymbol(value, choices: choices), current: options.place, note: note)
+        }
+        let none = #"<picture class="sym"></picture>"#
+
+        var places = [place("", "All"), place("everything", "Everything")]
+        places += choices.scopes.map { place("scope:\($0.value)", $0.label) }
+        if choices.allDrives {
+            places.append(place("drives", "External drives"))
+        }
+        places += choices.drives.map { place("drive:\($0.name)", $0.name, note: $0.connected ? nil : "Not connected") }
+
+        var html = section("Search in", places)
+        if !choices.quickFilters.isEmpty {
+            html += section(
+                "Quick filter",
+                [choice("filter", "", "None", none, current: options.quickFilter)]
+                    + choices.quickFilters.map { choice("filter", $0.name, $0.name, symbol($0.icon, .hue($0.hue)), current: options.quickFilter) }
+            )
+        }
+        if !choices.folderFilters.isEmpty {
+            html += section(
+                "Folder filter",
+                [choice("folders", "", "None", none, current: options.folderFilter)]
+                    + choices.folderFilters.map { choice("folders", $0.name, $0.name, symbol($0.icon, .hue($0.hue)), current: options.folderFilter) }
+            )
+        }
+        return #"<dialog id="options" class="sheet options">"# + html + "</dialog>"
+    }
+
+    /// What the options button shows while a search is narrowed: each choice's icon and name, as cling-web.js builds
+    /// it when a choice changes.
+    static func optionsSummary(_ options: Options, choices: Choices) -> String {
+        func part(_ symbol: String, _ label: String, everything: Bool = false) -> String {
+            #"<span class="part\#(everything ? " everything" : "")">\#(symbol)<span>\#(escape(label))</span></span>"#
+        }
+        var parts = [String]()
+        switch options.place {
+        case "":
+            break
+        case "everything":
+            parts.append(part(placeSymbol("everything", choices: choices), "Everything", everything: true))
+        case "drives":
+            parts.append(part(placeSymbol("drives", choices: choices), "External drives"))
+        case let p where p.hasPrefix("scope:"):
+            let label = choices.scopes.first { p == "scope:\($0.value)" }?.label ?? String(p.dropFirst("scope:".count))
+            parts.append(part(placeSymbol(p, choices: choices), label))
+        case let p:
+            parts.append(part(placeSymbol(p, choices: choices), String(p.dropFirst("drive:".count))))
+        }
+        for (name, filters) in [(options.quickFilter, choices.quickFilters), (options.folderFilter, choices.folderFilters)] where !name.isEmpty {
+            let filter = filters.first { $0.name == name }
+            parts.append(part(filter.map { symbol($0.icon, .hue($0.hue)) } ?? "", name))
+        }
+        return parts.joined()
     }
 
     // MARK: Selection
@@ -288,7 +465,7 @@ enum WebPage {
         """
         return """
         <div id="selbar" class="selbar">\
-        <button class="count" type="button" popovertarget="sheet" hx-get="/selection" hx-target="#sheet">\(summary.count) selected · \(size)</button>\
+        <button class="count" type="button" data-opens="sheet" hx-get="/selection" hx-target="#sheet">\(summary.count) selected · \(size)</button>\
         \(download)\(zip)\
         <button class="clear" type="button" hx-post="/select/clear" hx-target="#selbar" hx-swap="outerHTML" aria-label="Clear selection">\(icon("x"))</button>\
         </div>
@@ -301,9 +478,9 @@ enum WebPage {
             let name = escape(item.name)
             return """
             <li class="row">\
-            <span class="pick"><span class="glyph">\(icon(item.browsable ? "folder" : "file"))</span>\
+            <span class="main"><span class="icon"><span class="glyph">\(icon(item.browsable ? "folder" : "file"))</span>\
             <img class="thumb" src="/t\(escape(encodePath(item.path)))?v=\(item.version)" alt="" decoding="async"></span>\
-            <span class="main"><span class="name">\(name)</span><span class="meta"><span class="where">\(escape(displayFolder(item.path)))</span></span></span>\
+            <span class="text"><span class="name">\(name)</span><span class="meta"><span class="where">\(escape(displayFolder(item.path)))</span></span></span></span>\
             <a class="dl" href="\(escape(downloadURL(item.path)))" download aria-label="Download \(name)">\(icon("download"))</a></li>
             """
         }.joined()
@@ -376,6 +553,7 @@ enum WebPage {
     <symbol id="i-zip" viewBox="0 0 24 24"><path d="M4.5 8h15v10.5a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2zM3.5 4h17v4h-17zM10 12h4"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M6 12.5l4 4L18 8"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4.5 7h15M7.5 12h9M10.5 17h3"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4.5 4.5"/></symbol>
     <symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 18 8.5 12l6-6"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7A1.5 1.5 0 0 1 5 5.5h4l2 2h8A1.5 1.5 0 0 1 20.5 9v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/></symbol>

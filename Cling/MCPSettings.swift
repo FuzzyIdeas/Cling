@@ -336,6 +336,12 @@ enum MCPSettingsBridge {
             note: "Search and download this Mac's files from a browser on the local network or a VPN, signed in through the link or QR code in Settings.",
             keywords: ["web access", "web", "browser", "phone", "lan", "tailscale", "server", "download"]
         )),
+        // Getting the certificate publishes the Mac's Tailscale name, so only the user turns it on.
+        readOnly("webAccessHTTPS", .webAccessHTTPS, row(
+            .webAccess, "", "HTTPS on Tailscale",
+            note: "Serves the file server over HTTPS on this Mac's Tailscale name, with a certificate Tailscale gets from Let's Encrypt, which puts that name in public certificate logs. Needed for installing the page as an app on Android and in Chrome, and for its offline page.",
+            keywords: ["https", "tls", "certificate", "tailscale", "pwa", "app"]
+        )),
     ]
 
     @MainActor static var keysByName: [String: MCPSettingKey] {

@@ -17,8 +17,9 @@ private let everythingStateFile = everythingFolder / "everything.json"
 /// What the saved index was built against. FSEvents replays changes since `eventID` on top of it; a different
 /// macOS build or a reset FSEvents database means the replay can't be trusted and the index is walked again.
 struct EverythingSnapshot: Codable {
+    /// `volumes` are filled in by the caller off the main thread: finding them reads each disk (`localVolumes`).
     static var current: Self {
-        Self(eventID: FSEventsGetCurrentEventId(), system: FSEventsHistory.systemBuild, fseventsUUID: FSEventsHistory.fseventsUUID, volumes: EverythingIndex.localVolumes())
+        Self(eventID: FSEventsGetCurrentEventId(), system: FSEventsHistory.systemBuild, fseventsUUID: FSEventsHistory.fseventsUUID, volumes: [])
     }
 
     var eventID: UInt64
@@ -94,7 +95,9 @@ final class EverythingIndex {
         loading ? "loading" : walking ? "indexing" : engine != nil ? "ready" : "unloaded"
     }
 
-    /// Local disks other than the startup disk, walked as their own roots.
+    /// Local disks other than the startup disk, walked as their own roots. Not a Time Machine disk, which holds copies
+    /// of what is already indexed, millions of files deep. Telling one apart reads the disk, which can take seconds on
+    /// a sleeping one, so this never runs on the main thread.
     nonisolated static func localVolumes() -> [String] {
         let keys: [URLResourceKey] = [.volumeIsLocalKey, .volumeIsRootFileSystemKey]
         return (FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) ?? [])
@@ -103,6 +106,7 @@ final class EverythingIndex {
                 return values.volumeIsLocal == true && values.volumeIsRootFileSystem != true
             }
             .map(\.path)
+            .filter { !isTimeMachineBackup($0) }
             .sorted()
     }
 
@@ -304,10 +308,11 @@ final class EverythingIndex {
             return
         }
         snapshot.eventID = lastEventID
-        snapshot.volumes = Self.localVolumes()
-        let saved = snapshot
+        let pending = snapshot
         let url = everythingIndexFile.url
         Task.detached(priority: .background) {
+            var saved = pending
+            saved.volumes = Self.localVolumes()
             engine.saveBinaryIndex(to: url)
             saved.write()
         }
@@ -329,17 +334,19 @@ final class EverythingIndex {
             let engine = SearchEngine()
             let loaded = engine.loadBinaryIndex(from: url)
             log.info("Everything load: \(engine.count) entries in \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2))s")
+            // Disks unplugged since it was saved leave now. Disks plugged in since are walked once it is searchable,
+            // the way one plugged in while it is loaded is: walking a big one first kept it "loading" for as long as
+            // the walk took, and searches waiting on it gave up.
+            var kept = saved.volumes
+            var added: [String] = []
             if loaded {
-                // Disks plugged in or out since it was saved.
                 let now = Self.localVolumes()
                 let gone = saved.volumes.filter { !now.contains($0) }
                 if !gone.isEmpty {
                     engine.removeSubtrees(gone)
                 }
-                for volume in now where !saved.volumes.contains(volume) {
-                    engine.appendPath(volume, isDir: true)
-                    engine.walkDirectory(volume, skipGitDirs: false, skipJunkFiles: false, dedupe: false)
-                }
+                kept = saved.volumes.filter { now.contains($0) }
+                added = now.filter { !saved.volumes.contains($0) }
             }
             await MainActor.run {
                 self.loading = false
@@ -351,7 +358,10 @@ final class EverythingIndex {
                 self.lastEventID = saved.eventID
                 self.unsavedChanges = 0
                 self.install(engine)
-                self.startWatching(since: saved.eventID)
+                self.startWatching(since: saved.eventID, volumes: kept)
+                for volume in added {
+                    self.updater?.addVolume(volume)
+                }
             }
         }
     }
@@ -373,7 +383,7 @@ final class EverythingIndex {
         guard !walking else { return }
         walking = true
         // Changes made from here on are replayed on top of this walk once it is watched.
-        let started = EverythingSnapshot.current
+        let start = EverythingSnapshot.current
         let fresh = SearchEngine()
         if engine == nil {
             building = true
@@ -381,6 +391,9 @@ final class EverythingIndex {
         }
         let url = everythingIndexFile.url
         Task.detached(priority: priority) {
+            var snapshot = start
+            snapshot.volumes = Self.localVolumes()
+            let started = snapshot
             let t0 = CFAbsoluteTimeGetCurrent()
             await Self.walkEverything(into: fresh, volumes: started.volumes) {
                 Task { @MainActor in self.applied(to: fresh) }
@@ -413,17 +426,18 @@ final class EverythingIndex {
                 self.lastEventID = started.eventID
                 self.unsavedChanges = 0
                 self.install(engine)
-                self.startWatching(since: started.eventID)
+                self.startWatching(since: started.eventID, volumes: started.volumes)
             }
         }
     }
 
     // MARK: Live updates
 
-    /// Replays every change since `since` (FSEvents keeps the history), then follows along until unloaded.
-    private func startWatching(since: UInt64) {
+    /// Replays every change since `since` (FSEvents keeps the history), then follows along until unloaded. `volumes`
+    /// are the disks the engine already holds.
+    private func startWatching(since: UInt64, volumes: [String]) {
         guard let engine else { return }
-        let updater = EverythingUpdater(engine: engine)
+        let updater = EverythingUpdater(engine: engine, volumes: volumes)
         self.updater = updater
         // Changes arrive a few seconds late, in fewer and larger batches.
         stream = FSChangeStream(paths: ["/"], since: since, latency: 3, queue: streamQueue) { events in
@@ -451,9 +465,7 @@ final class EverythingIndex {
         let center = NSWorkspace.shared.notificationCenter
         volumeObservers = [
             center.addObserver(forName: NSWorkspace.didMountNotification, object: nil, queue: nil) { note in
-                guard let path = (note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL)?.path,
-                      Self.localVolumes().contains(path)
-                else { return }
+                guard let path = (note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL)?.path, path.hasPrefix("/Volumes/") else { return }
                 updater.addVolume(path)
             },
             center.addObserver(forName: NSWorkspace.didUnmountNotification, object: nil, queue: nil) { note in
@@ -472,9 +484,9 @@ final class EverythingIndex {
 /// Applies file system events to a loaded Everything engine in batches, on its own background queue, so the
 /// normal index's watcher and the main thread never wait on it.
 final class EverythingUpdater: @unchecked Sendable {
-    init(engine: SearchEngine) {
+    init(engine: SearchEngine, volumes: [String]) {
         self.engine = engine
-        volumes = Set(EverythingIndex.localVolumes())
+        self.volumes = Set(volumes)
     }
 
     /// Takes a delivery from the stream; changes are applied half a second after the first of a batch arrives.
@@ -492,9 +504,11 @@ final class EverythingUpdater: @unchecked Sendable {
         }
     }
 
+    /// Takes any disk mounted under /Volumes and keeps the local ones that aren't Time Machine's, checked here on
+    /// the updater's queue since that reads the disk.
     func addVolume(_ path: String) {
         queue.async { [self] in
-            guard !volumes.contains(path) else { return }
+            guard !volumes.contains(path), EverythingIndex.localVolumes().contains(path) else { return }
             volumes.insert(path)
             engine.appendPath(path, isDir: true)
             engine.walkDirectory(path, skipGitDirs: false, skipJunkFiles: false, dedupe: false)

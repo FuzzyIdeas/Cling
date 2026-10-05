@@ -188,8 +188,7 @@ extension FuzzyClient {
     }
 
     private static func isTimeMachineVolume(_ volume: FilePath) -> Bool {
-        // HFS+ Time Machine
-        if FileManager.default.fileExists(atPath: (volume / "Backups.backupdb").string) {
+        if isTimeMachineBackup(volume.string) {
             return true
         }
         // Only APFS volumes can carry a volume role, and `diskutil info` on a cold
@@ -458,4 +457,12 @@ extension FuzzyClient {
 
         logActivity("Removed volume: \(volume.name.string)")
     }
+}
+
+/// A Time Machine disk, told by what Time Machine keeps at its root: Backups.backupdb on HFS+, backup_manifest.plist
+/// on APFS. That reads the disk, seconds on a sleeping one, so keep it off the main thread. The APFS volume role says
+/// the same more formally, but `diskutil info` doesn't print it on macOS 27.
+nonisolated func isTimeMachineBackup(_ volume: String) -> Bool {
+    let fm = FileManager.default
+    return fm.fileExists(atPath: volume + "/Backups.backupdb") || fm.fileExists(atPath: volume + "/backup_manifest.plist")
 }

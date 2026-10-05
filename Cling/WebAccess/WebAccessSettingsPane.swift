@@ -24,6 +24,17 @@ struct WebAccessSettingsPane: View {
                 ForEach(failureLines, id: \.self) { line in
                     Text(line).font(.callout).foregroundStyle(.red)
                 }
+                // Only where Tailscale would issue the certificate: anywhere else the switch could do nothing.
+                if enabled, let domain = web.certificateDomain {
+                    Toggle("HTTPS on Tailscale", isOn: Binding(
+                        get: { https },
+                        set: { on in
+                            if !on || confirmHTTPS(domain) {
+                                https = on
+                            }
+                        }
+                    ))
+                }
             }
 
             if enabled {
@@ -75,6 +86,7 @@ struct WebAccessSettingsPane: View {
     @Default(.webAccessPort) private var port
     @Default(.webAccessKey) private var key
     @Default(.webAccessLinkHost) private var linkHost
+    @Default(.webAccessHTTPS) private var https
 
     private var web: WebAccess {
         WebAccess.shared
@@ -100,6 +112,16 @@ struct WebAccessSettingsPane: View {
         web.failures.sorted { $0.key < $1.key }.map { address, reason in
             reason == "in use" ? "Port \(port) is in use on \(address)" : "\(address): \(reason)"
         }
+    }
+
+    /// Asked before the first certificate, since getting one publishes the Mac's name on the tailnet.
+    private func confirmHTTPS(_ domain: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Get an HTTPS certificate for this Mac?"
+        alert.informativeText = "Tailscale gets it from Let's Encrypt, which lists every certificate in public logs, with this Mac's Tailscale name: \(domain)"
+        alert.addButton(withTitle: "Get Certificate")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func confirmSignOut() -> Bool {

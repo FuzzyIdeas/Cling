@@ -12,6 +12,8 @@
     --accent: #2f6fe4;
     --accent-soft: rgba(47, 111, 228, 0.12);
     --on-accent: #ffffff;
+    /* Everything's colour in the window, darkened enough to read as text on white */
+    --orange: #d97000;
     --dock: rgba(245, 245, 247, 0.84);
     --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
     color-scheme: light dark;
@@ -30,6 +32,7 @@
         --accent: #4d8dff;
         --accent-soft: rgba(77, 141, 255, 0.2);
         --dock: rgba(18, 18, 20, 0.84);
+        --orange: #ff9f0a;
     }
 }
 
@@ -40,6 +43,9 @@
 html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    /* Scrolling only: a pinch on the list or the search field zoomed the whole page and pushed the dock off screen.
+       The viewer zooms images and video itself. */
+    touch-action: pan-x pan-y;
 }
 
 html,
@@ -59,24 +65,32 @@ body {
     --edge: 0px;
 }
 
-/* Installed from the Home Screen (flagged by cling-web.js: iOS doesn't match display-mode there). 100vh is the only
-   height iOS gets right from a cold start: 100% makes it drop viewport-fit=cover, and 100dvh isn't set until the
-   first rotation. iOS 26 also paints a soft band over the top ~30px of an installed app, over everything, so nothing
-   readable goes there. */
+/* Installed from the Home Screen (flagged by cling-web.js: iOS doesn't match display-mode there). The height is the
+   window's own, measured by cling-web.js: 100% makes iOS drop viewport-fit=cover, 100dvh isn't set until the first
+   rotation, and 100vh counts the status bar the app starts below, which put the dock under the bottom edge. 100vh
+   stays only as the fallback. iOS 26 also paints a soft band over the top ~30px of an installed app, over everything,
+   so nothing readable goes there. */
 html[data-standalone] {
     --edge: 34px;
-    height: 100vh;
+    height: var(--app-height, 100vh);
 }
 
 html[data-standalone] body {
-    height: var(--vvh, 100vh);
+    height: var(--app-height, 100vh);
 }
 
+/* Pinned to what is visible. With the keyboard up, iOS slides the visible area down the page to keep the search field
+   in view; cling-web.js moves the page by the same amount (--app-top), so the dock rests on the keyboard instead of
+   ending up at the top of the screen. */
 body {
+    position: fixed;
+    top: var(--app-top, 0px);
+    left: 0;
+    right: 0;
     display: flex;
     flex-direction: column;
-    /* The visible height above the on-screen keyboard while it's up (set by cling-web.js). */
-    height: var(--vvh, 100dvh);
+    /* The window's height, or what is visible above the on-screen keyboard while it's up (set by cling-web.js). */
+    height: var(--app-height, 100dvh);
     overflow: hidden;
     background: var(--bg);
     color: var(--text);
@@ -145,14 +159,23 @@ button {
     }
 }
 
+/* The checkbox column: closed until selection mode opens it (Select, or a two-finger glide down the list). */
 .pick {
     position: relative;
     flex: none;
     display: grid;
     place-items: center;
-    width: 52px;
+    width: 0;
     height: 52px;
+    overflow: hidden;
+    opacity: 0;
     cursor: pointer;
+    transition: width 0.2s ease, opacity 0.2s ease;
+}
+
+body.selecting .pick {
+    width: 38px;
+    opacity: 1;
 }
 
 .pick input {
@@ -163,50 +186,19 @@ button {
     pointer-events: none;
 }
 
-.pick .glyph {
-    display: grid;
-    place-items: center;
-    width: 44px;
-    height: 44px;
-    border-radius: 10px;
-    background: var(--field);
-    color: var(--secondary);
-}
-
-.pick:has(.thumb) .glyph {
-    background: none;
-}
-
-.pick:has(.thumb) .glyph .i {
-    visibility: hidden;
-}
-
-.pick .thumb {
-    position: absolute;
-    width: 44px;
-    height: 44px;
-    object-fit: contain;
-    border-radius: 6px;
-}
-
 .pick .check {
-    position: absolute;
-    right: 0;
-    bottom: 0;
     display: grid;
     place-items: center;
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     border: 1.5px solid var(--tertiary);
-    background: var(--surface);
-    box-shadow: 0 0 0 1.5px var(--bg);
     transition: background-color 0.12s ease, border-color 0.12s ease;
 }
 
 .pick .check .i {
-    width: 14px;
-    height: 14px;
+    width: 15px;
+    height: 15px;
     stroke: var(--on-accent);
     stroke-width: 2.6;
     opacity: 0;
@@ -221,13 +213,13 @@ button {
     opacity: 1;
 }
 
-.pick input:focus-visible ~ .glyph {
+.pick input:focus-visible ~ .check {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
 
 .pick input:disabled ~ .check {
-    display: none;
+    visibility: hidden;
 }
 
 .main {
@@ -235,12 +227,54 @@ button {
     min-width: 0;
     min-height: 52px;
     display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 2px;
-    padding: 6px 6px;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 6px 4px 4px;
     border-radius: 10px;
     text-decoration: none;
+}
+
+.icon {
+    position: relative;
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+}
+
+.icon .glyph {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: var(--field);
+    color: var(--secondary);
+}
+
+.icon:has(.thumb) .glyph {
+    background: none;
+}
+
+.icon:has(.thumb) .glyph .i {
+    visibility: hidden;
+}
+
+.icon .thumb {
+    position: absolute;
+    width: 44px;
+    height: 44px;
+    object-fit: contain;
+    border-radius: 6px;
+}
+
+.text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
 }
 
 .main:focus-visible {
@@ -419,6 +453,33 @@ button {
     }
 }
 
+.searchrow {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.searchrow .search {
+    flex: 1;
+    min-width: 0;
+}
+
+.select {
+    flex: none;
+    height: 46px;
+    padding: 0 6px;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font-size: 17px;
+    cursor: pointer;
+}
+
+.select[aria-pressed="true"] {
+    font-weight: 600;
+}
+
 .search {
     display: flex;
     align-items: center;
@@ -452,6 +513,230 @@ button {
 
 .search input::placeholder {
     color: var(--secondary);
+}
+
+/* The options button: an icon, and what the search is narrowed to while it is. */
+.opts {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 50%;
+    height: 32px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--secondary);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.opts.on {
+    padding: 0 9px 0 7px;
+    background: var(--field);
+    color: var(--text);
+}
+
+.opts .i {
+    width: 20px;
+    height: 20px;
+}
+
+/* Narrowed, the choices' own icons say it */
+.opts.on > .i {
+    display: none;
+}
+
+.opts-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.opts-label:empty {
+    display: none;
+}
+
+.opts-label .part {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    min-width: 0;
+}
+
+.opts-label .part > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.opts-label .part.everything {
+    color: var(--orange);
+}
+
+/* Choices that don't fit in the field: a row of chips above it, still part of the button (cling-web.js) */
+.dock.spill .searchrow {
+    padding-top: 40px;
+}
+
+.dock.spill .opts.on {
+    padding: 0 6px;
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+.dock.spill .opts.on > .i {
+    display: block;
+}
+
+.dock.spill .opts-label {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 32px;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    color: var(--text);
+}
+
+.dock.spill .opts-label .part {
+    flex: none;
+    height: 32px;
+    padding: 0 12px 0 9px;
+    border-radius: 16px;
+    background: var(--field);
+    gap: 5px;
+}
+
+.opts-label .sym {
+    width: 18px;
+    height: 18px;
+}
+
+/* An SF Symbol the Mac drew in its colour (/sym/) */
+.sym {
+    flex: none;
+    display: inline-flex;
+    width: 24px;
+    height: 24px;
+}
+
+.sym img {
+    width: 100%;
+    height: 100%;
+}
+
+/* The options sheet: grouped like the window's filter menu, each section a card */
+
+.sheet.options {
+    padding-top: 0;
+    background: var(--bg);
+}
+
+.options::before {
+    content: "";
+    display: block;
+    width: 36px;
+    height: 5px;
+    margin: 6px auto 0;
+    border-radius: 3px;
+    background: var(--tertiary);
+}
+
+.options section {
+    padding: 0 16px;
+}
+
+.options h2 {
+    margin: 18px 16px 7px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--secondary);
+}
+
+.choices {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-radius: 12px;
+    background: var(--surface);
+    overflow: hidden;
+}
+
+.choice {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 46px;
+    padding: 0 14px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+/* Hairlines between rows, from where the names start */
+.choices li + li .choice::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 50px;
+    border-top: 0.5px solid var(--separator);
+}
+
+.choice:active {
+    background: var(--hover);
+}
+
+.choice input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.choice-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.choice-note {
+    flex: none;
+    color: var(--secondary);
+    font-size: 14px;
+}
+
+.choice .i {
+    width: 20px;
+    height: 20px;
+    stroke: var(--accent);
+    stroke-width: 2.4;
+    visibility: hidden;
+}
+
+.choice:has(input:checked) .i {
+    visibility: visible;
+}
+
+.choice:has(input:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+@media (hover: hover) {
+    .choice:hover {
+        background: var(--hover);
+    }
 }
 
 .scope {
@@ -558,7 +843,7 @@ button {
     height: 18px;
 }
 
-/* The selection, listed: a popover sheet from the bottom edge */
+/* The selection and the options: modal sheets from the bottom edge */
 
 .sheet {
     position: fixed;
@@ -569,6 +854,7 @@ button {
     margin: 0 auto;
     padding: 4px 0 calc(12px + var(--safe-bottom));
     overflow: auto;
+    overscroll-behavior: contain;
     border: 0;
     border-radius: 18px 18px 0 0;
     background: var(--surface);
@@ -584,9 +870,6 @@ html[data-standalone] .sheet {
     background: rgba(0, 0, 0, 0.32);
 }
 
-.sheet .pick .check {
-    display: none;
-}
 
 /* A download's progress and what to do with it, over the dock */
 
@@ -657,6 +940,9 @@ html[data-standalone] .sheet {
 .viewer-body video {
     max-width: 100%;
     max-height: 100%;
+    /* Pinched and panned by cling-web.js, not by the browser. */
+    touch-action: none;
+    transform-origin: center;
     object-fit: contain;
 }
 

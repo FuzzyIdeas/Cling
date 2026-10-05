@@ -28,6 +28,9 @@ extension Defaults.Keys {
     static let webAccessKey = Key<String>("webAccessKey", default: "")
     /// The host the pairing link carries (an address or a DNS name), as last picked. Empty for the first one listed.
     static let webAccessLinkHost = Key<String>("webAccessLinkHost", default: "")
+    /// Serve the Tailscale addresses over HTTPS. Off until asked for: getting the certificate puts the Mac's Tailscale
+    /// name in Let's Encrypt's public certificate logs.
+    static let webAccessHTTPS = Key<Bool>("webAccessHTTPS", default: false)
 }
 
 // MARK: - WebAddress
@@ -89,6 +92,9 @@ final class WebAccess {
     private(set) var hostnames: [String: String] = [:]
     /// The MagicDNS name the Tailscale addresses serve HTTPS for, while they do.
     private(set) var secureHost: String?
+    /// The name Tailscale would issue this Mac a certificate for, asked without getting one. Settings offers HTTPS only
+    /// while there is one.
+    private(set) var certificateDomain: String?
 
     var running: Bool {
         httpServer != nil
@@ -118,6 +124,7 @@ final class WebAccess {
         pub(.webAccessEnabled).sink { _ in mainAsync { self.apply() } }.store(in: &observers)
         pub(.webAccessPort).sink { _ in mainAsync { self.apply() } }.store(in: &observers)
         pub(.webAccessKey).sink { change in mainAsync { self.server?.key = change.newValue } }.store(in: &observers)
+        pub(.webAccessHTTPS).sink { _ in mainAsync { self.httpsChanged() } }.store(in: &observers)
         apply()
     }
 
@@ -153,6 +160,7 @@ final class WebAccess {
             certificate = nil
             certificateChecked = nil
             secureHost = nil
+            certificateDomain = nil
             return
         }
         if Defaults[.webAccessKey].isEmpty {
@@ -186,13 +194,16 @@ final class WebAccess {
         addresses = Self.localAddresses()
         listen()
         lookUpHostnames()
+        checkTailscale()
         refreshCertificate()
     }
 
-    /// Fetches Tailscale's certificate for this Mac when a Tailscale address is up, then restarts those listeners with
-    /// TLS, or with the renewed certificate. Off the main thread: a first certificate can take a minute.
+    /// Fetches Tailscale's certificate for this Mac when HTTPS is on and a Tailscale address is up, then restarts those
+    /// listeners with TLS, or with the renewed certificate. Off the main thread: a first certificate can take a minute.
     func refreshCertificate() {
-        guard #available(macOS 15, *), running, certificateFetch == nil, addresses.contains(where: \.isTailscale) else { return }
+        guard #available(macOS 15, *), Defaults[.webAccessHTTPS], running, certificateFetch == nil,
+              addresses.contains(where: \.isTailscale)
+        else { return }
         if let certificateChecked, certificate != nil, Date().timeIntervalSince(certificateChecked) < 3 * 3600 {
             return
         }
@@ -211,17 +222,47 @@ final class WebAccess {
     @ObservationIgnored private var certificateFetch: Task<Void, Never>?
     @ObservationIgnored private var certificateChecked: Date?
     @ObservationIgnored private var certificateTimer: Timer?
+    @ObservationIgnored private var tailscaleCheck: Task<Void, Never>?
 
     @ObservationIgnored private var server: WebAccessServer?
     @ObservationIgnored private var httpServer: HTTPServer?
     @ObservationIgnored private var store: SCDynamicStore?
     @ObservationIgnored private var networkChange: DispatchWorkItem?
 
+    /// Asks Tailscale for this Mac's name and whether the tailnet issues certificates, which gets none. Needs macOS 15,
+    /// the first that keeps a certificate's key in memory instead of the keychain.
+    private func checkTailscale() {
+        guard #available(macOS 15, *), running, tailscaleCheck == nil else { return }
+        guard addresses.contains(where: \.isTailscale) else {
+            certificateDomain = nil
+            return
+        }
+        tailscaleCheck = Task.detached(priority: .utility) {
+            let domain = TailscaleTLS.cli().flatMap { TailscaleTLS.domain(cli: $0) }
+            await MainActor.run {
+                WebAccess.shared.tailscaleCheck = nil
+                WebAccess.shared.certificateDomain = domain
+            }
+        }
+    }
+
+    private func httpsChanged() {
+        guard running else { return }
+        if Defaults[.webAccessHTTPS] {
+            refreshCertificate()
+        } else {
+            certificate = nil
+            certificateChecked = nil
+            secureHost = nil
+            listen()
+        }
+    }
+
     /// A failed refresh keeps the certificate already served: it stays valid for weeks.
     private func certificateArrived(_ new: TailscaleTLS.Certificate?) {
         certificateFetch = nil
         certificateChecked = Date()
-        guard running, let new, new.leaf != certificate?.leaf || new.domain != certificate?.domain else { return }
+        guard running, Defaults[.webAccessHTTPS], let new, new.leaf != certificate?.leaf || new.domain != certificate?.domain else { return }
         webLog.info("Serving HTTPS for \(new.domain, privacy: .public)")
         certificate = new
         secureHost = new.domain
@@ -265,6 +306,7 @@ final class WebAccess {
             addresses = current
             listen()
             lookUpHostnames()
+            checkTailscale()
             refreshCertificate()
         }
         networkChange = work

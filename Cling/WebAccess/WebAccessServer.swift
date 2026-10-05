@@ -395,6 +395,9 @@ final class WebAccessServer: @unchecked Sendable {
         if path == "/favicon.ico" || path == "/icon.png" {
             return iconResponse()
         }
+        if path.hasPrefix("/sym/"), path.hasSuffix(".png") {
+            return symbol(request, String(path.dropFirst("/sym/".count).dropLast(".png".count)))
+        }
         return notFound()
     }
 
@@ -460,9 +463,12 @@ final class WebAccessServer: @unchecked Sendable {
         let q = request.param("q") ?? ""
         let folder = request.param("in").flatMap(Self.cleanPath).flatMap { isDirectory($0) ? $0 : nil }
         let listing = listingHTML(request, q: q, folder: folder, from: 0, sid: sid)
+        let options = WebPage.Options(request)
         let html = WebPage.page(
             macName: macName,
             appHead: appHead,
+            options: options,
+            choices: searchChoices(),
             query: q,
             folder: folder,
             results: listing,
@@ -479,7 +485,7 @@ final class WebAccessServer: @unchecked Sendable {
         let response = HTTPResponse.html(listingHTML(request, q: q, folder: folder, from: from, sid: sid))
         if from == 0 {
             // The address bar follows the search, so a reload or a trip back from a file lands on the same results.
-            response.headers.append(("HX-Replace-Url", WebPage.pageURL(query: q, folder: folder)))
+            response.headers.append(("HX-Replace-Url", WebPage.pageURL(query: q, folder: folder, options: WebPage.Options(request))))
         }
         return response
     }
@@ -490,10 +496,15 @@ final class WebAccessServer: @unchecked Sendable {
         let selected = Set(selection(sid))
         let wanted = from + Self.pageSize
 
+        let options = WebPage.Options(request)
+        // A quick or folder filter searches with its own tokens even before anything is typed, as the window does.
+        let filtering = !options.quickFilter.isEmpty || (folder == nil && !options.folderFilter.isEmpty)
+
         let items: [WebItem]
         var more = false
         var header: WebPage.Header?
-        if query.isEmpty || (folder == nil && query.count < Defaults[.minQueryLength]) {
+        var problem: String?
+        if !filtering, query.isEmpty || (folder == nil && query.count < Defaults[.minQueryLength]) {
             if let folder {
                 let all = folderChildren(folder)
                 items = Array(all.dropFirst(from).prefix(Self.pageSize))
@@ -508,8 +519,44 @@ final class WebAccessServer: @unchecked Sendable {
             }
         } else {
             let expanded = query.replacingOccurrences(of: "~/", with: NSHomeDirectory() + "/")
-            let found = CLICalls.searchLock.withLock {
-                coordinator.search(query: expanded, maxResults: min(wanted + 1, Self.maxResults), folderPrefixes: folder.map { [$0] })
+            // The search `cling search` runs, so the options mean here what its flags mean, Pro checks included.
+            // Inside a folder the folder is the scope, and a folder filter would only widen it.
+            var search = ClingRequest(
+                command: .search,
+                query: expanded,
+                maxResults: min(wanted + 1, Self.maxResults),
+                folderPrefixes: folder.map { [$0] },
+                quickFilter: options.quickFilter.isEmpty ? nil : options.quickFilter,
+                folderFilter: folder == nil && !options.folderFilter.isEmpty ? options.folderFilter : nil
+            )
+            switch options.place {
+            case "everything": search.everything = true
+            case "drives": search.allDrives = true
+            case let place where place.hasPrefix("scope:"): search.scopes = [String(place.dropFirst("scope:".count))]
+            case let place where place.hasPrefix("drive:"): search.scopes = [String(place.dropFirst("drive:".count))]
+            default: break
+            }
+            // The CLI waits up to two minutes for Everything to load. A page waits a few seconds, which a saved index
+            // takes to load, and otherwise says so: a first build walks every disk.
+            if search.everything == true {
+                let deadline = Date().addingTimeInterval(6)
+                repeat {
+                    problem = waitOnMain(timeout: 2) { () -> String? in
+                        switch EVERYTHING.cliAccess() {
+                        case .ready: nil
+                        case .needsPro: "Everything needs Cling Pro"
+                        case .loading: "The Everything index is still loading"
+                        }
+                    } ?? "The Everything index is still loading"
+                    guard problem == "The Everything index is still loading", Date() < deadline else { break }
+                    Thread.sleep(forTimeInterval: 0.25)
+                } while true
+            }
+            var found = [ClingSearchResult]()
+            if problem == nil {
+                let response = FuzzyClient.handleCLIRequest(search, coordinator: coordinator)
+                found = response.results ?? []
+                problem = response.error.map { $0.prefix(1).uppercased() + $0.dropFirst() }
             }
             items = found.dropFirst(from).prefix(Self.pageSize).compactMap { item($0.path, isDir: $0.isDir) }
             more = found.count > wanted && wanted < Self.maxResults
@@ -518,11 +565,31 @@ final class WebAccessServer: @unchecked Sendable {
             }
         }
 
-        let nextURL = more ? WebPage.resultsURL(query: q, folder: folder, from: wanted) : nil
+        let nextURL = more ? WebPage.resultsURL(query: q, folder: folder, from: wanted, options: options) : nil
         if from > 0 {
             return WebPage.rows(items, selected: selected, webkit: webkit) + WebPage.moreSentinel(nextURL)
         }
-        return WebPage.listing(header: header, items: items, selected: selected, webkit: webkit, next: nextURL, searching: !query.isEmpty)
+        return WebPage.listing(header: header, items: items, selected: selected, webkit: webkit, next: nextURL, searching: !query.isEmpty || filtering, problem: problem)
+    }
+
+    /// What the options sheet offers, read from the search window's own state: the scopes it searches (the free ones
+    /// without Pro), its drives (none without Pro), and the user's filters.
+    private func searchChoices() -> WebPage.Choices {
+        waitOnMain(timeout: 2) {
+            let offline = Set(FUZZY.disconnectedVolumes.map(\.name.string))
+            return WebPage.Choices(
+                scopes: FUZZY.searchableScopes.map { ($0.rawValue, $0.label) },
+                drives: FUZZY.driveEngines.map { ($0.label, !offline.contains($0.label)) },
+                allDrives: FUZZY.offersAllDrivesFilter && !FUZZY.driveEngines.isEmpty,
+                // The fallbacks are the window's, for a filter never given an icon or a colour.
+                quickFilters: Defaults[.quickFilters].map {
+                    .init(name: $0.id, icon: $0.icon ?? "line.3.horizontal.decrease.circle.fill", hue: ($0.color ?? .forName($0.id)).hue)
+                },
+                folderFilters: Defaults[.folderFilters].map {
+                    .init(name: $0.id, icon: $0.icon ?? "folder.fill", hue: ($0.color ?? .forName($0.id)).hue)
+                }
+            )
+        } ?? WebPage.Choices()
     }
 
     private func isDirectory(_ path: String) -> Bool {
@@ -565,16 +632,16 @@ final class WebAccessServer: @unchecked Sendable {
 
     // MARK: Selection
 
+    /// One `p` from a checkbox, or every row a two-finger glide crossed, sent once when the fingers lift.
     private func select(_ request: HTTPRequest, sid: String) -> HTTPResponse {
-        guard let raw = request.formValue("p"), let path = Self.cleanPath(raw) else {
-            return .text("Bad request", status: 400)
-        }
+        let paths = request.form.filter { $0.name == "p" }.compactMap { Self.cleanPath($0.value) }
+        guard !paths.isEmpty else { return .text("Bad request", status: 400) }
         let on = request.formValue("on") == "true"
         lock.withLock {
             var selection = sessions[sid]?.selection ?? []
-            selection.removeAll { $0 == path }
+            selection.removeAll { paths.contains($0) }
             if on {
-                selection.append(path)
+                selection.append(contentsOf: paths)
             }
             sessions[sid]?.selection = selection
         }
@@ -881,6 +948,19 @@ final class WebAccessServer: @unchecked Sendable {
             return HTTPResponse(status: 200, headers: headers, body: .data(gzipped))
         }
         return HTTPResponse(status: 200, headers: headers, body: .data(asset.data))
+    }
+
+    /// An SF Symbol in one of the options sheet's colours (`WebPage.SymbolColor`), for light or dark.
+    private func symbol(_ request: HTTPRequest, _ name: String) -> HTTPResponse {
+        let color: CGColor? = switch request.param("c") ?? "" {
+        case "orange": WebAppArt.orange(dark: request.param("d") == "1")
+        case "gray": WebAppArt.gray(dark: request.param("d") == "1")
+        case let hue: Double(hue).flatMap { (0 ... 1).contains($0) ? WebAppArt.filterColor(hue: $0, dark: request.param("d") == "1") : nil }
+        }
+        guard let color, name.count <= 80, name.allSatisfy({ $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == ".") }),
+              let data = art.symbol(name, color: color)
+        else { return .text("Not found", status: 404) }
+        return HTTPResponse(status: 200, headers: [("Content-Type", "image/png"), ("Cache-Control", "public, max-age=604800")], body: .data(data))
     }
 
     private func iconResponse() -> HTTPResponse {

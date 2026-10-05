@@ -11,6 +11,7 @@ import AppKit
 import CoreText
 import Foundation
 import ImageIO
+import SwiftUI
 import UniformTypeIdentifiers
 
 // MARK: - WebApp
@@ -174,6 +175,21 @@ final class WebAppArt: @unchecked Sendable {
         cache.totalCostLimit = 48 << 20
     }
 
+    /// The window's filter colour (`FilterColor.accent`).
+    static func filterColor(hue: Double, dark: Bool) -> CGColor? {
+        NSColor(FilterColor(hue: hue).accent(dark: dark)).usingColorSpace(.sRGB)?.cgColor
+    }
+
+    /// Everything's orange, as the window's chip and button show it (systemOrange).
+    static func orange(dark: Bool) -> CGColor {
+        dark ? CGColor(srgbRed: 1, green: 0.624, blue: 0.039, alpha: 1) : CGColor(srgbRed: 1, green: 0.584, blue: 0, alpha: 1)
+    }
+
+    /// The page's secondary text colour (`--secondary` in cling-web.css).
+    static func gray(dark: Bool) -> CGColor {
+        dark ? CGColor(srgbRed: 0.596, green: 0.596, blue: 0.624, alpha: 1) : CGColor(srgbRed: 0.431, green: 0.431, blue: 0.451, alpha: 1)
+    }
+
     /// The Mac icon as drawn in the Dock: its rounded square with the transparent margin and shadow around it. For
     /// browsers that show an icon as it is, like Chrome's app launcher.
     func icon(size: Int) -> Data? {
@@ -234,6 +250,28 @@ final class WebAppArt: @unchecked Sendable {
         }
     }
 
+    /// An SF Symbol, 24 points square at 3x, for the options sheet: a browser has none of its own.
+    func symbol(_ name: String, color: CGColor) -> Data? {
+        let key = "sym-\(name)-\(color.components?.map { String(format: "%.3f", $0) }.joined(separator: ",") ?? "")"
+        return cached(key, needsSource: false) {
+            let scale: CGFloat = 3
+            guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 17 * scale, weight: .medium)
+                    .applying(NSImage.SymbolConfiguration(paletteColors: [NSColor(cgColor: color) ?? .gray])))
+            else { return nil }
+            let side = 24 * scale
+            return render(width: Int(side), height: Int(side), opaque: false) { context in
+                var size = image.size
+                let fit = min(1, (side - 2 * scale) / max(size.width, size.height))
+                size = CGSize(width: size.width * fit, height: size.height * fit)
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+                image.draw(in: CGRect(x: (side - size.width) / 2, y: (side - size.height) / 2, width: size.width, height: size.height))
+                NSGraphicsContext.restoreGraphicsState()
+            }
+        }
+    }
+
     /// The frame around the icon's artwork, sampled from its edge.
     private static let frameColor = CGColor(srgbRed: 0.898, green: 0.878, blue: 0.882, alpha: 1)
 
@@ -248,11 +286,11 @@ final class WebAppArt: @unchecked Sendable {
         context.draw(source, in: CGRect(x: rect.minX - 100 * scale, y: rect.minY - 100 * scale, width: 1024 * scale, height: 1024 * scale))
     }
 
-    private func cached(_ key: String, _ make: () -> Data?) -> Data? {
+    private func cached(_ key: String, needsSource: Bool = true, _ make: () -> Data?) -> Data? {
         if let hit = cache.object(forKey: key as NSString) {
             return hit as Data
         }
-        guard source != nil, let data = make() else { return nil }
+        guard source != nil || !needsSource, let data = make() else { return nil }
         cache.setObject(data as NSData, forKey: key as NSString, cost: data.count)
         return data
     }
