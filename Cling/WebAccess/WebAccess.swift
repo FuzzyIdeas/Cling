@@ -31,6 +31,8 @@ extension Defaults.Keys {
     /// Serve the Tailscale addresses over HTTPS. Off until asked for: getting the certificate puts the Mac's Tailscale
     /// name in Let's Encrypt's public certificate logs.
     static let webAccessHTTPS = Key<Bool>("webAccessHTTPS", default: false)
+    /// Downloads bigger than this many megabytes ask first on the page; 0 never asks.
+    static let webAccessConfirmDownloadsOver = Key<Int>("webAccessConfirmDownloadsOver", default: 100)
 }
 
 // MARK: - WebAddress
@@ -147,8 +149,10 @@ final class WebAccess {
         Defaults[.webAccessKey] = WebAccessServer.randomToken()
     }
 
+    /// Starts or stops the server to match the switch and the licence. A lapsed licence stops it and leaves the switch
+    /// on, so it comes back with Pro.
     func apply() {
-        guard Defaults[.webAccessEnabled] else {
+        guard Defaults[.webAccessEnabled], proactive else {
             httpServer?.stop()
             httpServer = nil
             server = nil

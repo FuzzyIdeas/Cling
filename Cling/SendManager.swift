@@ -58,6 +58,8 @@ func expirationCountdownLabel(_ seconds: TimeInterval) -> String {
 
     let id: String
     let task: Task<String, Error>
+    /// The paths the room was opened for, joined the way `send` keys them; nil once files are added.
+    var sourceKey: String?
     /// Live handle into the serving task's file list; appending here makes new receivers get the files.
     let fileList: SendFileList?
     var tempArchives: [URL]
@@ -95,6 +97,7 @@ func expirationCountdownLabel(_ seconds: TimeInterval) -> String {
     func appendFiles(_ new: [URL], temps: [URL]) {
         files.append(contentsOf: new)
         tempArchives.append(contentsOf: temps)
+        sourceKey = nil
     }
 
     /// Live "Expires in …" label relative to `now`, so the Transfers panel can tick it down.
@@ -151,6 +154,7 @@ struct PendingSend: Equatable {
     var expiryTimers: [String: Task<Void, Never>] = [:] // auto-stop timers
     var pendingTasks: [String: Task<String, Error>] = [:]
     var downloadNotifyTasks: [String: Task<Void, Never>] = [:] // debounce download notifications per room
+    var linkWaiters: [String: [@MainActor (String?) -> Void]] = [:] // `link` callers, by send key
 }
 
 extension SendManager {
@@ -248,7 +252,25 @@ extension SendManager {
 
     // MARK: - Send
 
-    func send(files: [URL], expiration: TimeInterval) {
+    /// A link to `files` for a page this Mac serves (the File server), handed to `done` once the room is open, or nil
+    /// when it couldn't be opened. The clipboard is left alone: whoever asked isn't at this Mac. Files that already
+    /// have an open room get its link. Folders are zipped without the confirmation the window asks for: the page asks
+    /// instead when the files weigh more than its download limit.
+    func link(files: [URL], expiration: TimeInterval, done: @escaping @MainActor (String?) -> Void) {
+        guard !files.isEmpty else {
+            done(nil)
+            return
+        }
+        let key = files.map(\.path).joined(separator: "|")
+        if let open = sessions.first(where: { !$0.stopped && $0.sourceKey == key }) {
+            done(open.shareURL)
+            return
+        }
+        linkWaiters[key, default: []].append(done)
+        send(files: files, expiration: expiration, copy: false)
+    }
+
+    func send(files: [URL], expiration: TimeInterval, copy: Bool = true) {
         guard !files.isEmpty else { return }
         let key = files.map(\.path).joined(separator: "|")
         guard !connectingPaths.contains(key) else { return }
@@ -277,6 +299,7 @@ extension SendManager {
                 await MainActor.run {
                     SendManager.shared.connectingPaths.remove(key)
                     SendManager.shared.pendingTasks.removeValue(forKey: key)
+                    SendManager.shared.answerLinkWaiters(key, with: nil)
                 }
                 temps.forEach { try? FileManager.default.removeItem(at: $0.deletingLastPathComponent()) }
                 throw error
@@ -292,7 +315,7 @@ extension SendManager {
                     onRoomCreated: { roomID in
                         roomIDRef.value = roomID
                         Task { @MainActor in
-                            SendManager.shared.roomCreated(roomID: roomID, files: prepared, tempArchives: temps, expiration: expiration, key: key, fileList: fileList)
+                            SendManager.shared.roomCreated(roomID: roomID, files: prepared, tempArchives: temps, expiration: expiration, key: key, fileList: fileList, copy: copy)
                         }
                     },
                     onDownloadCompleted: { count in
@@ -305,6 +328,7 @@ extension SendManager {
                     await MainActor.run {
                         SendManager.shared.connectingPaths.remove(key)
                         SendManager.shared.pendingTasks.removeValue(forKey: key)
+                        SendManager.shared.answerLinkWaiters(key, with: nil)
                     }
                     temps.forEach { try? FileManager.default.removeItem(at: $0.deletingLastPathComponent()) }
                 }
@@ -314,17 +338,30 @@ extension SendManager {
         pendingTasks[key] = task
     }
 
-    func roomCreated(roomID: String, files: [URL], tempArchives: [URL] = [], expiration: TimeInterval, key: String, fileList: SendFileList? = nil) {
+    func roomCreated(roomID: String, files: [URL], tempArchives: [URL] = [], expiration: TimeInterval, key: String, fileList: SendFileList? = nil, copy: Bool = true) {
         connectingPaths.remove(key)
-        guard let task = pendingTasks.removeValue(forKey: key) else { return }
+        guard let task = pendingTasks.removeValue(forKey: key) else {
+            answerLinkWaiters(key, with: nil)
+            return
+        }
         let expiresAt = expiration > 0 ? Date().addingTimeInterval(expiration) : nil
         let session = SendSession(id: roomID, files: files, task: task, expiresAt: expiresAt, tempArchives: tempArchives, fileList: fileList)
+        session.sourceKey = key
         sessions.append(session)
         recentSessions.insert(session, at: 0)
         trimRecentSessions()
-        session.copyLink()
-        linkCopiedTick += 1
+        if copy {
+            session.copyLink()
+            linkCopiedTick += 1
+        }
         scheduleExpiry(session)
+        answerLinkWaiters(key, with: session.shareURL)
+    }
+
+    func answerLinkWaiters(_ key: String, with link: String?) {
+        for done in linkWaiters.removeValue(forKey: key) ?? [] {
+            done(link)
+        }
     }
 
     /// Add files to an existing room. Folders are archived off-main like in `send`; the live

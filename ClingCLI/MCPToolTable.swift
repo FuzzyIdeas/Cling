@@ -23,7 +23,8 @@ extension MCPServer {
     and root (/usr, /bin, /etc, /Library, /var, /private and the like). System and root need Cling Pro. \
     External volumes are indexed separately and need Pro; a volume's index stays searchable while it is unplugged, \
     and cling_search allDrives searches all of them at once. Everything is a separate Pro index of every file on \
-    the local disks, with no ignore rules, searched alone when it is on.
+    the internal disk, with no ignore rules, searched alone when it is on: the startup volume plus any other volume \
+    on that disk that is on in Settings > Drives. External drives are never in it, whatever their toggle says.
     - What the index leaves out is decided by, in order: the global blocklist (prefix and contains rules, \
     checked first and on every scope), then gitignore-style ignore files: ~/.fsignore for home and library, one \
     per rooted scope, and a .fsignore at the root of each volume.

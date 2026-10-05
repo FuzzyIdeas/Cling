@@ -21,6 +21,8 @@ enum WebPage {
         let complete: Bool
         let downloads: [String]
         let zipURL: String
+        /// The one item's name, or how many there are, for the alert a big share link asks with.
+        let name: String
     }
 
     /// What the options sheet narrows a search to. It rides in the page's URL, so a reload keeps it.
@@ -188,7 +190,7 @@ enum WebPage {
 
     static func page(
         macName: String, appHead: String, options: Options, choices: Choices, query: String, folder: String?, results: String,
-        selectionBar: String, assetVersion: String
+        selectionBar: String, confirmOver: UInt64, assetVersion: String
     ) -> String {
         let summary = optionsSummary(options, choices: choices)
         let scope = folder.map { folder in
@@ -213,7 +215,7 @@ enum WebPage {
         <script src="/assets/htmx.min.js?v=\(assetVersion)" defer></script>
         <script src="/assets/cling-web.js?v=\(assetVersion)" defer></script>
         </head>
-        <body data-mac="\(escape(macName))">
+        <body data-mac="\(escape(macName))" data-confirm-over="\(confirmOver)">
         \(sprite)
         <main id="results" class="results">\(results)</main>
         <footer class="dock">
@@ -300,7 +302,7 @@ enum WebPage {
             """
             html += """
             <header class="crumb">\(back)<h1>\(escape(folderName(folder)))</h1>\
-            <a class="pill" href="\(escape(downloadURL(folder)))" download>\(icon("download"))<span>Download folder</span></a></header>
+            <a class="pill" href="\(escape(downloadURL(folder)))" download data-size="?">\(icon("download"))<span>Download folder</span></a></header>
             """
         case nil:
             break
@@ -351,7 +353,7 @@ enum WebPage {
         } else if kind != .none {
             #"<a class="main" href="\#(escape(viewURL(item.path)))" data-kind="\#(kind.rawValue)">"#
         } else {
-            #"<a class="main" href="\#(escape(downloadURL(item.path)))" download>"#
+            #"<a class="main" href="\#(escape(downloadURL(item.path)))" download\#(sizeAttributes(item))>"#
         }
         let close = item.offline ? "</span>" : "</a>"
 
@@ -360,7 +362,7 @@ enum WebPage {
             : #"<img class="thumb" src="/t\#(escape(encodePath(item.path)))?v=\#(item.version)" alt="" loading="lazy" decoding="async">"#
         let glyph = item.browsable ? "folder" : (item.isPackage ? "package" : "file")
         let download = item.offline ? "" : """
-        <a class="dl" href="\(escape(downloadURL(item.path)))" download aria-label="Download \(name)">\(icon("download"))</a>
+        <a class="dl" href="\(escape(downloadURL(item.path)))" download\(sizeAttributes(item)) aria-label="Download \(name)">\(icon("download"))</a>
         """
 
         // The checkbox sits in a column of its own that only selection mode opens (see cling-web.js), and the icon is
@@ -457,16 +459,19 @@ enum WebPage {
         guard let summary else { return #"<div id="selbar" class="selbar" hidden></div>"# }
         let size = formatBytes(summary.bytes) + (summary.complete ? "" : "+")
         let urls = "[" + summary.downloads.map { "\"\($0)\"" }.joined(separator: ",") + "]"
+        let sized = #" data-size="\#(summary.bytes)" data-size-label="\#(escape(formatBytes(summary.bytes)))""#
+            + (summary.complete ? "" : #" data-size-floor="1""#)
         let download = summary.count == 1
-            ? #"<a class="btn" href="\#(escape(summary.downloads[0]))" download>\#(icon("download"))<span>Download</span></a>"#
-            : #"<button class="btn" type="button" data-urls="\#(escape(urls))">\#(icon("download"))<span>Download</span></button>"#
+            ? #"<a class="btn" href="\#(escape(summary.downloads[0]))" download\#(sized) aria-label="Download">\#(icon("download"))<span>Download</span></a>"#
+            : #"<button class="btn" type="button" data-urls="\#(escape(urls))"\#(sized) aria-label="Download">\#(icon("download"))<span>Download</span></button>"#
         let zip = summary.count == 1 ? "" : """
-        <a class="btn primary" href="\(escape(summary.zipURL))" download>\(icon("zip"))<span>ZIP</span></a>
+        <a class="btn primary" href="\(escape(summary.zipURL))" download\(sized) aria-label="ZIP">\(icon("zip"))<span>ZIP</span></a>
         """
+        let link = #"<button class="btn icon" type="button" data-link="selection" data-name="\#(escape(summary.name))"\#(sized) aria-label="Share link">\#(icon("link"))</button>"#
         return """
         <div id="selbar" class="selbar">\
         <button class="count" type="button" data-opens="sheet" hx-get="/selection" hx-target="#sheet">\(summary.count) selected · \(size)</button>\
-        \(download)\(zip)\
+        \(link)\(download)\(zip)\
         <button class="clear" type="button" hx-post="/select/clear" hx-target="#selbar" hx-swap="outerHTML" aria-label="Clear selection">\(icon("x"))</button>\
         </div>
         """
@@ -481,7 +486,7 @@ enum WebPage {
             <span class="main"><span class="icon"><span class="glyph">\(icon(item.browsable ? "folder" : "file"))</span>\
             <img class="thumb" src="/t\(escape(encodePath(item.path)))?v=\(item.version)" alt="" decoding="async"></span>\
             <span class="text"><span class="name">\(name)</span><span class="meta"><span class="where">\(escape(displayFolder(item.path)))</span></span></span></span>\
-            <a class="dl" href="\(escape(downloadURL(item.path)))" download aria-label="Download \(name)">\(icon("download"))</a></li>
+            <a class="dl" href="\(escape(downloadURL(item.path)))" download\(sizeAttributes(item)) aria-label="Download \(name)">\(icon("download"))</a></li>
             """
         }.joined()
         return #"<header class="crumb"><h1>Selected</h1></header><ul class="list">"# + rows + "</ul>"
@@ -513,6 +518,12 @@ enum WebPage {
             return String(parent.dropFirst("/Volumes/".count))
         }
         return parent
+    }
+
+    /// What a download's confirmation weighs (cling-web.js): a file's size, or "?" for a folder or package, whose ZIP
+    /// is measured only when it's tapped.
+    static func sizeAttributes(_ item: WebItem) -> String {
+        item.isDir ? #" data-size="?""# : #" data-size="\#(item.size ?? 0)" data-size-label="\#(escape(formatBytes(item.size ?? 0)))""#
     }
 
     static func formatBytes(_ bytes: UInt64) -> String {
@@ -550,6 +561,7 @@ enum WebPage {
     private static let sprite = """
     <svg xmlns="http://www.w3.org/2000/svg" class="sprite">
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10.5 13.5a4 4 0 0 0 5.66 0l2.83-2.83a4 4 0 0 0-5.66-5.66L12 6.34M13.5 10.5a4 4 0 0 0-5.66 0l-2.83 2.83a4 4 0 0 0 5.66 5.66L12 17.66"/></symbol>
     <symbol id="i-zip" viewBox="0 0 24 24"><path d="M4.5 8h15v10.5a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2zM3.5 4h17v4h-17zM10 12h4"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M6 12.5l4 4L18 8"/></symbol>

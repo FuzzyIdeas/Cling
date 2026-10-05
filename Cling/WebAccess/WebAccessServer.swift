@@ -171,6 +171,12 @@ final class WebAccessServer: @unchecked Sendable {
         case unsatisfiable
     }
 
+    private enum LinkAnswer {
+        case ready(String)
+        case stillZipping
+        case failed
+    }
+
     private static let pagePolicy = "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     private static let keyCookie = "cling_key"
     private static let sessionCookie = "cling_sid"
@@ -188,6 +194,12 @@ final class WebAccessServer: @unchecked Sendable {
     }()
 
     private static let work = DispatchQueue(label: "com.lowtechguys.Cling.WebAccess.work", qos: .userInitiated, attributes: .concurrent)
+
+    // MARK: Links
+
+    /// How long a link request waits before answering that it isn't ready yet. Zipping a big folder takes minutes,
+    /// longer than a browser holds a request open; the page asks again, and the new request waits on the same send.
+    private static let linkWait: TimeInterval = 20
 
     private let coordinator: SearchCoordinator
     private let icon: Data?
@@ -319,6 +331,11 @@ final class WebAccessServer: @unchecked Sendable {
         return CGImageDestinationFinalize(destination) ? data as Data : nil
     }
 
+    private static func json(_ object: [String: Any], status: Int = 200) -> HTTPResponse {
+        let data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{}".utf8)
+        return HTTPResponse(status: status, headers: [("Content-Type", "application/json"), ("Cache-Control", "no-store")], body: .data(data))
+    }
+
     private func route(_ request: HTTPRequest) async -> HTTPResponse {
         let path = request.path
         guard ["GET", "HEAD", "POST"].contains(request.method) else {
@@ -352,6 +369,11 @@ final class WebAccessServer: @unchecked Sendable {
     private func authorizedRoute(_ request: HTTPRequest, path: String, sid: String) async -> HTTPResponse {
         if request.method == "GET" || request.method == "HEAD", path.hasPrefix("/t/") {
             return await thumbnail(request, String(path.dropFirst(2)))
+        }
+        if request.method == "POST", path == "/link" {
+            // Same guard as the other posts (blockingRoute): a cross-site form can't send this header.
+            guard request.isHTMX else { return .text("Forbidden", status: 403) }
+            return await shareLink(request, sid: sid)
         }
         return await offload { self.blockingRoute(request, path: path, sid: sid) }
     }
@@ -394,6 +416,9 @@ final class WebAccessServer: @unchecked Sendable {
         }
         if path == "/favicon.ico" || path == "/icon.png" {
             return iconResponse()
+        }
+        if path.hasPrefix("/size/") {
+            return sizeResponse(String(path.dropFirst("/size".count)))
         }
         if path.hasPrefix("/sym/"), path.hasSuffix(".png") {
             return symbol(request, String(path.dropFirst("/sym/".count).dropLast(".png".count)))
@@ -473,6 +498,7 @@ final class WebAccessServer: @unchecked Sendable {
             folder: folder,
             results: listing,
             selectionBar: selectionBar(sid: sid),
+            confirmOver: UInt64(max(0, Defaults[.webAccessConfirmDownloadsOver])) * 1_000_000,
             assetVersion: assetVersion
         )
         return .html(html)
@@ -648,6 +674,45 @@ final class WebAccessServer: @unchecked Sendable {
         return .html(selectionBar(sid: sid))
     }
 
+    /// A drop link (Send Securely) to the selection, or to the one file in `p`, opened by Cling on the Mac. Waits for
+    /// the room without holding a thread: a folder is zipped first, which can take a while.
+    private func shareLink(_ request: HTTPRequest, sid: String) async -> HTTPResponse {
+        let raw = request.formValue("sel") == "1" ? selection(sid) : request.form.filter { $0.name == "p" }.map(\.value)
+        let paths = raw.compactMap(Self.cleanPath).filter { path in item(path, isDir: nil).map { !$0.offline } ?? false }
+        guard !paths.isEmpty else { return Self.json(["error": "Nothing to share"], status: 400) }
+
+        let answer: LinkAnswer = await withCheckedContinuation { continuation in
+            let once = OnceFlag()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    SendManager.shared.link(files: paths.map { URL(fileURLWithPath: $0) }, expiration: Defaults[.defaultLinkExpiration]) { link in
+                        if once.take() {
+                            continuation.resume(returning: link.map { .ready($0) } ?? .failed)
+                        }
+                    }
+                }
+            }
+            Self.work.asyncAfter(deadline: .now() + Self.linkWait) {
+                if once.take() {
+                    continuation.resume(returning: .stillZipping)
+                }
+            }
+        }
+        switch answer {
+        case let .ready(link): return Self.json(["url": link])
+        case .stillZipping: return Self.json(["pending": true], status: 202)
+        case .failed: return Self.json(["error": "Couldn't create a link"], status: 502)
+        }
+    }
+
+    /// What a folder's or a package's ZIP will weigh, measured for up to a second, for the page to decide whether to
+    /// ask first. `floor` says the measuring ran out of time, so the size is a lower bound.
+    private func sizeResponse(_ raw: String) -> HTTPResponse {
+        guard let path = Self.cleanPath(raw), let item = item(path, isDir: nil), !item.offline else { return notFound() }
+        let size = item.isDir ? folderSize(path, within: 1) : (bytes: item.size ?? 0, complete: true)
+        return Self.json(["bytes": size.bytes, "label": WebPage.formatBytes(size.bytes), "floor": !size.complete])
+    }
+
     private func clearSelection(sid: String) -> HTTPResponse {
         lock.withLock { sessions[sid]?.selection = [] }
         // On the body: the button that asked is gone by the time the event fires, swapped out with the bar.
@@ -681,7 +746,8 @@ final class WebAccessServer: @unchecked Sendable {
             bytes: bytes,
             complete: complete,
             downloads: items.map { WebPage.downloadURL($0.path) },
-            zipURL: "/z/\(id)/" + WebPage.encodePath(zipName(for: paths))
+            zipURL: "/z/\(id)/" + WebPage.encodePath(zipName(for: paths)),
+            name: items.count == 1 ? items[0].name : "\(items.count) files"
         )
         return WebPage.selectionBar(summary)
     }
@@ -711,12 +777,13 @@ final class WebAccessServer: @unchecked Sendable {
         return "\(base.isEmpty || base == "/" ? macName : base) (\(paths.count) items).zip"
     }
 
-    /// Bytes under `path`, counted for at most a quarter of a second so a huge folder can't hold up the bar.
-    private func folderSize(_ path: String) -> (bytes: UInt64, complete: Bool) {
-        if let known = lock.withLock({ folderSizes[path] }), Date().timeIntervalSince(known.made) < 60 {
+    /// Bytes under `path`, counted for at most `within` seconds so a huge folder can't hold up the bar. A count that
+    /// ran out of time is counted again when asked to take longer.
+    private func folderSize(_ path: String, within: TimeInterval = 0.25) -> (bytes: UInt64, complete: Bool) {
+        if let known = lock.withLock({ folderSizes[path] }), Date().timeIntervalSince(known.made) < 60, known.complete || within <= 0.25 {
             return (known.bytes, known.complete)
         }
-        let deadline = Date().addingTimeInterval(0.25)
+        let deadline = Date().addingTimeInterval(within)
         var bytes: UInt64 = 0
         var complete = true
         let enumerator = FileManager.default.enumerator(at: URL(fileURLWithPath: path), includingPropertiesForKeys: [.fileSizeKey], options: [], errorHandler: { _, _ in true })

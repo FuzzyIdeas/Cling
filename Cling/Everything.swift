@@ -1,5 +1,7 @@
 import AppKit
+import Combine
 import CoreServices
+import Defaults
 import Foundation
 import Lowtech
 import OSLog
@@ -17,7 +19,7 @@ private let everythingStateFile = everythingFolder / "everything.json"
 /// What the saved index was built against. FSEvents replays changes since `eventID` on top of it; a different
 /// macOS build or a reset FSEvents database means the replay can't be trusted and the index is walked again.
 struct EverythingSnapshot: Codable {
-    /// `volumes` are filled in by the caller off the main thread: finding them reads each disk (`localVolumes`).
+    /// `volumes` are filled in by the caller off the main thread: finding them reads each disk (`internalVolumes`).
     static var current: Self {
         Self(eventID: FSEventsGetCurrentEventId(), system: FSEventsHistory.systemBuild, fseventsUUID: FSEventsHistory.fseventsUUID, volumes: [])
     }
@@ -45,7 +47,7 @@ struct EverythingSnapshot: Codable {
 
 // MARK: - EverythingIndex
 
-/// A second index of every file on the local disks, with no ignore file, blocklist or `.gitignore` applied. It
+/// A second index of every file on the internal disk, with no ignore file, blocklist or `.gitignore` applied. It
 /// lives on disk and is only in memory while Everything is on (and for `unloadDelay` after), searched instead
 /// of the normal engines, which it never touches. Nothing runs for it while it is unloaded: loading replays
 /// what changed since it was saved, and it is only walked again when that history is lost.
@@ -95,15 +97,17 @@ final class EverythingIndex {
         loading ? "loading" : walking ? "indexing" : engine != nil ? "ready" : "unloaded"
     }
 
-    /// Local disks other than the startup disk, walked as their own roots. Not a Time Machine disk, which holds copies
-    /// of what is already indexed, millions of files deep. Telling one apart reads the disk, which can take seconds on
-    /// a sleeping one, so this never runs on the main thread.
-    nonisolated static func localVolumes() -> [String] {
-        let keys: [URLResourceKey] = [.volumeIsLocalKey, .volumeIsRootFileSystemKey]
+    /// Volumes on the internal disk other than the startup one (a second partition, say), walked as their own roots,
+    /// unless turned off in Settings > Drives. Drives plugged in over USB, Thunderbolt or a card slot stay out, and
+    /// so does a Time Machine disk, which holds copies of what is already indexed, millions of files deep. Telling
+    /// one apart reads the disk, so this never runs on the main thread.
+    nonisolated static func internalVolumes() -> [String] {
+        let keys: [URLResourceKey] = [.volumeIsInternalKey, .volumeIsRemovableKey, .volumeIsRootFileSystemKey]
+        let off = Set(Defaults[.disabledVolumes].map(\.string))
         return (FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) ?? [])
             .filter { url in
-                guard url.path.hasPrefix("/Volumes/"), let values = try? url.resourceValues(forKeys: Set(keys)) else { return false }
-                return values.volumeIsLocal == true && values.volumeIsRootFileSystem != true
+                guard url.path.hasPrefix("/Volumes/"), !off.contains(url.path), let values = try? url.resourceValues(forKeys: Set(keys)) else { return false }
+                return values.volumeIsInternal == true && values.volumeIsRemovable != true && values.volumeIsRootFileSystem != true
             }
             .map(\.path)
             .filter { !isTimeMachineBackup($0) }
@@ -182,6 +186,7 @@ final class EverythingIndex {
     @ObservationIgnored private let streamQueue = DispatchQueue(label: "com.lowtechguys.Cling.everythingStream", qos: .utility)
     @ObservationIgnored private var lastBuildSearch: CFAbsoluteTime = 0
     @ObservationIgnored private var volumeObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var drivesObserver: AnyCancellable?
     /// What the loaded engine reflects, and how many paths changed since it was last written to disk.
     @ObservationIgnored private var snapshot: EverythingSnapshot?
     @ObservationIgnored private var lastEventID: UInt64 = 0
@@ -189,8 +194,8 @@ final class EverythingIndex {
 
     // MARK: Walking
 
-    /// Each top-level folder of the startup disk walks on its own task, and so does each local disk under
-    /// /Volumes. No ignore rules, `.git` folders and `.DS_Store` files stay in, and entries are appended without a
+    /// Each top-level folder of the startup disk walks on its own task, and so does each other internal volume
+    /// under /Volumes. No ignore rules, `.git` folders and `.DS_Store` files stay in, and entries are appended without a
     /// duplicate check.
     private nonisolated static func walkEverything(into engine: SearchEngine, volumes: [String], progress: @escaping @Sendable () -> Void) async {
         let (roots, topLevel) = startupDiskRoots()
@@ -219,7 +224,7 @@ final class EverythingIndex {
 
     /// The startup disk's top-level entries, with every folder a walk root. A walk never leaves the disk it starts
     /// on, which keeps /dev and other mounts out; /Volumes is left unwalked since stat on a stalled network share
-    /// there can hang, and its local disks are walked as their own roots.
+    /// there can hang, and its internal volumes are walked as their own roots.
     private nonisolated static func startupDiskRoots() -> (roots: [String], topLevel: [(String, Bool)]) {
         var rootStat = stat()
         lstat("/", &rootStat)
@@ -312,7 +317,7 @@ final class EverythingIndex {
         let url = everythingIndexFile.url
         Task.detached(priority: .background) {
             var saved = pending
-            saved.volumes = Self.localVolumes()
+            saved.volumes = Self.internalVolumes()
             engine.saveBinaryIndex(to: url)
             saved.write()
         }
@@ -340,7 +345,7 @@ final class EverythingIndex {
             var kept = saved.volumes
             var added: [String] = []
             if loaded {
-                let now = Self.localVolumes()
+                let now = Self.internalVolumes()
                 let gone = saved.volumes.filter { !now.contains($0) }
                 if !gone.isEmpty {
                     engine.removeSubtrees(gone)
@@ -392,7 +397,7 @@ final class EverythingIndex {
         let url = everythingIndexFile.url
         Task.detached(priority: priority) {
             var snapshot = start
-            snapshot.volumes = Self.localVolumes()
+            snapshot.volumes = Self.internalVolumes()
             let started = snapshot
             let t0 = CFAbsoluteTimeGetCurrent()
             await Self.walkEverything(into: fresh, volumes: started.volumes) {
@@ -457,10 +462,11 @@ final class EverythingIndex {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
         volumeObservers = []
+        drivesObserver = nil
     }
 
-    /// A disk plugged in while loaded is walked into the engine; one ejected leaves it. The saved index learns about
-    /// either when it is next loaded.
+    /// A disk plugged in or turned on in Settings > Drives while loaded is walked into the engine; one ejected or
+    /// turned off leaves it. The saved index learns about either when it is next loaded.
     private func watchVolumes(_ updater: EverythingUpdater) {
         let center = NSWorkspace.shared.notificationCenter
         volumeObservers = [
@@ -473,6 +479,7 @@ final class EverythingIndex {
                 updater.removeVolume(path)
             },
         ]
+        drivesObserver = Defaults.publisher(.disabledVolumes, options: []).sink { _ in updater.syncVolumes() }
     }
 
 }
@@ -504,15 +511,36 @@ final class EverythingUpdater: @unchecked Sendable {
         }
     }
 
-    /// Takes any disk mounted under /Volumes and keeps the local ones that aren't Time Machine's, checked here on
-    /// the updater's queue since that reads the disk.
+    /// Takes any disk mounted under /Volumes and keeps it only if `internalVolumes` would, checked here on the
+    /// updater's queue since that reads the disk.
     func addVolume(_ path: String) {
         queue.async { [self] in
-            guard !volumes.contains(path), EverythingIndex.localVolumes().contains(path) else { return }
+            guard !volumes.contains(path), EverythingIndex.internalVolumes().contains(path) else { return }
             volumes.insert(path)
             engine.appendPath(path, isDir: true)
             engine.walkDirectory(path, skipGitDirs: false, skipJunkFiles: false, dedupe: false)
             notify(eventID: 0, changes: 1)
+        }
+    }
+
+    /// Settings > Drives changed: a volume turned off leaves the engine, one turned back on is walked into it.
+    func syncVolumes() {
+        queue.async { [self] in
+            let now = Set(EverythingIndex.internalVolumes())
+            let off = volumes.subtracting(now)
+            if !off.isEmpty {
+                volumes.subtract(off)
+                engine.removeSubtrees(Array(off))
+            }
+            let on = now.subtracting(volumes).sorted()
+            for path in on {
+                volumes.insert(path)
+                engine.appendPath(path, isDir: true)
+                engine.walkDirectory(path, skipGitDirs: false, skipJunkFiles: false, dedupe: false)
+            }
+            if !off.isEmpty || !on.isEmpty {
+                notify(eventID: 0, changes: off.count + on.count)
+            }
         }
     }
 
@@ -528,7 +556,7 @@ final class EverythingUpdater: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.lowtechguys.Cling.everything", qos: .utility)
     private var pending: [FSChange] = []
     private var flushScheduled = false
-    /// The local disks under /Volumes being followed; events from anything else mounted there are ignored.
+    /// The internal volumes under /Volumes being followed; events from anything else mounted there are ignored.
     private var volumes: Set<String>
 
     private func notify(eventID: UInt64, changes: Int) {
@@ -602,7 +630,7 @@ final class EverythingUpdater: @unchecked Sendable {
         notify(eventID: maxEventID, changes: flagsByPath.count)
     }
 
-    /// Anything mounted under /Volumes that isn't a local disk being followed is left out too.
+    /// Anything mounted under /Volumes that isn't an internal volume being followed is left out too.
     private func normalized(_ raw: String) -> String? {
         guard let path = FSEventsHistory.normalized(raw) else { return nil }
         if path.hasPrefix("/Volumes/") {

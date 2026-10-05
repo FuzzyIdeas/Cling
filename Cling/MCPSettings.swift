@@ -333,8 +333,13 @@ enum MCPSettingsBridge {
         // Web Access serves this Mac's files to browsers on the network, so only the user turns it on.
         readOnly("webAccessEnabled", .webAccessEnabled, row(
             .webAccess, "", "Enable file server",
-            note: "Search and download this Mac's files from a browser on the local network or a VPN, signed in through the link or QR code in Settings.",
+            note: "Search and download this Mac's files from a browser on the local network or a VPN, signed in through the link or QR code in Settings. Needs Cling Pro: without it the server stays off whatever this says.",
             keywords: ["web access", "web", "browser", "phone", "lan", "tailscale", "server", "download"]
+        )),
+        int("webAccessConfirmDownloadsOver", .webAccessConfirmDownloadsOver, 0 ... 1_000_000, row(
+            .webAccess, "", "Confirm downloads over",
+            note: "Megabytes. A download from the file server page bigger than this asks first, in the browser, before it starts: one file, a folder's ZIP, or the selection. 0 never asks. Viewing a file or streaming a video doesn't count.",
+            keywords: ["download", "confirm", "size", "large", "limit", "mb"]
         )),
         // Getting the certificate publishes the Mac's Tailscale name, so only the user turns it on.
         readOnly("webAccessHTTPS", .webAccessHTTPS, row(

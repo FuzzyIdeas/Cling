@@ -820,7 +820,29 @@ body.selecting .pick {
     color: var(--on-accent);
 }
 
-.btn.busy {
+/* The share-link button: the icon alone */
+.btn.icon {
+    padding: 0;
+    width: 40px;
+    justify-content: center;
+}
+
+/* On a phone the selection's buttons are icons alone too, so the count keeps room for its size */
+@media (max-width: 479px) {
+    .selbar .btn {
+        width: 40px;
+        padding: 0;
+        justify-content: center;
+    }
+
+    .selbar .btn span {
+        display: none;
+    }
+}
+
+.btn.busy,
+.dl.busy,
+.main.busy {
     opacity: 0.6;
     pointer-events: none;
 }
@@ -989,4 +1011,44 @@ body.message p {
 
 body.message p + p {
     margin-top: 20px;
+}
+
+/* A question before a big download, in the middle of the screen */
+
+.alert {
+    width: min(300px, calc(100% - 48px));
+    padding: 20px 16px 16px;
+    border: 0;
+    border-radius: 16px;
+    background: var(--surface);
+    color: var(--text);
+    text-align: center;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.alert::backdrop {
+    background: rgba(0, 0, 0, 0.32);
+}
+
+.alert h2 {
+    margin: 0 0 6px;
+    font-size: 17px;
+    font-weight: 600;
+}
+
+.alert p {
+    margin: 0 0 18px;
+    color: var(--secondary);
+    font-size: 14px;
+    overflow-wrap: anywhere;
+}
+
+.alert-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.alert-buttons .btn {
+    flex: 1;
+    justify-content: center;
 }

@@ -310,6 +310,145 @@
         results.addEventListener("touchcancel", endGlide);
     }
 
+    // MARK: Large downloads
+
+    // A download over the size set in Settings > File server asks first, and so does a share link, which has the Mac
+    // zip any folder in it before the link opens. Captured on the window, so this runs before every other click
+    // handler: a declined download never reaches them, and a confirmed one goes on through them.
+    const confirmOver = Number(document.body.dataset.confirmOver) || 0;
+    let confirmedDownload = null;
+    let askDialog = null;
+
+    addEventListener("click", (event) => {
+        if (!confirmOver) return;
+        const target = event.target.closest?.("a[download][data-size], [data-urls][data-size], [data-link][data-size]");
+        if (!target || target.protocol === "blob:") return;
+        // In selection mode a tap on a row picks it (see Selection) instead of downloading it.
+        if (target.matches(".main") && document.body.classList.contains("selecting")) return;
+        if (confirmedDownload === target) {
+            confirmedDownload = null;
+            return;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        weighDownload(target);
+    }, true);
+
+    // A folder's ZIP has no size until the Mac measures it, which takes up to a second.
+    async function weighDownload(target) {
+        let { size, sizeLabel: label, sizeFloor: floor } = target.dataset;
+        if (size === "?") {
+            target.classList.add("busy");
+            try {
+                const response = await fetch("/size" + new URL(target.href).pathname.slice(2));
+                ({ bytes: size, label, floor } = await response.json());
+            } catch {
+                startDownload(target);
+                return;
+            } finally {
+                target.classList.remove("busy");
+            }
+        }
+        if (Number(size) <= confirmOver && !floor) {
+            startDownload(target);
+            return;
+        }
+        if (!askDialog) {
+            askDialog = document.createElement("dialog");
+            askDialog.className = "alert";
+            askDialog.innerHTML = `<h2></h2><p></p><div class="alert-buttons"><button class="btn" type="button" data-answer="cancel">Cancel</button><button class="btn primary" type="button" data-answer="download"></button></div>`;
+            askDialog.querySelector('[data-answer="cancel"]').addEventListener("click", () => askDialog.close());
+            document.body.append(askDialog);
+        }
+        const verb = target.dataset.link ? "Share" : "Download";
+        askDialog.querySelector("h2").textContent = floor ? `${verb} over ${label}?` : `${verb} ${label}?`;
+        askDialog.querySelector("p").textContent = downloadName(target);
+        const go = askDialog.querySelector('[data-answer="download"]');
+        go.textContent = target.dataset.link ? "Create Link" : "Download";
+        go.onclick = () => {
+            askDialog.close();
+            startDownload(target);
+        };
+        askDialog.showModal();
+    }
+
+    function startDownload(target) {
+        // The installed app saves through memory (see Downloads), and only for a tap the person made.
+        if (iosApp && target.matches("a[download]")) {
+            saveInApp([target.href]);
+            return;
+        }
+        confirmedDownload = target;
+        target.click();
+    }
+
+    function downloadName(target) {
+        if (target.dataset.name) return target.dataset.name;
+        if (target.dataset.urls) return `${JSON.parse(target.dataset.urls).length} files`;
+        const name = target.closest(".row")?.querySelector(".name")?.textContent;
+        return name || decodeURIComponent(new URL(target.href).pathname.split("/").filter(Boolean).pop() || "");
+    }
+
+    // MARK: Links
+
+    // A drop link (Send Securely in Cling) to the selection or to the file in the viewer, opened by the Mac. It can
+    // take minutes, since a folder is zipped first: the Mac answers "pending" every so often and the page asks again.
+    // By then the tap that asked can no longer open the share sheet, so the link waits in the toast for a tap of its own.
+    document.addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-link]");
+        if (!button) return;
+        event.preventDefault();
+        const body = new URLSearchParams(button.dataset.link === "selection" ? { sel: "1" } : { p: button.dataset.link });
+        button.classList.add("busy");
+        toast.show("Creating link…");
+        let message = "Couldn't create a link";
+        try {
+            let result;
+            do {
+                const response = await fetch("/link", { method: "POST", headers: { "HX-Request": "true" }, body });
+                result = await response.json();
+            } while (result.pending);
+            if (result.url) {
+                offerLink(result.url);
+                return;
+            }
+            if (result.error) message = result.error;
+        } catch (error) {
+            if (error instanceof TypeError) message = `Can't reach ${document.body.dataset.mac || "the Mac"}`;
+        } finally {
+            button.classList.remove("busy");
+        }
+        toast.show(message);
+    });
+
+    function offerLink(url) {
+        if (navigator.share) {
+            toast.show("Link ready", "Share", async () => {
+                try {
+                    await navigator.share({ url });
+                    toast.hide();
+                } catch {}
+            });
+        } else {
+            toast.show("Link ready", "Copy", async () => {
+                await copyText(url);
+                toast.show("Link copied");
+            });
+        }
+    }
+
+    async function copyText(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch {
+            const input = Object.assign(document.createElement("input"), { value: text, readOnly: true });
+            document.body.append(input);
+            input.select();
+            document.execCommand("copy");
+            input.remove();
+        }
+    }
+
     // MARK: Downloads
 
     // Download each selected file in turn. Browsers ask once before letting a page start several downloads.
@@ -429,16 +568,7 @@
     // Safari downloads to disk however big the file, and it signed in when the link or QR code was opened there.
     function tooBig(url) {
         toast.show("Too big to save in the app. Open the link in Safari.", "Copy link", async () => {
-            const absolute = new URL(url, location.href).href;
-            try {
-                await navigator.clipboard.writeText(absolute);
-            } catch {
-                const input = Object.assign(document.createElement("input"), { value: absolute, readOnly: true });
-                document.body.append(input);
-                input.select();
-                document.execCommand("copy");
-                input.remove();
-            }
+            await copyText(new URL(url, location.href).href);
             toast.show("Link copied");
         });
     }
@@ -456,27 +586,35 @@
             if (!link || !viewable.includes(link.dataset.kind) || event.metaKey || event.ctrlKey) return;
             event.preventDefault();
             const row = link.closest(".row");
-            openViewer(link.href, link.dataset.kind, row?.querySelector(".name")?.textContent || "", row?.querySelector("a.dl")?.href);
+            openViewer(link.href, link.dataset.kind, row?.querySelector(".name")?.textContent || "", row?.querySelector("a.dl"));
         });
         addEventListener("popstate", () => {
             if (viewer) closeViewer(false);
         });
     }
 
+    // `download` is the row's download link, whose size the download confirmation weighs.
     function openViewer(url, kind, name, download) {
         if (viewer) closeViewer(false);
         viewer = document.createElement("div");
         viewer.className = "viewer";
         viewer.setAttribute("role", "dialog");
         viewer.setAttribute("aria-modal", "true");
-        viewer.innerHTML = `<header class="viewer-bar"><button class="clear" type="button" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button><span class="viewer-name"></span><a class="dl" download><svg class="i" aria-hidden="true"><use href="#i-download"/></svg></a></header><div class="viewer-body"></div>`;
+        viewer.innerHTML = `<header class="viewer-bar"><button class="clear" type="button" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button><span class="viewer-name"></span><button class="clear" type="button" aria-label="Share link"><svg class="i" aria-hidden="true"><use href="#i-link"/></svg></button><a class="dl" download><svg class="i" aria-hidden="true"><use href="#i-download"/></svg></a></header><div class="viewer-body"></div>`;
         viewer.querySelector(".viewer-name").textContent = name;
         const save = viewer.querySelector("a.dl");
+        const share = viewer.querySelector('[aria-label="Share link"]');
         if (download) {
-            save.href = download;
+            save.href = download.href;
             save.setAttribute("aria-label", `Download ${name}`);
+            for (const key of ["size", "sizeLabel"]) {
+                if (download.dataset[key]) save.dataset[key] = share.dataset[key] = download.dataset[key];
+            }
+            share.dataset.link = decodeURIComponent(new URL(download.href).pathname.slice(2));
+            share.dataset.name = name;
         } else {
             save.remove();
+            share.remove();
         }
         viewer.querySelector(".clear").addEventListener("click", () => closeViewer(true));
 

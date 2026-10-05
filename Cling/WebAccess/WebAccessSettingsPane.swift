@@ -18,14 +18,28 @@ struct WebAccessSettingsPane: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Enable file server", isOn: $enabled)
+                // Shown off without Pro, though a lapsed licence leaves the setting on so the server comes back with it.
+                Toggle(isOn: Binding(get: { serving }, set: { enabled = $0 })) {
+                    HStack(spacing: 6) { Text("Enable file server"); ProBadge() }
+                }
+                .accessibilityLabel("Enable file server")
                 TextField("Port", value: portBinding, format: .number.grouping(.never))
                     .monospacedDigit()
+                LabeledContent("Confirm downloads over") {
+                    HStack(spacing: 6) {
+                        TextField("", value: $confirmOver, format: .number.grouping(.never))
+                            .labelsHidden()
+                            .monospacedDigit()
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 70)
+                        Text("MB").foregroundStyle(.secondary)
+                    }
+                }
                 ForEach(failureLines, id: \.self) { line in
                     Text(line).font(.callout).foregroundStyle(.red)
                 }
                 // Only where Tailscale would issue the certificate: anywhere else the switch could do nothing.
-                if enabled, let domain = web.certificateDomain {
+                if serving, let domain = web.certificateDomain {
                     Toggle("HTTPS on Tailscale", isOn: Binding(
                         get: { https },
                         set: { on in
@@ -36,8 +50,9 @@ struct WebAccessSettingsPane: View {
                     ))
                 }
             }
+            .disabled(!proactive)
 
-            if enabled {
+            if serving {
                 Section("Devices") {
                     if let current {
                         Picker("Network", selection: hostBinding) {
@@ -76,7 +91,7 @@ struct WebAccessSettingsPane: View {
         .scrollContentBackground(.hidden)
         // A VPN's DNS can come up after its address does.
         .onAppear {
-            if enabled {
+            if serving {
                 web.lookUpHostnames()
             }
         }
@@ -87,6 +102,11 @@ struct WebAccessSettingsPane: View {
     @Default(.webAccessKey) private var key
     @Default(.webAccessLinkHost) private var linkHost
     @Default(.webAccessHTTPS) private var https
+    @Default(.webAccessConfirmDownloadsOver) private var confirmOver
+
+    private var serving: Bool {
+        enabled && proactive
+    }
 
     private var web: WebAccess {
         WebAccess.shared
