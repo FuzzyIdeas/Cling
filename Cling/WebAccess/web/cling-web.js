@@ -79,17 +79,21 @@
 
     // MARK: Search options
 
-    // The chosen options sit in the field while their names fit whole and leave room to type, and in a row above it
-    // otherwise (.spill in the CSS).
+    // The folder being searched and the chosen options sit in the field while their names fit whole and leave room to
+    // type, and in a row above it otherwise (.spill in the CSS), the folder first.
     function fitOptions() {
         const dock = document.querySelector(".dock");
         const input = field();
         const label = document.querySelector(".opts-label");
         if (!dock || !input || !label) return;
         dock.classList.remove("spill");
-        if (!label.childElementCount) return;
-        const cut = [...label.querySelectorAll(".part > span")].some((name) => name.scrollWidth > name.clientWidth + 1);
-        if (cut || input.clientWidth < 120) dock.classList.add("spill");
+        const scope = dock.querySelector(".scope");
+        const names = [...label.querySelectorAll(".part > span"), ...(scope ? scope.querySelectorAll("span") : [])];
+        if (!names.length) return;
+        const cut = names.some((name) => name.scrollWidth > name.clientWidth + 1);
+        if (!cut && input.clientWidth >= 120) return;
+        dock.classList.add("spill");
+        dock.style.setProperty("--spill-start", scope ? `${scope.offsetWidth + 6}px` : "0px");
     }
     document.addEventListener("input", (event) => {
         if (event.target === field()) fitOptions();

@@ -596,7 +596,7 @@ body.selecting .pick {
 .dock.spill .opts-label {
     position: absolute;
     top: 0;
-    left: 0;
+    left: var(--spill-start, 0px);
     right: 0;
     height: 32px;
     gap: 6px;
@@ -617,6 +617,22 @@ body.selecting .pick {
 .opts-label .sym {
     width: 18px;
     height: 18px;
+}
+
+/* The folder spills with them, first in the row, still a link that searches everywhere instead. Measured by
+   cling-web.js, which starts the options after it. */
+.dock.spill .scope {
+    position: absolute;
+    top: 0;
+    left: 0;
+    max-width: 100%;
+    height: 32px;
+    padding: 0 8px 0 10px;
+    border-radius: 16px;
+}
+
+.dock.spill .scope:has(~ .opts.on) {
+    max-width: 60%;
 }
 
 /* An SF Symbol the Mac drew in its colour (/sym/) */

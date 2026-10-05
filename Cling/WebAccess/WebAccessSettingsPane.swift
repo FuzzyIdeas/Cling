@@ -61,11 +61,12 @@ struct WebAccessSettingsPane: View {
                             }
                         }
                         let link = current.pairingURL(port: port, key: key)
-                        HStack(spacing: 18) {
+                        VStack(spacing: 12) {
                             QRCodeView(text: link)
-                                .frame(width: 136, height: 136)
+                                .frame(width: 200, height: 200)
                             CopyablePill(value: link)
                         }
+                        .frame(maxWidth: .infinity)
                         .padding(.vertical, 4)
                     } else {
                         Text("Not connected to a network").foregroundStyle(.secondary)
