@@ -514,6 +514,7 @@ final class WebAccessServer: @unchecked Sendable {
             results: listing,
             selectionBar: selectionBar(sid: sid),
             confirmOver: UInt64(max(0, Defaults[.webAccessConfirmDownloadsOver])) * 1_000_000,
+            linkExpiration: Defaults[.defaultLinkExpiration],
             assetVersion: assetVersion
         )
         return .html(html)
@@ -705,12 +706,15 @@ final class WebAccessServer: @unchecked Sendable {
         let raw = request.formValue("sel") == "1" ? selection(sid) : request.form.filter { $0.name == "p" }.map(\.value)
         let paths = raw.compactMap(Self.cleanPath).filter { path in item(path, isDir: nil).map { !$0.offline } ?? false }
         guard !paths.isEmpty else { return Self.json(["error": "Nothing to share"], status: 400) }
+        // From the page's send dialog, one of the steps the Mac's own Send Securely offers.
+        let expiration = request.formValue("exp").flatMap(TimeInterval.init).flatMap { LINK_EXPIRATION_PRESETS.contains($0) ? $0 : nil }
+            ?? Defaults[.defaultLinkExpiration]
 
         let answer: LinkAnswer = await withCheckedContinuation { continuation in
             let once = OnceFlag()
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    SendManager.shared.link(files: paths.map { URL(fileURLWithPath: $0) }, expiration: Defaults[.defaultLinkExpiration]) { link in
+                    SendManager.shared.link(files: paths.map { URL(fileURLWithPath: $0) }, expiration: expiration) { link in
                         if once.take() {
                             let expires = link.flatMap { link in SendManager.shared.sessions.first { $0.shareURL == link }?.expiresAt }
                             continuation.resume(returning: link.map { .ready($0, expires: expires) } ?? .failed)
@@ -796,7 +800,8 @@ final class WebAccessServer: @unchecked Sendable {
             complete: complete,
             downloads: items.map { WebPage.downloadURL($0.path) },
             zipURL: "/z/\(id)/" + WebPage.encodePath(zipName(for: paths)),
-            name: items.count == 1 ? items[0].name : "\(items.count) files"
+            name: items.count == 1 ? items[0].name : "\(items.count) files",
+            folder: items.count == 1 && items[0].browsable
         )
         return WebPage.selectionBar(summary)
     }

@@ -573,9 +573,9 @@
 
     // MARK: Large downloads
 
-    // A download over the size set in Settings > File server asks first, and so does a share link, which has the Mac
-    // zip any folder in it before the link opens. Captured on the window, so this runs before every other click
-    // handler: a declined download never reaches them, and a confirmed one goes on through them.
+    // A download over the size set in Settings > File server asks first (a share link always asks, in its send dialog,
+    // see Links). Captured on the window, so this runs before every other click handler: a declined download never
+    // reaches them, and a confirmed one goes on through them.
     const confirmOver = Number(document.body.dataset.confirmOver) || 0;
     let confirmedDownload = null;
     let askDialog = null;
@@ -588,7 +588,7 @@
             return;
         }
         if (!confirmOver) return;
-        const target = event.target.closest?.("a[download][data-size], [data-urls][data-size], [data-link][data-size]");
+        const target = event.target.closest?.("a[download][data-size], [data-urls][data-size]");
         if (!target || target.protocol === "blob:") return;
         // In selection mode a tap on a row picks it (see Selection) instead of downloading it.
         if (target.matches(".main") && document.body.classList.contains("selecting")) return;
@@ -625,15 +625,13 @@
         if (!askDialog) {
             askDialog = document.createElement("dialog");
             askDialog.className = "alert";
-            askDialog.innerHTML = `<h2></h2><p></p><div class="alert-buttons"><button class="btn" type="button" data-answer="cancel">Cancel</button><button class="btn primary" type="button" data-answer="download"></button></div>`;
+            askDialog.innerHTML = `<h2></h2><p></p><div class="alert-buttons"><button class="btn" type="button" data-answer="cancel">Cancel</button><button class="btn primary" type="button" data-answer="download">Download</button></div>`;
             askDialog.querySelector('[data-answer="cancel"]').addEventListener("click", () => askDialog.close());
             document.body.append(askDialog);
         }
-        const amount = floor ? `over ${label}` : label;
-        askDialog.querySelector("h2").textContent = target.dataset.link ? `Send ${amount} securely?` : `Download ${amount}?`;
+        askDialog.querySelector("h2").textContent = `Download ${floor ? `over ${label}` : label}?`;
         askDialog.querySelector("p").textContent = downloadName(target);
         const go = askDialog.querySelector('[data-answer="download"]');
-        go.textContent = target.dataset.link ? "Create Link" : "Download";
         go.onclick = () => {
             askDialog.close();
             startDownload(target);
@@ -660,16 +658,81 @@
 
     // MARK: Links
 
-    // A drop link (Send Securely in Cling) to the selection or to the file in the viewer, opened by the Mac. It can
-    // take minutes, since a folder is zipped first: the Mac answers "pending" every so often and the page asks again.
-    // By then the tap that asked can no longer open the share sheet, so the link waits in the toast for a tap of its own.
-    document.addEventListener("click", async (event) => {
+    // A drop link (Send Securely in Cling) to a row's file, the selection or the file in the viewer, opened by the Mac
+    // for as long as the send dialog says. It can take minutes, since a folder is zipped first: the Mac answers
+    // "pending" every so often and the page asks again. By then the tap that asked can no longer open the share sheet,
+    // so the link waits in the toast for a tap of its own.
+    document.addEventListener("click", (event) => {
         const button = event.target.closest("[data-link]");
         if (!button) return;
         event.preventDefault();
         // Already asked: the toast says how it's going.
         if (button.classList.contains("busy")) return;
+        askToSend(button);
+    });
+
+    // The Mac's steps, from a minute to three days, and the one Settings > Send Securely starts at.
+    const expiries = (document.body.dataset.expiries || "3600").split(",").map(Number);
+    const expiryLabel = (seconds, short) => {
+        const [n, unit] = seconds < 3600 ? [seconds / 60, "minute"] : seconds < 86400 ? [seconds / 3600, "hour"] : [seconds / 86400, "day"];
+        return short ? `${n}${unit[0]}` : `${n} ${unit}${n === 1 ? "" : "s"}`;
+    };
+    let sendDialog = null;
+
+    function askToSend(button) {
+        if (!sendDialog) {
+            sendDialog = document.createElement("dialog");
+            sendDialog.className = "alert send";
+            sendDialog.setAttribute("aria-labelledby", "send-title");
+            // Focus lands on the dialog rather than a button, so nothing wears a focus ring on a phone, and Return
+            // creates the link the way the Mac's default button does.
+            sendDialog.autofocus = true;
+            sendDialog.tabIndex = -1;
+            sendDialog.addEventListener("keydown", (event) => {
+                if (event.key !== "Enter" || event.target.closest("button")) return;
+                event.preventDefault();
+                sendDialog.querySelector('[data-answer="create"]').click();
+            });
+            sendDialog.innerHTML = `<header><span class="send-badge"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg></span><div><h2 id="send-title"></h2><p class="send-meta"><span class="send-name"></span><span class="send-size"></span></p></div></header><div class="expiry"><div class="expiry-head"><span>Link expires</span><output></output></div><input type="range" min="0" max="${expiries.length - 1}" step="1" aria-label="Link expiration"><div class="expiry-ends"><span>${expiryLabel(expiries[0], true)}</span><span>${expiryLabel(expiries.at(-1), true)}</span></div></div><div class="alert-buttons"><button class="btn" type="button" data-answer="cancel">Cancel</button><button class="btn primary" type="button" data-answer="create">Create Link</button></div>`;
+            const slider = sendDialog.querySelector("input");
+            const shown = sendDialog.querySelector("output");
+            slider.addEventListener("input", () => {
+                shown.textContent = expiryLabel(expiries[slider.value]);
+            });
+            sendDialog.querySelector('[data-answer="cancel"]').addEventListener("click", () => sendDialog.close());
+            document.body.append(sendDialog);
+        }
+        const { name = "", count, sizeLabel, sizeFloor } = button.dataset;
+        sendDialog.querySelector("h2").textContent = count ? "Send files securely" : "folder" in button.dataset ? "Send folder securely" : "Send file securely";
+        sendDialog.querySelector(".send-name").textContent = name;
+        const describe = (label, floor) => {
+            sendDialog.querySelector(".send-size").textContent = label ? label + (floor ? "+" : "") : "";
+        };
+        describe(sizeLabel, sizeFloor);
+        // A folder's ZIP has no size until the Mac measures it, which takes up to a second.
+        if (button.dataset.size === "?") {
+            const asked = button;
+            fetch("/size" + button.dataset.link.split("/").map(encodeURIComponent).join("/"))
+                .then((response) => response.json())
+                .then(({ label, floor }) => sendDialog.open && sendDialog.asking === asked && describe(label, floor))
+                .catch(() => {});
+        }
+        sendDialog.asking = button;
+
+        const slider = sendDialog.querySelector("input");
+        const start = Number(document.body.dataset.expiry) || 3600;
+        slider.value = Math.max(0, expiries.indexOf(start));
+        slider.dispatchEvent(new Event("input"));
+        sendDialog.querySelector('[data-answer="create"]').onclick = () => {
+            sendDialog.close();
+            createLink(button, expiries[slider.value]);
+        };
+        sendDialog.showModal();
+    }
+
+    async function createLink(button, expiry) {
         const body = new URLSearchParams(button.dataset.link === "selection" ? { sel: "1" } : { p: button.dataset.link });
+        body.set("exp", expiry);
         button.classList.add("busy");
         toast.show("Creating link…");
         let message = "Couldn't create a link";
@@ -690,7 +753,7 @@
             button.classList.remove("busy");
         }
         toast.show(message);
-    });
+    }
 
     // When it stops working, which the person it's sent to will want to know.
     function expiresIn(expires) {

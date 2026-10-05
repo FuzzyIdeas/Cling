@@ -254,8 +254,8 @@ extension SendManager {
 
     /// A link to `files` for a page this Mac serves (the File server), handed to `done` once the room is open, or nil
     /// when it couldn't be opened. The clipboard is left alone: whoever asked isn't at this Mac. Files that already
-    /// have an open room get its link. Folders are zipped without the confirmation the window asks for: the page asks
-    /// instead when the files weigh more than its download limit.
+    /// have an open room get its link. Folders are zipped without the confirmation the window asks for: the page's own
+    /// send dialog, which shows the size, is where that's decided.
     func link(files: [URL], expiration: TimeInterval, done: @escaping @MainActor (String?) -> Void) {
         guard !files.isEmpty else {
             done(nil)
@@ -263,6 +263,8 @@ extension SendManager {
         }
         let key = files.map(\.path).joined(separator: "|")
         if let open = sessions.first(where: { !$0.stopped && $0.sourceKey == key }) {
+            // Asked again with an expiry of its own: the same link now lasts that long from now.
+            reschedule(open, to: expiration)
             done(open.shareURL)
             return
         }

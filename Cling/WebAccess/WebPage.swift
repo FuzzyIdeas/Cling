@@ -21,8 +21,10 @@ enum WebPage {
         let complete: Bool
         let downloads: [String]
         let zipURL: String
-        /// The one item's name, or how many there are, for the alert a big share link asks with.
+        /// The one item's name, or how many there are, for the send dialog.
         let name: String
+        /// The one item is a folder, which the send dialog names as one.
+        let folder: Bool
     }
 
     /// What the options sheet narrows a search to. It rides in the page's URL, so a reload keeps it.
@@ -190,8 +192,11 @@ enum WebPage {
 
     static func page(
         macName: String, appHead: String, options: Options, choices: Choices, query: String, folder: String?, results: String,
-        selectionBar: String, confirmOver: UInt64, assetVersion: String
+        selectionBar: String, confirmOver: UInt64, linkExpiration: TimeInterval, assetVersion: String
     ) -> String {
+        // The send dialog's slider steps through the same expiries as the Mac's, starting at its default.
+        let expiries = LINK_EXPIRATION_PRESETS.map { String(Int($0)) }.joined(separator: ",")
+        let expiry = Int(LINK_EXPIRATION_PRESETS[nearestExpirationPresetIndex(linkExpiration)])
         let summary = optionsSummary(options, choices: choices)
         let scope = folder.map { folder in
             """
@@ -215,7 +220,7 @@ enum WebPage {
         <script src="/assets/htmx.min.js?v=\(assetVersion)" defer></script>
         <script src="/assets/cling-web.js?v=\(assetVersion)" defer></script>
         </head>
-        <body data-mac="\(escape(macName))" data-confirm-over="\(confirmOver)">
+        <body data-mac="\(escape(macName))" data-confirm-over="\(confirmOver)" data-expiries="\(expiries)" data-expiry="\(expiry)">
         \(sprite)
         <main id="results" class="results">\(results)</main>
         <aside id="preview" class="preview" aria-label="Preview"></aside>
@@ -395,9 +400,13 @@ enum WebPage {
             ? ""
             : #"<img class="thumb" src="/t\#(escape(encodePath(item.path)))?v=\#(item.version)" alt="" loading="lazy" decoding="async">"#
         let glyph = item.browsable ? "folder" : (item.isPackage ? "package" : "file")
-        let download = item.offline ? "" : """
-        <a class="dl" href="\(escape(downloadURL(item.path)))" download\(sizeAttributes(item)) aria-label="Download \(name)">\(icon("download"))</a>
-        """
+        let download = item.offline
+            ? ""
+            : """
+            <a class="dl" href="\(escape(downloadURL(item.path)))" download\(sizeAttributes(item)) aria-label="Download \(name)">\(icon("download"))</a>\
+            <button class="dl send" type="button" data-link="\(escape(item.path))" data-name="\(name)"\(sizeAttributes(item))\
+            \(item.browsable ? " data-folder" : "") aria-label="Send \(name) securely">\(icon("send"))</button>
+            """
 
         // The checkbox sits in a column of its own that only selection mode opens (see cling-web.js), and the icon is
         // part of the row's link, so tapping it opens the file like the rest of the row.
@@ -515,7 +524,8 @@ enum WebPage {
         let zip = summary.count == 1 ? "" : """
         <a class="btn primary" href="\(escape(summary.zipURL))" download\(sized) aria-label="ZIP">\(icon("zip"))<span>ZIP</span></a>
         """
-        let link = #"<button class="btn icon" type="button" data-link="selection" data-name="\#(escape(summary.name))"\#(sized) aria-label="Send securely">\#(icon("send"))</button>"#
+        let kind = summary.count > 1 ? #" data-count="\#(summary.count)""# : summary.folder ? " data-folder" : ""
+        let link = #"<button class="btn icon" type="button" data-link="selection" data-name="\#(escape(summary.name))"\#(sized)\#(kind) aria-label="Send securely">\#(icon("send"))</button>"#
         return """
         <div id="selbar" class="selbar">\
         <button class="count" type="button" data-opens="sheet" hx-get="/selection" hx-target="#sheet"><span>\(summary.count) selected · \(size)</span>\(icon("up"))</button>\

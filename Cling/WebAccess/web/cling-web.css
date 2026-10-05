@@ -343,8 +343,12 @@ body.selecting .pick {
     place-items: center;
     width: 46px;
     height: 46px;
+    padding: 0;
+    border: 0;
     border-radius: 50%;
+    background: none;
     color: var(--accent);
+    font: inherit;
 }
 
 .dl:active {
@@ -1301,6 +1305,107 @@ body.message .relink .btn {
 .alert-buttons .btn {
     flex: 1;
     justify-content: center;
+}
+
+/* Send securely: what goes, and for how long the link works, laid out like the Mac's send popover */
+
+.alert.send {
+    width: min(320px, calc(100% - 48px));
+    padding: 18px 16px 16px;
+    text-align: left;
+}
+
+.alert.send:focus {
+    outline: none;
+}
+
+.send header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.send header > div {
+    flex: 1;
+    min-width: 0;
+}
+
+.send-badge {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: var(--on-accent);
+}
+
+.send-badge .i {
+    width: 19px;
+    height: 19px;
+    stroke-width: 2;
+}
+
+.alert.send h2 {
+    margin: 0 0 2px;
+}
+
+.alert .send-meta {
+    display: flex;
+    margin: 0;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow-wrap: normal;
+}
+
+.send-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.send-size {
+    flex: none;
+}
+
+.send-size:not(:empty)::before {
+    content: "·";
+    margin: 0 0.4em;
+}
+
+.expiry {
+    margin-bottom: 20px;
+}
+
+.expiry-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--secondary);
+}
+
+.expiry output {
+    color: var(--accent);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.expiry input {
+    display: block;
+    width: 100%;
+    margin: 12px 0 6px;
+    accent-color: var(--accent);
+}
+
+.expiry-ends {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--tertiary);
 }
 
 /* A phone on its side uses its whole width: only the notch's side keeps clear (cling-web.js zeroes the other inset). */
