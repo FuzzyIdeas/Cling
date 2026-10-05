@@ -158,7 +158,7 @@ private struct CopyableValueRow: View {
 
 // MARK: - CopyablePill
 
-private struct CopyablePill: View {
+struct CopyablePill: View {
     let value: String
 
     var body: some View {

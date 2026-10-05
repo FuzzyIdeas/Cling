@@ -34,6 +34,7 @@ PANE_FILES = [
     "Cling/InterfacePicker.swift",
     "Cling/Filters.swift",
     "Cling/ScriptPickerView.swift",
+    "Cling/WebAccess/WebAccessSettingsPane.swift",
 ]
 
 # Keys a pane binds that the bridge deliberately does not take, and where they go instead.
@@ -51,6 +52,8 @@ NOT_EXPOSED = {
     "mcpEnabled": "the agent switch; an agent reads it through cling_status and only the user turns it on",
     "searchHintsManuallyEnabled": "bookkeeping, set alongside showSearchHints",
     "searchBarPillOrigin": "where the pinned search field sits, set by dragging it; the Style preview only shows it",
+    "webAccessPort": "where the web server listens; only the user moves it, alongside the switch",
+    "webAccessKey": "the key that signs a browser in to this Mac's files; it never goes to an agent",
 }
 
 # Top-level CLI commands with no MCP tool.

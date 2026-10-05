@@ -329,6 +329,13 @@ enum MCPSettingsBridge {
         // MCP. Readable so an agent can see why a script was refused, and never writable here: the switch
         // would otherwise be one the thing it gates could turn on for itself.
         readOnly("mcpAllowScripts", .mcpAllowScripts, row(.mcp, "MCP", "Allow agents to write arbitrary scripts")),
+
+        // Web Access serves this Mac's files to browsers on the network, so only the user turns it on.
+        readOnly("webAccessEnabled", .webAccessEnabled, row(
+            .webAccess, "", "Enable file server",
+            note: "Search and download this Mac's files from a browser on the local network or a VPN, signed in through the link or QR code in Settings.",
+            keywords: ["web access", "web", "browser", "phone", "lan", "tailscale", "server", "download"]
+        )),
     ]
 
     @MainActor static var keysByName: [String: MCPSettingKey] {
@@ -488,7 +495,7 @@ extension MCPSettingsBridge {
         MCPSettingKey(name: name, type: "bool", allowed: nil, row: row) {
             Defaults[key] ? "true" : "false"
         } write: { _ in
-            "\(name) can only be changed by the user, in Cling Settings, MCP."
+            "\(name) can only be changed by the user, in Cling Settings, \(row.pane?.title ?? "MCP")."
         }
     }
 

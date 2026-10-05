@@ -96,7 +96,7 @@ struct SidebarIcon: View {
 // MARK: - SettingsCategory
 
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case general, interface, actionBar, shortcuts, apps, search, volumes, filters, scripts, mcp, exclusions, licenseAndUpdates, about
+    case general, interface, actionBar, shortcuts, apps, search, volumes, filters, scripts, mcp, webAccess, exclusions, licenseAndUpdates, about
 
     var id: String {
         rawValue
@@ -114,6 +114,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .filters: "Filters"
         case .scripts: "Scripts"
         case .mcp: "MCP"
+        case .webAccess: "File server"
         case .exclusions: "Excluded Paths"
         case .licenseAndUpdates: "License & updates"
         case .about: "About"
@@ -132,6 +133,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .filters: "line.3.horizontal.decrease.circle"
         case .scripts: "terminal"
         case .mcp: "sparkles"
+        case .webAccess: "network"
         case .exclusions: "eye.slash"
         case .licenseAndUpdates: "key"
         case .about: "info.circle"
@@ -150,6 +152,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .filters: .sage
         case .scripts: .plum
         case .mcp: .mutedTeal
+        case .webAccess: .dustyBlue
         case .exclusions: .terracotta
         case .licenseAndUpdates: .ochre
         case .about: .dustyRose
@@ -235,6 +238,7 @@ struct SettingsView: View {
                     sidebarRow(.apps)
                     sidebarRow(.scripts)
                     sidebarRow(.mcp)
+                    sidebarRow(.webAccess)
                 }
                 Section("Support") {
                     sidebarRow(.licenseAndUpdates)
@@ -272,6 +276,7 @@ struct SettingsView: View {
         case .filters: FiltersSettingsPane()
         case .scripts: ScriptsSettingsPane()
         case .mcp: MCPSettingsPane()
+        case .webAccess: WebAccessSettingsPane()
         case .exclusions: ExclusionsSettingsPane()
         case .licenseAndUpdates: LicenseAndUpdatesSettingsPane()
         case .about: AboutSettingsPane()

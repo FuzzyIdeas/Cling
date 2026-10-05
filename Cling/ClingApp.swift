@@ -144,6 +144,7 @@ class AppDelegate: LowtechProAppDelegate {
             // how to ask for permission rather than guessing.
             MCPInstaller.writeServerCard()
             MCPInstaller.migrateInstalledClients()
+            WebAccess.shared.start()
         }
 
         if !SWIFTUI_PREVIEW {
