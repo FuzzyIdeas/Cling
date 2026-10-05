@@ -156,6 +156,8 @@ final class WebAccessServer: @unchecked Sendable {
 
     private struct Session {
         var selection: [String] = []
+        /// What Clear took away, for its Undo.
+        var cleared: [String] = []
         var lastSeen = Date()
     }
 
@@ -172,7 +174,7 @@ final class WebAccessServer: @unchecked Sendable {
     }
 
     private enum LinkAnswer {
-        case ready(String)
+        case ready(String, expires: Date?)
         case stillZipping
         case failed
     }
@@ -347,6 +349,11 @@ final class WebAccessServer: @unchecked Sendable {
         if path.hasPrefix("/pair/") {
             return pair(request, String(path.dropFirst("/pair/".count)))
         }
+        // The link pasted on the signed-out page: the whole URL, or only its key.
+        if path == "/pair", let link = request.param("link")?.trimmingCharacters(in: .whitespacesAndNewlines) {
+            let candidate = link.components(separatedBy: "/pair/").last?.components(separatedBy: CharacterSet(charactersIn: "/?#")).first ?? link
+            return pair(request, candidate)
+        }
         if let response = await appRoute(request, path: path) {
             return response
         }
@@ -355,7 +362,7 @@ final class WebAccessServer: @unchecked Sendable {
             if request.isHTMX {
                 return HTTPResponse(status: 401).header("HX-Refresh", "true")
             }
-            return .html(WebPage.message(title: "Not signed in", body: "Open the link from Settings > File server in Cling on your Mac, or scan its QR code.", assetVersion: assetVersion), status: 401)
+            return .html(WebPage.message(title: "Not signed in", body: "Open the link from Settings > File server in Cling on your Mac, or scan its QR code.", assetVersion: assetVersion, signIn: true), status: 401)
         }
 
         let (sid, isNew) = session(for: request)
@@ -395,6 +402,7 @@ final class WebAccessServer: @unchecked Sendable {
             switch path {
             case "/select": return select(request, sid: sid)
             case "/select/clear": return clearSelection(sid: sid)
+            case "/select/undo": return undoClear(sid: sid)
             default: return .text("Not found", status: 404)
             }
         }
@@ -427,7 +435,7 @@ final class WebAccessServer: @unchecked Sendable {
     }
 
     private func notFound() -> HTTPResponse {
-        .html(WebPage.message(title: "Not found", body: "", assetVersion: assetVersion), status: 404)
+        .html(WebPage.message(title: "Not found", body: "", assetVersion: assetVersion, home: true), status: 404)
     }
 
     // MARK: Auth and sessions
@@ -457,7 +465,12 @@ final class WebAccessServer: @unchecked Sendable {
 
     private func pair(_ request: HTTPRequest, _ candidate: String) -> HTTPResponse {
         guard constantTimeEqual(candidate, key) else {
-            return .html(WebPage.message(title: "This link has expired", body: "Get the new one from Settings > File server in Cling on your Mac.", assetVersion: assetVersion), status: 401)
+            // An installed app opens the link it was added with, so after signing in again with a new one it keeps
+            // asking for the old one: already signed in, that goes straight to the search.
+            if authorized(request) {
+                return HTTPResponse.redirect("/")
+            }
+            return .html(WebPage.message(title: "This link has expired", body: "Get the new one from Settings > File server in Cling on your Mac.", assetVersion: assetVersion, signIn: true), status: 401)
         }
         return HTTPResponse.redirect("/")
             .header("Set-Cookie", "\(Self.keyCookie)=\(candidate); Path=/; Max-Age=\(Self.cookieAge); HttpOnly; SameSite=Lax")
@@ -592,10 +605,20 @@ final class WebAccessServer: @unchecked Sendable {
         }
 
         let nextURL = more ? WebPage.resultsURL(query: q, folder: folder, from: wanted, options: options) : nil
+        let searching = !query.isEmpty || filtering
         if from > 0 {
-            return WebPage.rows(items, selected: selected, webkit: webkit) + WebPage.moreSentinel(nextURL)
+            let browsing = folder != nil && !searching
+            return WebPage.rows(items, selected: selected, webkit: webkit, browsing: browsing) + WebPage.moreSentinel(nextURL)
         }
-        return WebPage.listing(header: header, items: items, selected: selected, webkit: webkit, next: nextURL, searching: !query.isEmpty || filtering, problem: problem)
+        // Nothing found with options on: say which, with a way to search without them.
+        var narrowed: (names: String, clearURL: String)?
+        if items.isEmpty, searching, !options.params.isEmpty {
+            let names = WebPage.optionsNames(options, choices: searchChoices())
+            if !names.isEmpty {
+                narrowed = (names, WebPage.pageURL(query: q, folder: folder))
+            }
+        }
+        return WebPage.listing(header: header, items: items, selected: selected, webkit: webkit, next: nextURL, searching: searching, problem: problem, narrowed: narrowed)
     }
 
     /// What the options sheet offers, read from the search window's own state: the scopes it searches (the free ones
@@ -687,7 +710,8 @@ final class WebAccessServer: @unchecked Sendable {
                 MainActor.assumeIsolated {
                     SendManager.shared.link(files: paths.map { URL(fileURLWithPath: $0) }, expiration: Defaults[.defaultLinkExpiration]) { link in
                         if once.take() {
-                            continuation.resume(returning: link.map { .ready($0) } ?? .failed)
+                            let expires = link.flatMap { link in SendManager.shared.sessions.first { $0.shareURL == link }?.expiresAt }
+                            continuation.resume(returning: link.map { .ready($0, expires: expires) } ?? .failed)
                         }
                     }
                 }
@@ -699,7 +723,12 @@ final class WebAccessServer: @unchecked Sendable {
             }
         }
         switch answer {
-        case let .ready(link): return Self.json(["url": link])
+        case let .ready(link, expires):
+            var answer: [String: Any] = ["url": link]
+            if let expires {
+                answer["expires"] = Int(expires.timeIntervalSince1970)
+            }
+            return Self.json(answer)
         case .stillZipping: return Self.json(["pending": true], status: 202)
         case .failed: return Self.json(["error": "Couldn't create a link"], status: 502)
         }
@@ -714,9 +743,27 @@ final class WebAccessServer: @unchecked Sendable {
     }
 
     private func clearSelection(sid: String) -> HTTPResponse {
-        lock.withLock { sessions[sid]?.selection = [] }
+        lock.withLock {
+            if let selection = sessions[sid]?.selection, !selection.isEmpty {
+                sessions[sid]?.cleared = selection
+            }
+            sessions[sid]?.selection = []
+        }
         // On the body: the button that asked is gone by the time the event fires, swapped out with the bar.
         return HTTPResponse.html(selectionBar(sid: sid)).header("HX-Trigger", #"{"cling:cleared": {"target": "body"}}"#)
+    }
+
+    /// Puts back what Clear took away, after anything selected since. The page gets the bar and the paths to check.
+    private func undoClear(sid: String) -> HTTPResponse {
+        let restored: [String] = lock.withLock {
+            guard var session = sessions[sid] else { return [] }
+            let back = session.cleared.filter { !session.selection.contains($0) }
+            session.selection = back + session.selection
+            session.cleared = []
+            sessions[sid] = session
+            return back
+        }
+        return Self.json(["bar": selectionBar(sid: sid), "paths": restored])
     }
 
     private func selectionSheet(_ request: HTTPRequest, sid: String) -> HTTPResponse {
@@ -858,7 +905,7 @@ final class WebAccessServer: @unchecked Sendable {
     }
 
     private func unreadable() -> HTTPResponse {
-        .html(WebPage.message(title: "Cling can't read this file", body: "", assetVersion: assetVersion), status: 403)
+        .html(WebPage.message(title: "Cling can't read this file", body: "", assetVersion: assetVersion, home: true), status: 403)
     }
 
     // MARK: ZIP
@@ -884,7 +931,7 @@ final class WebAccessServer: @unchecked Sendable {
             do {
                 archive = try ZipArchive(items: items)
             } catch {
-                return .html(WebPage.message(title: "Too many files to zip (more than \(ZipArchive.maxEntries.formatted()))", body: "", assetVersion: assetVersion), status: 413)
+                return .html(WebPage.message(title: "Too many files to zip (more than \(ZipArchive.maxEntries.formatted()))", body: "", assetVersion: assetVersion, home: true), status: 413)
             }
             lock.withLock {
                 plans = plans.filter { Date().timeIntervalSince($0.value.made) < 600 }

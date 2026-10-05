@@ -153,34 +153,95 @@
         field()?.blur();
     });
 
+    // A sheet follows a drag down from its top, the handle or anywhere while its list is scrolled to the top, and
+    // closes past a third of its height or with a flick, as iOS sheets do.
+    document.addEventListener("touchstart", (event) => {
+        const sheet = event.target.closest("dialog.sheet[open]");
+        if (!sheet || event.touches.length !== 1) return;
+        const touch = event.touches[0];
+        let drag = { y: touch.clientY, last: touch.clientY, time: event.timeStamp, speed: 0, active: false };
+        const move = (moveEvent) => {
+            const y = moveEvent.touches[0].clientY;
+            const dy = y - drag.y;
+            if (!drag.active) {
+                if (dy <= 0 || sheet.scrollTop > 0) return finish();
+                if (dy < 10) return;
+                drag.active = true;
+            }
+            moveEvent.preventDefault();
+            drag.speed = (y - drag.last) / Math.max(1, moveEvent.timeStamp - drag.time);
+            drag.last = y;
+            drag.time = moveEvent.timeStamp;
+            sheet.style.transform = `translateY(${dy}px)`;
+        };
+        const finish = () => {
+            removeEventListener("touchmove", move);
+            removeEventListener("touchend", finish);
+            removeEventListener("touchcancel", finish);
+            if (!drag?.active) return;
+            const dy = drag.last - drag.y;
+            const close = dy > sheet.offsetHeight / 3 || (dy > 40 && drag.speed > 0.5);
+            drag = null;
+            sheet.style.transition = "transform 0.22s ease";
+            sheet.style.transform = close ? "translateY(100%)" : "";
+            setTimeout(() => {
+                sheet.style.transition = "";
+                if (close) {
+                    sheet.close();
+                    sheet.style.transform = "";
+                }
+            }, 220);
+        };
+        addEventListener("touchmove", move, { passive: false });
+        addEventListener("touchend", finish);
+        addEventListener("touchcancel", finish);
+    }, { passive: true });
+
     // MARK: Toast
 
-    // One line over the dock for what a download is doing, with up to one action and a close button.
+    // One line over the dock for what a download is doing, with up to one action and a close button. While a file is
+    // open in the viewer it sits at the viewer's foot instead, since the viewer covers the dock.
     const toast = (() => {
         let element;
-        const show = (text, action, onAction, onClose) => {
+        // Where it belongs right now: called again when the viewer opens or closes.
+        const place = () => {
+            if (!element) return;
+            if (viewer) {
+                if (element.parentElement !== viewer) viewer.append(element);
+            } else if (element.parentElement !== document.querySelector(".dock")) {
+                document.querySelector(".dock")?.prepend(element);
+            }
+        };
+        let timer;
+        // `hideAfter` (ms) for a confirmation that needs no answer; anything else stays until it's dealt with.
+        const show = (text, action, onAction, onClose, hideAfter) => {
+            clearTimeout(timer);
+            if (hideAfter) timer = setTimeout(() => hide(), hideAfter);
             if (!element) {
                 element = document.createElement("div");
                 element.className = "toast";
                 element.setAttribute("role", "status");
                 element.innerHTML = `<span class="toast-text"></span><button class="btn primary" type="button"></button><button class="clear" type="button" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>`;
-                document.querySelector(".dock")?.prepend(element);
             }
+            place();
             element.querySelector(".toast-text").textContent = text;
             const button = element.querySelector(".btn");
             button.hidden = !action;
             button.textContent = action || "";
             button.onclick = onAction || null;
-            element.querySelector(".clear").onclick = () => {
+            const close = element.querySelector(".clear");
+            close.setAttribute("aria-label", onClose ? "Cancel" : "Dismiss");
+            close.onclick = () => {
                 onClose?.();
                 hide();
             };
             element.hidden = false;
         };
         const hide = () => {
+            clearTimeout(timer);
             if (element) element.hidden = true;
         };
-        return { show, hide };
+        return { show, hide, place };
     })();
 
     // MARK: Selection
@@ -314,6 +375,78 @@
         results.addEventListener("touchcancel", endGlide);
     }
 
+    // Tells the Mac `paths` are now selected (`on`) or not, and shows the bar it answers with.
+    function postSelection(paths, on) {
+        const body = new URLSearchParams();
+        for (const path of paths) body.append("p", path);
+        body.append("on", on ? "true" : "false");
+        return fetch("/select", { method: "POST", headers: { "HX-Request": "true", "Content-Type": "application/x-www-form-urlencoded" }, body })
+            .then((response) => (response.ok ? response.text() : Promise.reject(new Error(`HTTP ${response.status}`))))
+            .then(replaceBar);
+    }
+
+    function replaceBar(html) {
+        const bar = document.getElementById("selbar");
+        if (!bar) return;
+        bar.outerHTML = html;
+        window.htmx?.process(document.getElementById("selbar"));
+    }
+
+    // Select All while selecting (and ⌘A on a computer) picks every row loaded so far; with all of them picked it
+    // reads Deselect All and clears them.
+    const allBoxes = () => [...document.querySelectorAll("#results .pick input:not(:disabled)")];
+    function syncSelectAll() {
+        const button = document.querySelector("[data-select-all]");
+        if (!button) return;
+        const boxes = allBoxes();
+        button.textContent = boxes.length && boxes.every((box) => box.checked) ? "Deselect All" : "Select All";
+        button.disabled = !boxes.length;
+    }
+    function selectAll() {
+        const boxes = allBoxes();
+        const on = !(boxes.length && boxes.every((box) => box.checked));
+        const changed = boxes.filter((box) => box.checked !== on);
+        if (!changed.length) return;
+        for (const box of changed) box.checked = on;
+        syncSelectAll();
+        postSelection(changed.map(pathOf).filter(Boolean), on).catch(() => {
+            for (const box of changed) box.checked = !on;
+            syncSelectAll();
+            toast.show(`Can't reach ${document.body.dataset.mac || "the Mac"}`);
+        });
+    }
+    document.addEventListener("click", (event) => {
+        if (event.target.closest("[data-select-all]")) selectAll();
+    });
+    document.addEventListener("change", (event) => {
+        if (event.target.matches(".pick input")) syncSelectAll();
+    });
+    document.addEventListener("htmx:after:swap", syncSelectAll);
+    document.addEventListener("htmx:after:request", syncSelectAll);
+
+    // A row of the selection sheet leaves the selection, the list and the results' box at once.
+    document.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-unselect]");
+        if (!button) return;
+        const path = button.dataset.unselect;
+        const row = button.closest(".row");
+        row.hidden = true;
+        postSelection([path], false)
+            .then(() => {
+                row.remove();
+                for (const box of document.querySelectorAll(".pick input")) {
+                    if (pathOf(box) === path) box.checked = false;
+                }
+                syncSelectAll();
+                const sheet = document.getElementById("sheet");
+                if (sheet?.open && !sheet.querySelector(".row")) sheet.close();
+            })
+            .catch(() => {
+                row.hidden = false;
+                toast.show(`Can't reach ${document.body.dataset.mac || "the Mac"}`);
+            });
+    });
+
     // MARK: Large downloads
 
     // A download over the size set in Settings > File server asks first, and so does a share link, which has the Mac
@@ -324,6 +457,12 @@
     let askDialog = null;
 
     addEventListener("click", (event) => {
+        // Downloading, or started a moment ago in a browser tab (see Downloads): a second tap would fetch a second copy.
+        if (event.target.closest?.("a[download], [data-urls], [data-link]")?.matches(".busy, .started")) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return;
+        }
         if (!confirmOver) return;
         const target = event.target.closest?.("a[download][data-size], [data-urls][data-size], [data-link][data-size]");
         if (!target || target.protocol === "blob:") return;
@@ -364,8 +503,8 @@
             askDialog.querySelector('[data-answer="cancel"]').addEventListener("click", () => askDialog.close());
             document.body.append(askDialog);
         }
-        const verb = target.dataset.link ? "Share" : "Download";
-        askDialog.querySelector("h2").textContent = floor ? `${verb} over ${label}?` : `${verb} ${label}?`;
+        const amount = floor ? `over ${label}` : label;
+        askDialog.querySelector("h2").textContent = target.dataset.link ? `Send ${amount} securely?` : `Download ${amount}?`;
         askDialog.querySelector("p").textContent = downloadName(target);
         const go = askDialog.querySelector('[data-answer="download"]');
         go.textContent = target.dataset.link ? "Create Link" : "Download";
@@ -402,6 +541,8 @@
         const button = event.target.closest("[data-link]");
         if (!button) return;
         event.preventDefault();
+        // Already asked: the toast says how it's going.
+        if (button.classList.contains("busy")) return;
         const body = new URLSearchParams(button.dataset.link === "selection" ? { sel: "1" } : { p: button.dataset.link });
         button.classList.add("busy");
         toast.show("Creating link…");
@@ -413,7 +554,7 @@
                 result = await response.json();
             } while (result.pending);
             if (result.url) {
-                offerLink(result.url);
+                offerLink(result.url, result.expires);
                 return;
             }
             if (result.error) message = result.error;
@@ -425,18 +566,30 @@
         toast.show(message);
     });
 
-    function offerLink(url) {
+    // When it stops working, which the person it's sent to will want to know.
+    function expiresIn(expires) {
+        if (!expires) return "";
+        const minutes = Math.max(1, Math.round((expires * 1000 - Date.now()) / 60000));
+        const plural = (n, unit) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+        if (minutes < 55) return ` · expires in ${minutes} min`;
+        const hours = Math.round(minutes / 60);
+        if (hours < 36) return ` · expires in ${plural(hours, "hour")}`;
+        return ` · expires in ${plural(Math.round(hours / 24), "day")}`;
+    }
+
+    function offerLink(url, expires) {
+        const ready = "Link ready" + expiresIn(expires);
         if (navigator.share) {
-            toast.show("Link ready", "Share", async () => {
+            toast.show(ready, "Share", async () => {
                 try {
                     await navigator.share({ url });
                     toast.hide();
                 } catch {}
             });
         } else {
-            toast.show("Link ready", "Copy", async () => {
+            toast.show(ready, "Copy", async () => {
                 await copyText(url);
-                toast.show("Link copied");
+                toast.show("Link copied", null, null, null, 2500);
             });
         }
     }
@@ -454,6 +607,18 @@
     }
 
     // MARK: Downloads
+
+    // In a browser tab the browser downloads it and shows its own progress, so the button only rests for a moment, long
+    // enough that a second tap doesn't start a second copy. After the download confirmation, which goes first.
+    if (!iosApp) {
+        addEventListener("click", (event) => {
+            const link = event.target.closest?.("a[download]");
+            if (!link || link.protocol === "blob:" || event.defaultPrevented) return;
+            if (link.matches(".main") && document.body.classList.contains("selecting")) return;
+            link.classList.add("started");
+            setTimeout(() => link.classList.remove("started"), 3000);
+        }, true);
+    }
 
     // Download each selected file in turn. Browsers ask once before letting a page start several downloads.
     document.addEventListener("click", async (event) => {
@@ -491,7 +656,9 @@
 
     // Past this, holding the files in memory risks iOS closing the app. Safari's own downloads have no such limit.
     const inAppLimit = 512 * 1024 * 1024;
-    let saving = null;
+    // What is downloading: one batch at a time, which a download started meanwhile joins rather than replacing it, so
+    // they all reach the share sheet together. `urls` grows while it runs.
+    let batch = null;
 
     const fileName = (response, url) => {
         const header = response.headers.get("Content-Disposition") || "";
@@ -500,50 +667,108 @@
         return decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).pop() || "download");
     };
 
-    const percent = (done, total) => (total ? ` · ${Math.floor((done / total) * 100)}%` : "");
+    const nameOf = (url) => decodeURIComponent(new URL(url, location.href).pathname.split("/").filter(Boolean).pop() || "download");
+    const megabytes = (bytes) => `${(bytes / 1e6).toFixed(bytes < 1e7 ? 1 : 0)} MB`;
+    const progress = (done, total) => (total ? ` · ${Math.floor((done / total) * 100)}%` : ` · ${megabytes(done)}`);
 
-    async function saveInApp(urls) {
-        saving?.abort();
-        const controller = new AbortController();
-        saving = controller;
+    // Every button that downloads `url`, in the results and in the viewer, shows how far it got and takes no taps until
+    // it's done. `fraction` is null while the size isn't known (a folder's ZIP).
+    function markDownloading(url, fraction) {
+        const href = new URL(url, location.href).href;
+        for (const button of document.querySelectorAll("a[download]")) {
+            if (button.href !== href) continue;
+            button.classList.toggle("busy", fraction !== undefined);
+            button.classList.toggle("sized", typeof fraction === "number");
+            if (typeof fraction === "number") button.style.setProperty("--progress", fraction.toFixed(3));
+        }
+    }
+
+    function saveInApp(urls) {
+        if (batch) {
+            const fresh = urls.filter((url) => !batch.urls.includes(url));
+            batch.urls.push(...fresh);
+            for (const url of fresh) markDownloading(url, null);
+            return;
+        }
+        batch = { urls: [...urls], controller: new AbortController() };
+        for (const url of urls) markDownloading(url, null);
+        download(batch);
+    }
+
+    async function download(current) {
+        const { urls, controller } = current;
+        const cancel = () => controller.abort();
         const files = [];
+        // Over the limit on their own or with what's already held, or failed: left out, while the rest still reach the
+        // share sheet, and said afterwards.
+        const tooLarge = [];
+        const failed = [];
         try {
-            for (const [index, url] of urls.entries()) {
-                const response = await fetch(url, { signal: controller.signal });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const name = fileName(response, url);
-                const total = Number(response.headers.get("Content-Length")) || 0;
+            for (let index = 0; index < urls.length; index++) {
+                const url = urls[index];
+                const label = (name) => (urls.length > 1 ? `Downloading ${index + 1} of ${urls.length}` : `Downloading ${name}`);
                 const held = files.reduce((sum, file) => sum + file.size, 0);
-                if (held + total > inAppLimit) {
-                    controller.abort();
-                    tooBig(url);
-                    return;
+                try {
+                    const file = await fetchFile(url, held, label, controller.signal, cancel);
+                    if (file) files.push(file);
+                    else tooLarge.push(url);
+                } catch (error) {
+                    // Cancelled stops them all; anything else is this file's problem only.
+                    if (error.name === "AbortError") throw error;
+                    failed.push(url);
+                } finally {
+                    markDownloading(url, undefined);
                 }
-                const label = urls.length > 1 ? `Downloading ${index + 1} of ${urls.length}` : `Downloading ${name}`;
-                toast.show(label, null, null, () => controller.abort());
-                const reader = response.body.getReader();
-                const chunks = [];
-                let received = 0;
-                for (;;) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    chunks.push(value);
-                    received += value.length;
-                    toast.show(label + percent(received, total), null, null, () => controller.abort());
-                }
-                files.push(new File(chunks, name, { type: response.headers.get("Content-Type") || "application/octet-stream" }));
             }
-        } catch (error) {
-            if (error.name !== "AbortError") toast.show(`Couldn't download ${urls.length > 1 ? "the files" : "the file"}`);
+        } catch {
             return;
         } finally {
-            if (saving === controller) saving = null;
+            for (const url of urls) markDownloading(url, undefined);
+            if (batch === current) batch = null;
         }
-        handOver(files);
+        const leftOut = () => {
+            if (tooLarge.length) tooBig(tooLarge);
+            else if (failed.length) toast.show(failed.length > 1 ? `Couldn't download ${failed.length} files` : `Couldn't download ${nameOf(failed[0])}`);
+        };
+        if (files.length) handOver(files, leftOut);
+        else leftOut();
+    }
+
+    // One file into memory, its progress in the toast and on its buttons. Nil when it won't fit beside the `held` bytes.
+    async function fetchFile(url, held, label, signal, cancel) {
+        // Shown before the Mac answers, which for a big folder's ZIP takes a while, with Cancel right away.
+        toast.show(label(nameOf(url)), null, null, cancel);
+        const response = await fetch(url, { signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const name = fileName(response, url);
+        const total = Number(response.headers.get("Content-Length")) || 0;
+        if (held + total > inAppLimit) {
+            response.body?.cancel();
+            return null;
+        }
+        toast.show(label(name), null, null, cancel);
+        const reader = response.body.getReader();
+        const chunks = [];
+        let received = 0;
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            received += value.length;
+            // A folder's ZIP has no size up front, so it's measured as it comes.
+            if (held + received > inAppLimit) {
+                reader.cancel();
+                return null;
+            }
+            toast.show(label(name) + progress(received, total), null, null, cancel);
+            markDownloading(url, total ? received / total : null);
+        }
+        return new File(chunks, name, { type: response.headers.get("Content-Type") || "application/octet-stream" });
     }
 
     // The share sheet needs a tap of its own when the download took longer than the tap that started it counts for.
-    async function handOver(files) {
+    // `after` runs once the files are handed over.
+    async function handOver(files, after) {
         if (navigator.canShare?.({ files })) {
             try {
                 await navigator.share({ files });
@@ -551,11 +776,12 @@
             } catch (error) {
                 if (error.name === "NotAllowedError") {
                     const ready = files.length > 1 ? `${files.length} files are ready` : `${files[0].name} is ready`;
-                    toast.show(ready, "Save", () => handOver(files));
-                } else {
-                    toast.hide();
+                    toast.show(ready, "Save", () => handOver(files, after));
+                    return;
                 }
+                toast.hide();
             }
+            after?.();
             return;
         }
         for (const file of files) {
@@ -567,47 +793,81 @@
             setTimeout(() => URL.revokeObjectURL(href), 60_000);
         }
         toast.hide();
+        after?.();
     }
 
     // Safari downloads to disk however big the file, and it signed in when the link or QR code was opened there.
-    function tooBig(url) {
-        toast.show("Too big to save in the app. Open the link in Safari.", "Copy link", async () => {
-            await copyText(new URL(url, location.href).href);
-            toast.show("Link copied");
+    function tooBig(urls) {
+        const name = nameOf(urls[0]);
+        const text = urls.length > 1 ? `${urls.length} files are too big to save in the app. Open them in Safari.` : `${name} is too big to save in the app. Open the link in Safari.`;
+        toast.show(text, "Copy link", async () => {
+            await copyText(urls.map((url) => new URL(url, location.href).href).join("\n"));
+            toast.show(urls.length > 1 ? "Links copied" : "Link copied", null, null, null, 2500);
         });
     }
 
     // MARK: Viewer
 
     // In an installed app a file shown by navigating to it fills the app with no way back, so the page shows it itself,
-    // over the results, and the back swipe or Close puts it away. A browser tab keeps its own viewer and back button.
+    // over the results, and the back swipe or Close puts it away. On a phone's browser tab too, where it keeps Download
+    // and Send securely at hand; a computer's browser keeps its own viewer.
+    const inPageViewer = standalone || matchMedia("(pointer: coarse)").matches;
     const viewable = iosApp ? ["image", "video", "audio", "text", "html", "pdf"] : ["image", "video", "audio", "text", "html"];
     let viewer = null;
+    let viewerClosedAt = -Infinity;
+    // The row link shown, for stepping to the next one.
+    let viewing = null;
 
-    if (standalone) {
+    if (inPageViewer) {
         document.addEventListener("click", (event) => {
             const link = event.target.closest("a.main[data-kind]");
             if (!link || !viewable.includes(link.dataset.kind) || event.metaKey || event.ctrlKey) return;
             event.preventDefault();
-            const row = link.closest(".row");
-            openViewer(link.href, link.dataset.kind, row?.querySelector(".name")?.textContent || "", row?.querySelector("a.dl"));
+            openViewer(link);
         });
         addEventListener("popstate", () => {
             if (viewer) closeViewer(false);
         });
+        // Closing the viewer steps back over the history entry it added, onto one of htmx's, which htmx then restores
+        // by fetching the whole page again: the results came back scrolled to the top. Nothing changed under the
+        // viewer, so the page stays as it is. Either order: the viewer may still be open when htmx asks.
+        document.addEventListener("htmx:before:history:restore", (event) => {
+            if (viewer || performance.now() - viewerClosedAt < 1000) event.preventDefault();
+        });
     }
 
-    // `download` is the row's download link, whose size the download confirmation weighs.
-    function openViewer(url, kind, name, download) {
-        if (viewer) closeViewer(false);
+    // The files the viewer can step through: the viewable ones in the results, in their order.
+    const viewableLinks = () => [...document.querySelectorAll("#results a.main[data-kind]")].filter((link) => viewable.includes(link.dataset.kind));
+
+    // The next (1) or previous (-1) viewable file, shown in place: stepping through doesn't add history to walk back.
+    function step(direction) {
+        const links = viewableLinks();
+        const next = links[links.indexOf(viewing) + direction];
+        if (!next) return false;
+        openViewer(next);
+        next.scrollIntoView({ block: "nearest" });
+        return true;
+    }
+
+    // `link` is the row's link to the file; the row's download link carries the size the download confirmation weighs.
+    function openViewer(link) {
+        const url = link.href;
+        const kind = link.dataset.kind;
+        const row = link.closest(".row");
+        const name = row?.querySelector(".name")?.textContent || "";
+        const download = row?.querySelector("a.dl");
+        const replacing = !!viewer;
+        if (viewer) teardown();
+        viewing = link;
         viewer = document.createElement("div");
         viewer.className = "viewer";
         viewer.setAttribute("role", "dialog");
         viewer.setAttribute("aria-modal", "true");
-        viewer.innerHTML = `<header class="viewer-bar"><button class="clear" type="button" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button><span class="viewer-name"></span><button class="clear" type="button" aria-label="Share link"><svg class="i" aria-hidden="true"><use href="#i-link"/></svg></button><a class="dl" download><svg class="i" aria-hidden="true"><use href="#i-download"/></svg></a></header><div class="viewer-body"></div>`;
+        viewer.setAttribute("aria-label", name);
+        viewer.innerHTML = `<header class="viewer-bar"><button class="clear" type="button" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button><span class="viewer-name"></span><button class="clear" type="button" aria-label="Send securely"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg></button><a class="clear dl" download><svg class="i" aria-hidden="true"><use href="#i-download"/></svg></a></header><div class="viewer-body"></div>`;
         viewer.querySelector(".viewer-name").textContent = name;
         const save = viewer.querySelector("a.dl");
-        const share = viewer.querySelector('[aria-label="Share link"]');
+        const share = viewer.querySelector('[aria-label="Send securely"]');
         if (download) {
             save.href = download.href;
             save.setAttribute("aria-label", `Download ${name}`);
@@ -616,30 +876,135 @@
             }
             share.dataset.link = decodeURIComponent(new URL(download.href).pathname.slice(2));
             share.dataset.name = name;
+            // Already downloading in the results: the same progress here.
+            if (download.classList.contains("busy")) save.className = download.className.replace(/\bdl\b/, "clear dl");
+            save.style.cssText = download.style.cssText;
         } else {
             save.remove();
             share.remove();
         }
-        viewer.querySelector(".clear").addEventListener("click", () => closeViewer(true));
+        const close = viewer.querySelector(".clear");
+        close.addEventListener("click", () => closeViewer(true));
 
         const body = viewer.querySelector(".viewer-body");
+        const missing = () => {
+            body.replaceChildren(Object.assign(document.createElement("p"), { className: "viewer-missing", textContent: "Not found" }));
+        };
+        let zoom = null;
         if (kind === "image") {
             const image = Object.assign(document.createElement("img"), { src: url, alt: name });
+            image.addEventListener("error", missing);
             body.append(image);
-            zoomable(image, body);
+            zoom = zoomable(image, body);
         } else if (kind === "video" || kind === "audio") {
             const media = Object.assign(document.createElement(kind), { src: url, controls: true, autoplay: true, playsInline: true });
+            media.addEventListener("error", missing);
             body.append(media);
-            if (kind === "video") zoomable(media, body);
+            if (kind === "video") zoom = zoomable(media, body);
         } else if (kind === "text") {
             const pre = document.createElement("pre");
             body.append(pre);
-            fetch(url).then((r) => r.text()).then((text) => (pre.textContent = text)).catch(() => {});
+            fetch(url)
+                .then((response) => (response.ok ? response.text() : Promise.reject(response.status)))
+                .then((text) => (pre.textContent = text))
+                .catch(missing);
         } else {
             body.append(Object.assign(document.createElement("iframe"), { src: url, title: name }));
         }
+        // Text scrolls, so a pull down only closes it from the top. A PDF or a web page takes its own touches, which
+        // leaves the bar to drag it by. Only pictures and videos swipe sideways to the next file.
+        const draggable = kind === "text" ? () => body.scrollTop <= 0 : kind === "pdf" || kind === "html" ? () => false : () => !zoom?.zoomed;
+        const swipeable = kind === "image" || kind === "video" ? () => !zoom?.zoomed : () => false;
+        dismissible(viewer, body, draggable, swipeable, zoom);
         document.body.append(viewer);
-        history.pushState({ viewer: true }, "");
+        toast.place();
+        close.focus({ preventScroll: true });
+        if (!replacing) history.pushState({ viewer: true }, "");
+    }
+
+    // Down to put the viewer away, the way Photos does: the file follows the finger and shrinks a little while the
+    // results show through behind it, and letting go far enough down, or with a flick, closes it. Anywhere on the bar,
+    // and on the file itself while `canClose` says so. Sideways, while `canSwipe` says so, it goes to the next or the
+    // previous file. A gesture only counts once it has moved 10 px, so a tap that wobbles stays a tap.
+    function dismissible(viewer, body, canClose, canSwipe, zoom) {
+        let drag = null;
+        const follow = (dx, dy) => {
+            if (drag.axis === "x") {
+                body.style.transform = `translate(${dx}px, 0)`;
+                return;
+            }
+            const progress = Math.min(Math.max(dy, 0) / 500, 1);
+            body.style.transform = `translate(${dx * 0.6}px, ${Math.max(dy, 0)}px) scale(${1 - progress * 0.3})`;
+            viewer.style.setProperty("--dismiss", progress.toFixed(3));
+        };
+        const settle = (transform, dismiss, then) => {
+            body.style.transition = "transform 0.24s ease";
+            viewer.style.transition = "--dismiss 0.24s ease";
+            body.style.transform = transform;
+            viewer.style.setProperty("--dismiss", dismiss);
+            setTimeout(() => {
+                body.style.transition = viewer.style.transition = "";
+                then?.();
+            }, 240);
+        };
+        viewer.addEventListener("touchstart", (event) => {
+            if (event.touches.length !== 1) {
+                // A second finger is a pinch, not a drag.
+                if (drag?.axis) settle("", 0);
+                drag = null;
+                return;
+            }
+            const touch = event.touches[0];
+            drag = { x: touch.clientX, y: touch.clientY, last: { x: touch.clientX, y: touch.clientY, time: event.timeStamp }, speed: { x: 0, y: 0 }, axis: null, claimed: false, fromBar: !!event.target.closest(".viewer-bar") };
+        }, { passive: true });
+        viewer.addEventListener("touchmove", (event) => {
+            if (!drag || event.touches.length !== 1) return;
+            const touch = event.touches[0];
+            const dx = touch.clientX - drag.x;
+            const dy = touch.clientY - drag.y;
+            if (!drag.axis) {
+                const closing = dy > 0 && dy >= Math.abs(dx) && (drag.fromBar || canClose());
+                const swiping = Math.abs(dx) > Math.abs(dy) && !drag.fromBar && canSwipe();
+                // Held from the first movement, before the page can scroll the text instead.
+                if (!closing && !swiping && !drag.claimed) {
+                    drag = null;
+                    return;
+                }
+                drag.claimed = true;
+                event.preventDefault();
+                if (Math.hypot(dx, dy) < 10) return;
+                if (!closing && !swiping) {
+                    drag = null;
+                    return;
+                }
+                drag.axis = closing ? "y" : "x";
+                zoom?.cancelTap();
+            }
+            event.preventDefault();
+            const elapsed = Math.max(1, event.timeStamp - drag.last.time);
+            drag.speed = { x: (touch.clientX - drag.last.x) / elapsed, y: (touch.clientY - drag.last.y) / elapsed };
+            drag.last = { x: touch.clientX, y: touch.clientY, time: event.timeStamp };
+            follow(dx, dy);
+        }, { passive: false });
+        const end = () => {
+            const finished = drag;
+            drag = null;
+            if (!finished?.axis) return;
+            const dx = finished.last.x - finished.x;
+            const dy = finished.last.y - finished.y;
+            if (finished.axis === "x") {
+                const direction = dx < 0 ? 1 : -1;
+                const far = Math.abs(dx) > innerWidth / 4 || (Math.abs(dx) > 40 && Math.abs(finished.speed.x) > 0.5);
+                if (far && step(direction)) return;
+                settle("", 0);
+            } else if (dy > 140 || (dy > 40 && finished.speed.y > 0.5)) {
+                settle(`translate(0, ${innerHeight}px) scale(0.7)`, 1, () => closeViewer(true));
+            } else {
+                settle("", 0);
+            }
+        };
+        viewer.addEventListener("touchend", end);
+        viewer.addEventListener("touchcancel", end);
     }
 
     // Pinch to zoom around the fingers, drag to pan once zoomed, double-tap to zoom in or back out. The element moves
@@ -748,15 +1113,110 @@
         };
         container.addEventListener("pointerup", end);
         container.addEventListener("pointercancel", end);
+        return {
+            get zoomed() {
+                return scale > 1 || pointers.size > 1;
+            },
+            // A drag that closes the viewer isn't a tap towards a double-tap.
+            cancelTap() {
+                moved = true;
+                lastTap = { time: 0, x: 0, y: 0 };
+            },
+        };
     }
 
     // `back` when the viewer was closed with its own button, which also takes back the history entry it added.
     function closeViewer(back) {
+        const shown = viewing;
+        teardown();
+        viewerClosedAt = performance.now();
+        toast.place();
+        // Back on the row it showed. Stepping back through history resets focus to the search field once htmx has
+        // intercepted the navigation, which could bring up the keyboard, so it waits for that to finish.
+        const refocus = () => shown?.isConnected && shown.focus({ preventScroll: true });
+        refocus();
+        const leaving = back && history.state?.viewer;
+        // Also when the back swipe closed it, mid-navigation.
+        if (window.navigation && (leaving || navigation.transition)) navigation.addEventListener("navigatesuccess", refocus, { once: true });
+        else if (leaving) addEventListener("popstate", () => setTimeout(refocus), { once: true });
+        if (leaving) history.back();
+    }
+
+    function teardown() {
         for (const media of viewer.querySelectorAll("video, audio")) media.pause();
         viewer.remove();
         viewer = null;
-        if (back && history.state?.viewer) history.back();
+        viewing = null;
     }
+
+    // MARK: Navigation
+
+    // Opening a folder, going up, or leaving the folder loads another page. The search options go along, the link shows
+    // it's working, and an installed app asks the Mac first: if it doesn't answer, iOS shows its own error page, which
+    // an installed app has no way back from. The list and how far down it was are kept, so coming back to it shows it
+    // as it was, with every page that had loaded.
+    const optionNames = ["where", "filter", "folders"];
+    const keptLists = "cling:lists";
+
+    document.addEventListener("click", async (event) => {
+        const link = event.target.closest('a[href="/"], a[href^="/?"]');
+        if (!link || event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+        event.preventDefault();
+        if (link.classList.contains("busy")) return;
+        const url = new URL(link.href);
+        const form = document.getElementById("search");
+        // `data-plain` is a link that leaves the options behind on purpose.
+        if (form && !link.hasAttribute("data-plain")) {
+            const data = new FormData(form);
+            for (const name of optionNames) {
+                const value = data.get(name);
+                if (value && !url.searchParams.has(name)) url.searchParams.set(name, value);
+            }
+        }
+        link.classList.add("busy");
+        if (standalone) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 8000);
+            try {
+                await fetch(url, { method: "HEAD", cache: "no-store", signal: controller.signal });
+            } catch {
+                link.classList.remove("busy");
+                toast.show(`Can't reach ${document.body.dataset.mac || "the Mac"}`);
+                return;
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+        keepList();
+        location.assign(url);
+        // Back in the browser's cache, the page comes back as it was left, link and all.
+        addEventListener("pageshow", () => link.classList.remove("busy"), { once: true });
+    });
+
+    function keepList() {
+        if (!results) return;
+        // What the boxes show now, which the markup alone doesn't carry.
+        for (const box of results.querySelectorAll('input[type="checkbox"]')) box.toggleAttribute("checked", box.checked);
+        try {
+            const lists = JSON.parse(sessionStorage.getItem(keptLists) || "{}");
+            lists[location.href] = { html: results.innerHTML, scroll: results.scrollTop, time: Date.now() };
+            // The last few places are enough to walk back through.
+            const recent = Object.entries(lists).sort((a, b) => b[1].time - a[1].time).slice(0, 6);
+            sessionStorage.setItem(keptLists, JSON.stringify(Object.fromEntries(recent)));
+        } catch {}
+    }
+
+    // Arrived by Back: the list as it was left, unless that was long ago.
+    try {
+        const [entry] = performance.getEntriesByType("navigation");
+        const lists = JSON.parse(sessionStorage.getItem(keptLists) || "{}");
+        const kept = lists[location.href];
+        if (entry?.type === "back_forward" && kept && Date.now() - kept.time < 30 * 60 * 1000 && results) {
+            results.innerHTML = kept.html;
+            window.htmx?.process(results);
+            requestAnimationFrame(() => (results.scrollTop = kept.scroll));
+        }
+    } catch {}
 
     // MARK: Results
 
@@ -772,21 +1232,44 @@
 
     document.addEventListener("cling:cleared", () => {
         for (const box of document.querySelectorAll(".pick input:checked")) box.checked = false;
+        syncSelectAll();
+        toast.show("Selection cleared", "Undo", async () => {
+            toast.hide();
+            try {
+                const response = await fetch("/select/undo", { method: "POST", headers: { "HX-Request": "true" } });
+                const { bar, paths } = await response.json();
+                replaceBar(bar);
+                const restored = new Set(paths);
+                for (const box of document.querySelectorAll(".pick input")) {
+                    if (restored.has(pathOf(box))) box.checked = true;
+                }
+                syncSelectAll();
+            } catch {
+                toast.show(`Can't reach ${document.body.dataset.mac || "the Mac"}`);
+            }
+        }, null, 6000);
     });
 
     // A search sent while the Mac is out of reach fails as fetch fails, with a TypeError; a search a newer one
     // replaced is an AbortError, and nothing to report.
+    // The results under it are from before, so they dim until a search gets through: Try again, or on its own when the
+    // phone is back online or the app comes back to the front.
     let unreachable = false;
+    const searchAgain = () => field()?.dispatchEvent(new Event("search"));
     document.addEventListener("htmx:error", (event) => {
         if (event.detail?.error?.name !== "TypeError") return;
         unreachable = true;
-        toast.show(`Can't reach ${document.body.dataset.mac || "the Mac"}`, null, null, () => (unreachable = false));
+        results?.classList.add("stale");
+        toast.show(`Can't reach ${document.body.dataset.mac || "the Mac"}`, "Try again", searchAgain, () => (unreachable = false));
     });
-    document.addEventListener("htmx:after:request", () => {
-        if (!unreachable) return;
+    document.addEventListener("htmx:after:request", (event) => {
+        if (!unreachable || event.detail?.error) return;
         unreachable = false;
+        results?.classList.remove("stale");
         toast.hide();
     });
+    addEventListener("online", () => unreachable && searchAgain());
+    document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && unreachable && searchAgain());
 
     document.addEventListener("keydown", (event) => {
         const input = field();
@@ -795,10 +1278,21 @@
             closeViewer(true);
             return;
         }
+        if (viewer && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
+            event.preventDefault();
+            step(event.key === "ArrowRight" ? 1 : -1);
+            return;
+        }
         // The dialog closes itself on Escape; nothing behind it should react too.
         if (document.querySelector("dialog[open]")) return;
-        if (!input || event.metaKey || event.ctrlKey || event.altKey) return;
         const active = document.activeElement;
+        if (input && (event.metaKey || event.ctrlKey) && event.key === "a" && active !== input && !(active instanceof HTMLInputElement)) {
+            event.preventDefault();
+            setSelecting(true);
+            if (!allBoxes().every((box) => box.checked)) selectAll();
+            return;
+        }
+        if (!input || event.metaKey || event.ctrlKey || event.altKey) return;
         const rows = [...document.querySelectorAll("#results .row .main")];
         const index = rows.indexOf(active);
 

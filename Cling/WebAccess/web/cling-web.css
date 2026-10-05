@@ -12,8 +12,10 @@
     --accent: #2f6fe4;
     --accent-soft: rgba(47, 111, 228, 0.12);
     --on-accent: #ffffff;
-    /* Everything's colour in the window, darkened enough to read as text on white */
-    --orange: #d97000;
+    /* Everything's colour in the window, darkened enough to read as text on the field (4.5:1) */
+    --orange: #a84d00;
+    /* An unticked box's ring, dark enough to see (3:1) */
+    --unchecked: #86868b;
     --dock: rgba(245, 245, 247, 0.84);
     --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
     color-scheme: light dark;
@@ -26,6 +28,7 @@
         --text: #f5f5f7;
         --secondary: #98989f;
         --tertiary: #5c5c61;
+        --unchecked: #7c7c80;
         --separator: rgba(84, 84, 88, 0.5);
         --field: rgba(118, 118, 128, 0.24);
         --hover: rgba(118, 118, 128, 0.14);
@@ -169,13 +172,16 @@ button {
     height: 52px;
     overflow: hidden;
     opacity: 0;
+    /* Out of the keyboard's way too while the column is shut. */
+    visibility: hidden;
     cursor: pointer;
-    transition: width 0.2s ease, opacity 0.2s ease;
+    transition: width 0.2s ease, opacity 0.2s ease, visibility 0.2s;
 }
 
 body.selecting .pick {
     width: 38px;
     opacity: 1;
+    visibility: visible;
 }
 
 .pick input {
@@ -192,7 +198,7 @@ body.selecting .pick {
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    border: 1.5px solid var(--tertiary);
+    border: 1.5px solid var(--unchecked);
     transition: background-color 0.12s ease, border-color 0.12s ease;
 }
 
@@ -348,6 +354,29 @@ body.selecting .pick {
     color: var(--secondary);
 }
 
+.empty-action {
+    margin: -32px 16px 0;
+    text-align: center;
+}
+
+/* From before the Mac stopped answering. */
+.results.stale {
+    opacity: 0.5;
+    transition: opacity 0.2s ease;
+}
+
+/* An installed app's long press would offer to open the raw file, the dead end its viewer is there to avoid. */
+html[data-standalone] .results a {
+    -webkit-touch-callout: none;
+}
+
+/* An iPhone shows no status bar in landscape, so there's nothing to keep clear at the top. */
+@media (orientation: landscape) and (max-height: 500px) {
+    html[data-standalone] {
+        --edge: 0px;
+    }
+}
+
 .crumb {
     display: grid;
     grid-template-columns: 1fr auto;
@@ -375,7 +404,9 @@ body.selecting .pick {
     display: inline-flex;
     align-items: center;
     max-width: 100%;
-    margin: 0 0 2px -6px;
+    /* A 44 pt target that takes no more room than the line it sits on. */
+    min-height: 44px;
+    margin: -11px 0 -9px -6px;
     color: var(--accent);
     font-size: 15px;
     text-decoration: none;
@@ -517,6 +548,7 @@ body.selecting .pick {
 
 /* The options button: an icon, and what the search is narrowed to while it is. */
 .opts {
+    position: relative;
     flex: none;
     display: inline-flex;
     align-items: center;
@@ -531,6 +563,13 @@ body.selecting .pick {
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
+}
+
+/* 44 pt to tap, though it looks smaller inside the field. */
+.opts::after {
+    content: "";
+    position: absolute;
+    inset: -6px -4px;
 }
 
 .opts.on {
@@ -796,17 +835,62 @@ body.selecting .pick {
 .selbar .count {
     flex: 1;
     min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 3px;
     height: 40px;
     padding: 0 4px;
     border: 0;
     background: none;
+    color: var(--text);
     font-size: 15px;
     font-weight: 600;
     text-align: left;
     white-space: nowrap;
+    cursor: pointer;
+}
+
+.selbar .count span {
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* Opens the list of what's selected, upwards. */
+.selbar .count .i {
+    width: 16px;
+    height: 16px;
+    color: var(--secondary);
+}
+
+/* Select All, above the bar while selecting */
+.selecthead {
+    display: none;
+}
+
+body.selecting .selecthead {
+    display: flex;
+}
+
+.link {
+    min-height: 36px;
+    padding: 0 4px;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
     cursor: pointer;
+}
+
+.link:disabled {
+    color: var(--secondary);
+    cursor: default;
+}
+
+/* Each row of the selection sheet can leave it. */
+.sheet .row .clear {
+    margin-left: 2px;
 }
 
 .btn {
@@ -854,13 +938,81 @@ body.selecting .pick {
     .selbar .btn span {
         display: none;
     }
+
+    /* ZIP, the bar's main action, keeps its name; the bar packs a little tighter to leave the count its room. */
+    .selbar {
+        gap: 4px;
+    }
+
+    .selbar .btn.primary {
+        width: auto;
+        padding: 0 12px 0 9px;
+        gap: 4px;
+    }
+
+    .selbar .btn.primary span {
+        display: inline;
+    }
 }
 
 .btn.busy,
-.dl.busy,
-.main.busy {
+.main.busy,
+.pill.busy,
+.up.busy,
+.scope.busy,
+.started {
     opacity: 0.6;
     pointer-events: none;
+}
+
+/* Asked for and on its way: takes no more taps, and the icon breathes until the answer comes. */
+.clear.busy,
+.btn.icon.busy {
+    pointer-events: none;
+}
+
+.clear.busy .i,
+.btn.icon.busy .i {
+    animation: busy-breathe 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes busy-breathe {
+    to {
+        opacity: 0.3;
+    }
+}
+
+/* A download in progress: a ring around its button fills with --progress (0 to 1, from cling-web.js), or turns while
+   the size isn't known, and the button takes no more taps. */
+.dl.busy {
+    position: relative;
+    pointer-events: none;
+}
+
+.dl.busy .i {
+    opacity: 0.5;
+}
+
+.dl.busy::after {
+    content: "";
+    position: absolute;
+    inset: 4px;
+    border-radius: 50%;
+    background: conic-gradient(var(--accent) 90deg, var(--separator) 0);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+    animation: busy-turn 0.9s linear infinite;
+}
+
+.dl.busy.sized::after {
+    background: conic-gradient(var(--accent) calc(var(--progress, 0) * 360deg), var(--separator) 0);
+    animation: none;
+}
+
+@keyframes busy-turn {
+    to {
+        transform: rotate(1turn);
+    }
 }
 
 .clear {
@@ -936,13 +1088,38 @@ html[data-standalone] .sheet {
 
 /* A file shown over the results in an installed app, where navigating to it would leave no way back */
 
+/* How far the viewer has been dragged down towards closing, 0 to 1 (cling-web.js): the page behind shows through. */
+@property --dismiss {
+    syntax: "<number>";
+    inherits: true;
+    initial-value: 0;
+}
+
 .viewer {
     position: fixed;
     inset: 0;
     z-index: 10;
     display: flex;
     flex-direction: column;
-    background: var(--bg);
+    background: color-mix(in srgb, var(--bg) calc(100% - var(--dismiss) * 100%), transparent);
+}
+
+.viewer-bar,
+.viewer > .toast {
+    opacity: calc(1 - var(--dismiss) * 3);
+}
+
+/* The toast moves here while a file is open, since the viewer covers the dock. */
+.viewer > .toast {
+    flex: none;
+    margin: 0;
+    padding: 10px calc(12px + var(--safe-right)) calc(10px + var(--safe-bottom)) calc(12px + var(--safe-left));
+    background: var(--dock);
+    border-top: 0.5px solid var(--separator);
+}
+
+.viewer:has(> .toast:not([hidden])) .viewer-body {
+    padding-bottom: 0;
 }
 
 .viewer-bar {
@@ -969,9 +1146,22 @@ html[data-standalone] .sheet {
     flex: 1;
     min-height: 0;
     display: grid;
+    /* One cell as big as the body, so max-height: 100% on a picture means the body's height and a tall screenshot or
+       anything in landscape fits whole. */
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     place-items: center;
     overflow: auto;
     padding-bottom: var(--safe-bottom);
+}
+
+.viewer-missing {
+    color: var(--secondary);
+    font-size: 17px;
+}
+
+/* All three bar buttons are the same grey circle; Download keeps the accent colour for its icon. */
+.viewer-bar .clear.dl {
+    color: var(--accent);
 }
 
 .viewer-body img,
@@ -1027,6 +1217,32 @@ body.message p {
 
 body.message p + p {
     margin-top: 20px;
+}
+
+/* Signing in again with the link pasted from Settings > File server */
+body.message .relink {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: min(320px, 100%);
+    margin: 24px auto 0;
+}
+
+body.message .relink input {
+    height: 46px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 13px;
+    background: var(--field);
+    color: var(--text);
+    font: inherit;
+    /* 16px or more, or iOS zooms the page when the field takes focus. */
+    font-size: 17px;
+}
+
+body.message .relink .btn {
+    height: 46px;
+    justify-content: center;
 }
 
 /* A question before a big download, in the middle of the screen */

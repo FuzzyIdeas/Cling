@@ -219,6 +219,7 @@ enum WebPage {
         \(sprite)
         <main id="results" class="results">\(results)</main>
         <footer class="dock">
+        <div class="selecthead"><button class="link" type="button" data-select-all>Select All</button></div>
         \(selectionBar)
         <div class="searchrow">
         <form id="search" class="search" action="/" method="get" role="search">
@@ -241,8 +242,21 @@ enum WebPage {
         """
     }
 
-    static func message(title: String, body: String, assetVersion: String) -> String {
-        """
+    /// `signIn` adds a field for the link from Settings, the only way an installed iPhone app gets signed in again: a
+    /// scanned QR code opens Safari, whose cookies the app doesn't share. `home` adds a way back to the search, for an
+    /// error page an installed app would otherwise be stuck on.
+    static func message(title: String, body: String, assetVersion: String, signIn: Bool = false, home: Bool = false) -> String {
+        let form = signIn
+            ? """
+            <form class="relink" action="/pair" method="get">
+            <input type="text" inputmode="url" name="link" placeholder="Paste the link" aria-label="Sign-in link" required
+             autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+            <button class="btn primary" type="submit">Sign in</button>
+            </form>
+            """
+            : ""
+        let back = home ? #"<p><a class="btn" href="/">Back to search</a></p>"# : ""
+        return """
         <!doctype html>
         <html lang="en">
         <head>
@@ -256,6 +270,7 @@ enum WebPage {
         <main>
         <h1>\(escape(title))</h1>
         \(body.isEmpty ? "" : "<p>\(escape(body))</p>")
+        \(form)\(back)
         </main>
         </body>
         </html>
@@ -290,7 +305,11 @@ enum WebPage {
     // MARK: Listing
 
     /// `problem` stands in for "No results" when the search couldn't run as asked (Everything without Pro, say).
-    static func listing(header: Header?, items: [WebItem], selected: Set<String>, webkit: Bool, next: String?, searching: Bool, problem: String? = nil) -> String {
+    /// `narrowed` names the search options when they're the reason nothing was found, with the URL that drops them.
+    static func listing(
+        header: Header?, items: [WebItem], selected: Set<String>, webkit: Bool, next: String?, searching: Bool, problem: String? = nil,
+        narrowed: (names: String, clearURL: String)? = nil
+    ) -> String {
         var html = ""
         switch header {
         case .recent:
@@ -308,18 +327,30 @@ enum WebPage {
             break
         }
         if items.isEmpty {
-            let empty = if case .folder = header, !searching {
-                "Empty folder"
-            } else {
-                "No results"
+            if problem == nil, searching, let narrowed {
+                return html + """
+                <p class="empty">No results in \(escape(narrowed.names))</p>\
+                <p class="empty-action"><a class="btn" href="\(escape(narrowed.clearURL))" data-plain>Clear options</a></p>
+                """
+            }
+            let empty = switch header {
+            case .folder where !searching: "Empty folder"
+            case .recent: "No recent files"
+            default: "No results"
             }
             return html + #"<p class="empty">\#(escape(problem ?? empty))</p>"#
         }
-        return html + #"<ul class="list">"# + rows(items, selected: selected, webkit: webkit) + moreSentinel(next) + "</ul>"
+        let browsing = if case .folder = header, !searching {
+            true
+        } else {
+            false
+        }
+        return html + #"<ul class="list">"# + rows(items, selected: selected, webkit: webkit, browsing: browsing) + moreSentinel(next) + "</ul>"
     }
 
-    static func rows(_ items: [WebItem], selected: Set<String>, webkit: Bool) -> String {
-        items.map { row($0, selected: selected.contains($0.path), webkit: webkit) }.joined()
+    /// `browsing` a folder's own files, which all sit in it: the rows leave out where they are.
+    static func rows(_ items: [WebItem], selected: Set<String>, webkit: Bool, browsing: Bool = false) -> String {
+        items.map { row($0, selected: selected.contains($0.path), webkit: webkit, browsing: browsing) }.joined()
     }
 
     /// The last row asks for the next page once it scrolls into view.
@@ -328,11 +359,11 @@ enum WebPage {
         return #"<li class="more" hx-get="\#(escape(next))" hx-trigger="revealed" hx-swap="outerHTML" aria-hidden="true"></li>"#
     }
 
-    static func row(_ item: WebItem, selected: Bool, webkit: Bool) -> String {
+    static func row(_ item: WebItem, selected: Bool, webkit: Bool, browsing: Bool = false) -> String {
         let name = escape(item.name)
         let kind = item.isDir ? WebViewKind.none : WebViewKind.of(item.path, size: item.size, webkit: webkit)
 
-        var meta = [#"<span class="where">\#(escape(displayFolder(item.path)))</span>"#]
+        var meta = browsing ? [] : [#"<span class="where">\#(escape(displayFolder(item.path)))</span>"#]
         if item.offline {
             meta.append("<span>Drive not connected</span>")
         } else {
@@ -428,6 +459,20 @@ enum WebPage {
 
     /// What the options button shows while a search is narrowed: each choice's icon and name, as cling-web.js builds
     /// it when a choice changes.
+    /// The chosen options by name, "Everything · Images", for saying what a search was narrowed to.
+    static func optionsNames(_ options: Options, choices: Choices) -> String {
+        var names = [String]()
+        switch options.place {
+        case "": break
+        case "everything": names.append("Everything")
+        case "drives": names.append("External drives")
+        case let p where p.hasPrefix("scope:"): names.append(choices.scopes.first { p == "scope:\($0.value)" }?.label ?? String(p.dropFirst("scope:".count)))
+        case let p: names.append(String(p.dropFirst("drive:".count)))
+        }
+        names += [options.quickFilter, options.folderFilter].filter { !$0.isEmpty }
+        return names.joined(separator: " · ")
+    }
+
     static func optionsSummary(_ options: Options, choices: Choices) -> String {
         func part(_ symbol: String, _ label: String, everything: Bool = false) -> String {
             #"<span class="part\#(everything ? " everything" : "")">\#(symbol)<span>\#(escape(label))</span></span>"#
@@ -467,10 +512,10 @@ enum WebPage {
         let zip = summary.count == 1 ? "" : """
         <a class="btn primary" href="\(escape(summary.zipURL))" download\(sized) aria-label="ZIP">\(icon("zip"))<span>ZIP</span></a>
         """
-        let link = #"<button class="btn icon" type="button" data-link="selection" data-name="\#(escape(summary.name))"\#(sized) aria-label="Share link">\#(icon("link"))</button>"#
+        let link = #"<button class="btn icon" type="button" data-link="selection" data-name="\#(escape(summary.name))"\#(sized) aria-label="Send securely">\#(icon("send"))</button>"#
         return """
         <div id="selbar" class="selbar">\
-        <button class="count" type="button" data-opens="sheet" hx-get="/selection" hx-target="#sheet">\(summary.count) selected · \(size)</button>\
+        <button class="count" type="button" data-opens="sheet" hx-get="/selection" hx-target="#sheet"><span>\(summary.count) selected · \(size)</span>\(icon("up"))</button>\
         \(link)\(download)\(zip)\
         <button class="clear" type="button" hx-post="/select/clear" hx-target="#selbar" hx-swap="outerHTML" aria-label="Clear selection">\(icon("x"))</button>\
         </div>
@@ -486,7 +531,8 @@ enum WebPage {
             <span class="main"><span class="icon"><span class="glyph">\(icon(item.browsable ? "folder" : "file"))</span>\
             <img class="thumb" src="/t\(escape(encodePath(item.path)))?v=\(item.version)" alt="" decoding="async"></span>\
             <span class="text"><span class="name">\(name)</span><span class="meta"><span class="where">\(escape(displayFolder(item.path)))</span></span></span></span>\
-            <a class="dl" href="\(escape(downloadURL(item.path)))" download\(sizeAttributes(item)) aria-label="Download \(name)">\(icon("download"))</a></li>
+            <a class="dl" href="\(escape(downloadURL(item.path)))" download\(sizeAttributes(item)) aria-label="Download \(name)">\(icon("download"))</a>\
+            <button class="clear" type="button" data-unselect="\(escape(item.path))" aria-label="Remove \(name)">\(icon("x"))</button></li>
             """
         }.joined()
         return #"<header class="crumb"><h1>Selected</h1></header><ul class="list">"# + rows + "</ul>"
@@ -561,13 +607,14 @@ enum WebPage {
     private static let sprite = """
     <svg xmlns="http://www.w3.org/2000/svg" class="sprite">
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></symbol>
-    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10.5 13.5a4 4 0 0 0 5.66 0l2.83-2.83a4 4 0 0 0-5.66-5.66L12 6.34M13.5 10.5a4 4 0 0 0-5.66 0l-2.83 2.83a4 4 0 0 0 5.66 5.66L12 17.66"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M20.5 3.5 3.9 10.2a.6.6 0 0 0 0 1.1l6.4 2.4 2.4 6.4a.6.6 0 0 0 1.1 0zM10.3 13.7 20.5 3.5"/></symbol>
     <symbol id="i-zip" viewBox="0 0 24 24"><path d="M4.5 8h15v10.5a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2zM3.5 4h17v4h-17zM10 12h4"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M6 12.5l4 4L18 8"/></symbol>
     <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4.5 7h15M7.5 12h9M10.5 17h3"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4.5 4.5"/></symbol>
     <symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 18 8.5 12l6-6"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M7 14.5 12 9.5l5 5"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7A1.5 1.5 0 0 1 5 5.5h4l2 2h8A1.5 1.5 0 0 1 20.5 9v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3.5h6.5l4.5 4.5v11a1.5 1.5 0 0 1-1.5 1.5h-9.5A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5zM13.5 3.5V8H18"/></symbol>
     <symbol id="i-package" viewBox="0 0 24 24"><path d="M12 3.5 19.5 7.5v9L12 20.5l-7.5-4v-9zM4.5 7.5 12 11.5l7.5-4M12 11.5v9"/></symbol>
