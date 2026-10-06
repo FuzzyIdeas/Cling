@@ -65,25 +65,13 @@ struct WebAccessSettingsPane: View {
                             QRCodeView(text: link)
                                 .frame(width: 200, height: 200)
                             CopyablePill(value: link)
+                            actions.padding(.top, 6)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 4)
                     } else {
                         Text("Not connected to a network").foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        // Always through 127.0.0.1: this Mac can't reach its own address on a VPN tunnel through
-                        // Network.framework's listener, and loopback works whatever network it is on.
-                        Button("Open") {
-                            if let url = URL(string: "http://127.0.0.1:\(port)/pair/\(key)") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
-                        Button("Sign out all devices") {
-                            if confirmSignOut() {
-                                web.signOutEverywhere()
-                            }
-                        }
+                        actions.frame(maxWidth: .infinity)
                     }
                 }
             }
@@ -133,6 +121,30 @@ struct WebAccessSettingsPane: View {
         web.failures.sorted { $0.key < $1.key }.map { address, reason in
             reason == "in use" ? "Port \(port) is in use on \(address)" : "\(address): \(reason)"
         }
+    }
+
+    /// Under the link they act on, rather than in a row of their own at the section's edge.
+    private var actions: some View {
+        HStack(spacing: 8) {
+            // Always through 127.0.0.1: this Mac can't reach its own address on a VPN tunnel through
+            // Network.framework's listener, and loopback works whatever network it is on.
+            Button {
+                if let url = URL(string: "http://127.0.0.1:\(port)/pair/\(key)") {
+                    NSWorkspace.shared.open(url)
+                }
+            } label: {
+                Label("Open", systemImage: "arrow.up.forward.app")
+            }
+            Button {
+                if confirmSignOut() {
+                    web.signOutEverywhere()
+                }
+            } label: {
+                Label("Sign out all devices", systemImage: "rectangle.portrait.and.arrow.right")
+            }
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
     }
 
     /// Asked before the first certificate, since getting one publishes the Mac's name on the tailnet.

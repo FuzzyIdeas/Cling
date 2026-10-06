@@ -284,13 +284,19 @@ final class SearchBarHintBar: NSView {
     override func draw(_: NSRect) {
         NSColor.clear.setFill()
         bounds.fill(using: .copy)
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
         let text = SearchBarTextCache.shared
         var rects: [(SearchBarHint.ID, NSRect)] = []
+        // Dimmed, the keycaps fade further than the words, which still have to be read at a glance.
+        let dimmed = dims && !hovering
+        let capAlpha: CGFloat = dimmed ? 0.55 : 1
+        let textAlpha: CGFloat = dimmed ? 0.65 : 1
 
         let statusText = flashText ?? status
         let statusStyle: SearchBarTextCache.Style = flashText == nil ? .status : .flash
         let statusSize = text.size(statusText, style: statusStyle)
         let statusX = bounds.width - statusSize.width - 14
+        context.setAlpha(textAlpha)
         text.draw(
             statusText, style: statusStyle, at: NSPoint(x: statusX, y: (bounds.height - statusSize.height) / 2),
             color: flashText == nil ? .tertiaryLabelColor : .controlAccentColor
@@ -318,6 +324,7 @@ final class SearchBarHintBar: NSView {
             guard x + width <= limit else { break }
 
             let capRect = NSRect(x: x, y: (bounds.height - capHeight) / 2, width: capWidth, height: capHeight)
+            context.setAlpha(capAlpha)
             capFill.setFill()
             let capRadius: CGFloat = SearchBarMetrics.modern ? 5 : 4
             NSBezierPath(roundedRect: capRect, xRadius: capRadius, yRadius: capRadius).fill()
@@ -325,9 +332,11 @@ final class SearchBarHintBar: NSView {
                 hint.key, style: .hintKey,
                 at: NSPoint(x: capRect.midX - keySize.width / 2, y: capRect.midY - keySize.height / 2), color: .secondaryLabelColor
             )
+            context.setAlpha(textAlpha)
+            // In the key's grey: in a fainter one, no alpha left the words as readable as the key beside them.
             text.draw(
                 hint.title, style: .hintTitle,
-                at: NSPoint(x: capRect.maxX + 5, y: (bounds.height - titleSize.height) / 2), color: .tertiaryLabelColor
+                at: NSPoint(x: capRect.maxX + 5, y: (bounds.height - titleSize.height) / 2), color: .secondaryLabelColor
             )
 
             rects.append((hint.id, NSRect(x: x - 4, y: 0, width: width + 8, height: bounds.height)))
@@ -381,7 +390,7 @@ final class SearchBarHintBar: NSView {
     }
 
     private func updateDimming() {
-        alphaValue = dims && !hovering ? 0.45 : 1
+        needsDisplay = true
     }
 
     /// Entering and exiting miss a bar that grows out from under a still pointer: the row passes under it on the way

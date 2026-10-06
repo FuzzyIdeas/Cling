@@ -1322,8 +1322,9 @@
             const pre = document.createElement("pre");
             body.append(pre);
             fetch(url)
-                .then((response) => (response.ok ? response.text() : Promise.reject(response.status)))
-                .then((text) => {
+                .then((response) => (response.ok ? response.arrayBuffer() : Promise.reject(response.status)))
+                .then((buffer) => {
+                    const text = decodeText(buffer);
                     pre.textContent = text;
                     highlight(pre, text, name);
                 })
@@ -1351,18 +1352,44 @@
         return highlighting;
     }
 
-    // Extensions highlight.js doesn't know by themselves, and the language that reads them best.
-    const languages = { m: "objectivec", mm: "objectivec", fish: "bash", conf: "ini", cfg: "ini", env: "ini", xcconfig: "ini", entitlements: "xml", svg: "xml", jsonc: "json", json5: "json", jsonl: "json", mdx: "markdown" };
+    // UTF-8, or UTF-16 when the file starts with its byte order mark (an old .strings file, a .reg from Windows).
+    function decodeText(buffer) {
+        const [a, b] = new Uint8Array(buffer, 0, Math.min(2, buffer.byteLength));
+        const encoding = a === 0xff && b === 0xfe ? "utf-16le" : a === 0xfe && b === 0xff ? "utf-16be" : "utf-8";
+        return new TextDecoder(encoding).decode(buffer);
+    }
 
-    // Colours the code in `pre` by its file's extension. Past a few hundred KB highlighting takes long enough to feel,
-    // and a text file that big is mostly a log anyway.
+    // Extensions highlight.js doesn't know by themselves, and the language that reads them best.
+    const languages = { m: "objectivec", mm: "objectivec", fish: "bash", conf: "ini", cfg: "ini", env: "ini", xcconfig: "ini", entitlements: "xml", svg: "xml", jsonc: "json", json5: "json", jsonl: "json", mdx: "markdown", vue: "xml", svelte: "xml", postcss: "css", pcss: "css" };
+    // Files known by their whole name.
+    const filenames = {
+        makefile: "makefile", gnumakefile: "makefile", gemfile: "ruby", podfile: "ruby", rakefile: "ruby", brewfile: "ruby", fastfile: "ruby", appfile: "ruby", vagrantfile: "ruby",
+        ".bashrc": "bash", ".bash_profile": "bash", ".zshrc": "bash", ".zprofile": "bash", ".zshenv": "bash", ".profile": "bash",
+        ".gitconfig": "ini", ".gitmodules": "ini", ".editorconfig": "ini", ".npmrc": "ini",
+    };
+    // What a script names on its first line, `#!/usr/bin/env python3` or `#!/bin/zsh`.
+    const interpreters = { python: "python", node: "javascript", bun: "javascript", deno: "typescript", ruby: "ruby", perl: "perl", php: "php", lua: "lua", swift: "swift", bash: "bash", sh: "bash", zsh: "bash", dash: "bash", ksh: "bash", fish: "bash", make: "makefile" };
+
+    function scriptLanguage(text) {
+        if (!text.startsWith("#!")) return undefined;
+        const end = text.indexOf("\n");
+        const words = text.slice(2, end < 0 ? undefined : end).trim().split(/\s+/);
+        let program = words[0].split("/").pop();
+        if (program === "env") program = words.slice(1).find((word) => !word.startsWith("-") && !word.includes("="))?.split("/").pop();
+        return interpreters[program?.replace(/[\d.]+$/, "")];
+    }
+
+    // Colours the code in `pre` by its file's name, or else by its first line when that names the program that runs it.
+    // Past a few hundred KB highlighting takes long enough to feel, and a text file that big is mostly a log anyway.
     async function highlight(pre, text, name) {
-        const ext = name.includes(".") ? name.split(".").pop().toLowerCase() : "";
-        if (!ext || text.length > 256 * 1024) return;
+        if (text.length > 256 * 1024) return;
+        const lower = name.toLowerCase();
+        const ext = lower.includes(".") ? lower.split(".").pop() : "";
+        const candidates = [filenames[lower] || languages[ext] || ext, scriptLanguage(text)].filter(Boolean);
+        if (!candidates.length) return;
         const hljs = await highlighter();
-        const language = languages[ext] || ext;
-        const grammar = hljs?.getLanguage(language);
-        if (!grammar || grammar === hljs.getLanguage("plaintext") || !pre.isConnected) return;
+        const language = candidates.find((candidate) => hljs?.getLanguage(candidate) && hljs.getLanguage(candidate) !== hljs.getLanguage("plaintext"));
+        if (!language || !pre.isConnected) return;
         pre.innerHTML = hljs.highlight(text, { language, ignoreIllegals: true }).value;
         pre.classList.add("code");
     }

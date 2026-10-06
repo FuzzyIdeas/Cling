@@ -31,6 +31,8 @@ struct WebItem {
     let offline: Bool
     /// Flagged hidden, the way Finder hides $RECYCLE.BIN on a drive that has been in a PC.
     var hidden = false
+    /// Safe to read a little of, to see whether it's text: see `WebViewKind.of`.
+    var readable = false
 
     var name: String {
         (path as NSString).lastPathComponent
@@ -49,8 +51,10 @@ struct WebItem {
 enum WebViewKind: String {
     case image, video, audio, pdf, text, html, none
 
-    /// `webkit` is Safari or any iOS browser, which also show HEIC, TIFF and AIFF.
-    static func of(_ path: String, size: UInt64?, webkit: Bool) -> WebViewKind {
+    /// `webkit` is Safari or any iOS browser, which also show HEIC, TIFF and AIFF. `readable` lets a file whose name
+    /// doesn't settle whether it's text be read to find out: a regular file that is on the Mac, not one iCloud has
+    /// evicted (reading it would download it).
+    static func of(_ path: String, size: UInt64?, webkit: Bool, readable: Bool) -> WebViewKind {
         let ext = (path as NSString).pathExtension.lowercased()
         switch ext {
         case "jpg", "jpeg", "png", "gif", "webp", "avif", "svg", "bmp", "ico": return .image
@@ -60,14 +64,43 @@ enum WebViewKind: String {
         case "aif", "aiff", "caf": return webkit ? .audio : .none
         case "pdf": return .pdf
         case "html", "htm", "xhtml": return .html
-        case "": return .none
         default:
             // A browser shows any text as text when told it is text/plain. Past a few MB a log is better downloaded.
-            guard (size ?? 0) <= 8 << 20, let type = UTType(filenameExtension: ext) else { return .none }
+            guard (size ?? 0) <= 8 << 20 else { return .none }
+            return isText(path, ext: ext, readable: readable) ? .text : .none
+        }
+    }
+
+    static func readable(_ st: stat) -> Bool {
+        st.st_mode & S_IFMT == S_IFREG && st.st_flags & UInt32(SF_DATALESS) == 0
+    }
+
+    /// By its type where macOS knows the extension as text. By its first bytes where macOS doesn't know the extension
+    /// (most code: .vue, .styl, .slim), where there is none (Makefile, LICENSE), and where an app has claimed one that
+    /// is also code (.ts as a video, .plist as a binary list).
+    private static func isText(_ path: String, ext: String, readable: Bool) -> Bool {
+        if !ext.isEmpty, let type = UTType(filenameExtension: ext), !type.isDynamic {
+            guard !type.conforms(to: .rtf) else { return false }
             let texty = type.conforms(to: .text) || type.conforms(to: .sourceCode) || type.conforms(to: .json)
                 || type.conforms(to: .xml) || type.conforms(to: .yaml) || type.conforms(to: .commaSeparatedText)
-            return texty && !type.conforms(to: .rtf) ? .text : .none
+            if texty {
+                return true
+            }
+            guard codeExtensions.contains(ext) else { return false }
         }
+        return readable && looksLikeText(path)
+    }
+
+    /// Git's test: no NUL byte near the start. UTF-16 text is full of them, so it counts by its byte order mark.
+    private static func looksLikeText(_ path: String) -> Bool {
+        let fd = open(path, O_RDONLY | O_CLOEXEC)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var bytes = [UInt8](repeating: 0, count: 4096)
+        let count = read(fd, &bytes, bytes.count)
+        guard count >= 0 else { return false }
+        let start = bytes[..<count]
+        return start.starts(with: [0xFF, 0xFE]) || start.starts(with: [0xFE, 0xFF]) || !start.contains(0)
     }
 }
 
@@ -678,7 +711,7 @@ final class WebAccessServer: @unchecked Sendable {
         let modified = Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec))
         return WebItem(
             path: path, isDir: dir, isPackage: dir && Self.isPackage(path), size: dir ? nil : UInt64(st.st_size),
-            modified: modified, offline: false, hidden: st.st_flags & UInt32(UF_HIDDEN) != 0
+            modified: modified, offline: false, hidden: st.st_flags & UInt32(UF_HIDDEN) != 0, readable: WebViewKind.readable(st)
         )
     }
 
@@ -871,7 +904,7 @@ final class WebAccessServer: @unchecked Sendable {
         guard st.st_mode & S_IFMT == S_IFREG else { return notFound() }
 
         let size = UInt64(st.st_size)
-        let kind = download ? nil : WebViewKind.of(path, size: size, webkit: Self.isWebKit(request))
+        let kind = download ? nil : WebViewKind.of(path, size: size, webkit: Self.isWebKit(request), readable: WebViewKind.readable(st))
         let viewable = kind != nil && kind != WebViewKind.none
         let etag = "\"\(st.st_ino)-\(st.st_size)-\(st.st_mtimespec.tv_sec).\(st.st_mtimespec.tv_nsec)\""
         var headers: [(String, String)] = [

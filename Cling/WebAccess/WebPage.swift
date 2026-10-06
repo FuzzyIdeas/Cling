@@ -369,7 +369,7 @@ enum WebPage {
 
     static func row(_ item: WebItem, selected: Bool, webkit: Bool, browsing: Bool = false) -> String {
         let name = escape(item.name)
-        let kind = item.isDir ? WebViewKind.none : WebViewKind.of(item.path, size: item.size, webkit: webkit)
+        let kind = item.isDir ? WebViewKind.none : WebViewKind.of(item.path, size: item.size, webkit: webkit, readable: item.readable)
 
         var meta = browsing ? [] : [#"<span class="where">\#(escape(displayFolder(item.path)))</span>"#]
         if item.offline {
