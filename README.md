@@ -20,7 +20,7 @@
 
 ### Features
 
-- **Fuzzy search across millions of files** in under 100ms, forgiving typos: `colour` finds `color`, `seperate` finds `separate`
+- **Fuzzy search across millions of files** in under 100ms
 - **Search bar** that floats over any app like Spotlight, or sits pinned to the desktop as a small search field
 - **Quick Filters** for file types (Images, Videos, Documents, Code, PDFs, etc.) and folder restrictions
 - **Act on files instantly** with hotkeys, scripts, drag and drop, or batch rename
@@ -119,8 +119,6 @@ The most CPU-intensive operations are:
 - **Indexing**: when Cling is indexing your filesystem for the first time, it will keep the CPU busy for a few dozen seconds
 - **Following changes**: the indexes follow file changes as they happen, through FSEvents, instead of being re-indexed on a schedule
 - **Fuzzy search**: when you type in the search bar, Cling searches every index in parallel, across all cores
-
-Following changes takes about a tenth of the CPU and energy it used to, and the busiest folders that aren't indexed, like temporary files and build output, cost nothing.
 
 When Cling launches, each index catches up by replaying the file changes made since it was saved. While Cling is closed, a small background job gathers those changes every few hours, waiting for a moment when you're not using the Mac, so the next launch has less to replay. It can be turned off with *Watch file events in the background* in Settings > Search.
 
