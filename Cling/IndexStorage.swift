@@ -269,7 +269,7 @@ struct ColumnStorage<T> {
     /// Bytes of these pages that count toward the app's memory, as Activity Monitor shows it: those written to (a copied
     /// file page, or anonymous memory), in RAM or compressed. Clean pages mapped from the index file don't count, however
     /// much of the file sits in the system's file cache: they belong to the cache, which drops them when it needs the
-    /// room. Counting those put a gigabyte against an app using under a hundred megabytes.
+    /// room.
     func footprintBytes() -> Int {
         let page = Int(getpagesize())
         let pages = (length + page - 1) / page

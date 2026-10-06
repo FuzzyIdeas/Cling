@@ -251,9 +251,8 @@ struct IndexStatsView: View {
         }
     }
 
-    /// Always a decimal point, whatever the region uses: beside file counts grouped with periods, the system formatter's
-    /// decimal comma read as a mismatch. Numeric at zero too ("0 KB", not "Zero kB"), which an index that only reads its
-    /// file often is.
+    /// Always a decimal point, whatever the region uses, and numeric at zero ("0 KB", not "Zero kB"), which an index
+    /// that only reads its file often is.
     private static func size(_ bytes: Int, base: Double) -> String {
         let units = ["KB", "MB", "GB", "TB"]
         var value = Double(bytes) / base

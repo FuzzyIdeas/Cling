@@ -570,8 +570,8 @@ private func extensionTailSplits(_ q: String) -> [(head: String, tail: [UInt8])]
 /// none. Names holding the query exactly as typed are kept ahead of every typo by `typosAfterTypedMatches`.
 ///
 /// A second typo costs twice the first. Two skipped letters can drop a whole suffix, which is right for `catalogue`
-/// against `catalog.json` but also reads `canceled` as `cancel`, and every `cancel.h` on the disk then outranked the
-/// `cancelled_refunds.csv` that differs by one letter.
+/// against `catalog` but also reads `canceled` as `cancel`, and every name that is just `cancel` would then outrank
+/// the `cancelled` one that differs by a single letter.
 private func typoCost(_ typos: Int) -> Int {
     typos * (typos + 1) / 2 * SC.scoreMatch
 }
@@ -587,7 +587,7 @@ private var typoTypedReach: Int {
 
 // MARK: - TypoQuery
 
-/// A bare query read as words that may be misspelt, for the pass that finds `color.pdf` from `colour`.
+/// A bare query read as words that may be misspelt, for the pass that finds `color` from `colour`.
 ///
 /// A fuzzy match already forgives a letter left out (`occurence` finds `occurrence`). What it can't forgive is a letter
 /// the name doesn't have: one typed extra (`colour`, `catalogue`), one typed for another (`grey`, `licence`, `seperate`)
@@ -601,7 +601,7 @@ private struct TypoQuery {
         var wordStarts: UInt64 = 0
         var swappable: UInt64 = 0
         for word in words {
-            // A swap in a four-letter word leaves too little of it standing: `gray` swaps into `Gary`.
+            // A swap in a four-letter word leaves too little of it standing: `form` swaps into `from`.
             if word.count >= 5, letters.count + word.count <= 64 {
                 swappable |= (word.count == 64 ? .max : (1 << UInt64(word.count)) - 1) << UInt64(letters.count)
             }
@@ -622,8 +622,8 @@ private struct TypoQuery {
         }
         guard letters.count >= 4, skippable != 0 else { return nil }
         // A query without its vowels is an abbreviation, and one with a letter skipped reads as some other word
-        // spelt out in full: `mkfl` came out as `mkall.sh` and `mcfly.rb`, both ranked as whole words above the
-        // Makefiles it abbreviates. Words people misspell keep their vowels, so a quarter of the letters is the floor.
+        // spelt out in full, which then ranks as a whole word above the names it abbreviates. Words people misspell
+        // keep their vowels, so a quarter of the letters is the floor.
         var vowels = 0, alpha = 0
         for b in letters where b >= 0x61 {
             alpha += 1
@@ -746,15 +746,15 @@ private func typoReading(
         guard let a = typoAlignment(tq, skipping: skip, dropping: tq.budget - skipped, bn, bounds: bounds) else { return }
         let window = a.end - a.start
         let typos = skipped + a.dropped
-        // A reading has to cover a word worth the name: three letters match half the disk, so `encd` read as `enc`
-        // and `barg` as `bar` buried what those queries abbreviate.
+        // A reading has to cover a word worth the name: three letters match half the disk, and a short query read
+        // as a three-letter word buries the longer names it abbreviates.
         guard typos > 0, window >= 4 else { return }
         if best == nil || typos < best!.typos || typos == best!.typos && window > best!.window {
             best = (skip, window, typos)
         }
     }
     // Every reading is a common subsequence of query and name, so `lcs` says how many letters it has to skip. Skipping
-    // none, the name may still hold letters the query dropped: `installr` against `installer`.
+    // none, the name may still hold letters the query dropped: `documnt` against `document`.
     if lcs == m {
         consider(0)
     }
@@ -786,10 +786,10 @@ private let typoMaxSeparator = 3
 /// The name may differ from the query only where a letter was skipped: by as many letters of its own as were skipped
 /// there (`gray` has its `a` right where `grey` has the `e`), or by the skipped letter turning up one place late, which
 /// is two letters swapped (`metre` against `meter`, `recieve` against `receive`). Anywhere else inside a word it may
-/// hold up to `dropping` letters the query left out (`installr` against `installer`). Each word of the query stays
+/// hold up to `dropping` letters the query left out (`documnt` against `document`). Each word of the query stays
 /// inside one word of the name, starting where that word starts, and the misspelt word ends where the name's word
-/// does, give or take a plural `s`. That is what keeps `grey` off `Gary` and `gcrypt` (the stray letter is in the
-/// wrong place), off `green` (`gre` stops mid-word), and `centre` off `certreloader` and `macCentEuro`.
+/// does, give or take a plural `s`. That is what keeps `grey` off names whose stray letter sits somewhere
+/// else, and off `green` (`gre` stops mid-word).
 private func typoAlignment(
     _ tq: TypoQuery, skipping skip: UInt64, dropping: Int, _ bn: UnsafeBufferPointer<UInt8>, bounds: UInt64
 ) -> (start: Int, end: Int, dropped: Int)? {
@@ -809,7 +809,7 @@ private func typoAlignment(
         let skipped = next - qi - 1
         let lateHere = late != 0 && pos + 1 < n && bn[pos + 1] == late && !startsWord(bn, pos + 1, bounds)
         if next == m {
-            // A swap finishes the word as typed, whatever the name goes on with: `metre` finds `metering`.
+            // A swap finishes the word as typed, whatever the name goes on with: `metre` finds `meters`.
             if lateHere {
                 return (pos + 2, left)
             }
@@ -990,7 +990,7 @@ struct SearchResult: Comparable {
     /// Score credited for an extension the user typed approximately, on the same scale as characters
     /// the matcher really did match. Zero unless this result came from an extension reading.
     var extCredit = 0
-    /// Letters of the query this result's name doesn't have: `colour` finds `color.pdf` with one.
+    /// Letters of the query this result's name doesn't have: `colour` finds `color` with one.
     /// Zero for everything the query matches as typed.
     var typos = 0
     /// Highest rank this result may have, set by `typosAfterTypedMatches`.
@@ -1062,13 +1062,12 @@ extension [SearchResult] {
     /// typed. Applied wherever results meet, since one index's typo can't be weighed against another's exact match
     /// any other way.
     ///
-    /// A query that matches something as typed meant that something: `licenses` wants the files called licenses
-    /// before every `LICENSE`, and `picker` the pickers before any `packer`. Ranked on score alone, the shorter
-    /// misspelt name won.
+    /// A query that matches something as typed meant that something, so names holding it come before any misspelt
+    /// reading, even a shorter name that would score higher.
     ///
     /// A misspelt name drops at most `typoTypedReach` for it, though. One name that happens to start with the query,
-    /// deep in some system folder at the bottom of the list, otherwise sank every typo under the scattered matches
-    /// ranked above it: `configre` lost all of its `configure` files to `Recoll.org` that way.
+    /// deep in some system folder at the bottom of the list, would otherwise sink every typo under the scattered
+    /// matches ranked above it.
     func typosAfterTypedMatches() -> [SearchResult] {
         var floor = Int.max
         for r in self where r.matchesAsTyped {
@@ -2491,8 +2490,8 @@ final class SearchEngine: @unchecked Sendable {
         return result
     }
 
-    /// Searches, and for a bare query also reads it as misspelt: `colour` finds `color_profile.icc`
-    /// and `grey` finds `gray_background.png`. A name found that way ranks as it would spelt the way
+    /// Searches, and for a bare query also reads it as misspelt: `colour` finds `color` and `grey`
+    /// finds `gray`. A name found that way ranks as it would spelt the way
     /// it was typed, less `typoCost`, so one that really is spelt that way keeps its place ahead.
     func search(
         query: String,
@@ -2552,7 +2551,7 @@ final class SearchEngine: @unchecked Sendable {
         }
         guard !misspelt.isEmpty else { return found }
 
-        // A name both readings found takes the misspelt one, which may rank it higher (`installr` reads `installer` as
+        // A name both readings found takes the misspelt one, which may rank it higher (`documnt` reads `document` as
         // one dropped letter, not a scattered match) but never lower than it ranked as typed, however far placing
         // the typos below the exact matches sinks it.
         var all = found
