@@ -832,7 +832,7 @@ class FuzzyClient {
             i &+= 1
         }
         let minQ = bestQ / 3
-        var filtered = results.filter { $0.quality >= minQ || $0.hasBase }
+        var filtered = results.typosAfterTypedMatches().filter { $0.quality >= minQ || $0.hasBase }
         filtered.sort(by: >)
         var seen = Set<String>()
         return filtered.prefix(maxResults * 2).filter { seen.insert($0.path).inserted }.prefix(maxResults).map { $0 }

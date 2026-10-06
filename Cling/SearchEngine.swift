@@ -563,6 +563,313 @@ private func extensionTailSplits(_ q: String) -> [(head: String, tail: [UInt8])]
     return splits
 }
 
+// MARK: - Typo tolerance
+
+/// What `typos` typos cost a result's rank. A misspelt name otherwise ranks as its twin spelt the way the query was
+/// would, so this is what orders one typo ahead of two, and either behind a near-miss of the fuzzy match that needed
+/// none. Names holding the query exactly as typed are kept ahead of every typo by `typosAfterTypedMatches`.
+///
+/// A second typo costs twice the first. Two skipped letters can drop a whole suffix, which is right for `catalogue`
+/// against `catalog.json` but also reads `canceled` as `cancel`, and every `cancel.h` on the disk then outranked the
+/// `cancelled_refunds.csv` that differs by one letter.
+private func typoCost(_ typos: Int) -> Int {
+    typos * (typos + 1) / 2 * SC.scoreMatch
+}
+
+/// A name a misspelt reading found: the score its twin spelt as typed would have, and the typos between them.
+private typealias TypoHit = (score: Int, typos: Int)
+
+/// Furthest a misspelt name sinks to stay behind the names that hold the query as typed: four matched letters' worth,
+/// or eight steps of folder importance.
+private var typoTypedReach: Int {
+    4 * SC.scoreMatch
+}
+
+// MARK: - TypoQuery
+
+/// A bare query read as words that may be misspelt, for the pass that finds `color.pdf` from `colour`.
+///
+/// A fuzzy match already forgives a letter left out (`occurence` finds `occurrence`). What it can't forgive is a letter
+/// the name doesn't have: one typed extra (`colour`, `catalogue`), one typed for another (`grey`, `licence`, `seperate`)
+/// or two swapped (`metre`, `centre`). Each of those comes down to skipping a letter of the query, so that is the only
+/// edit there is: one per query, or two once it is long enough to stay specific without them.
+private struct TypoQuery {
+    init?(_ query: String) {
+        let words = query.lowercased().split(separator: " ").map { Array($0.utf8) }
+        var letters: [UInt8] = []
+        var skippable: UInt64 = 0
+        var wordStarts: UInt64 = 0
+        var swappable: UInt64 = 0
+        for word in words {
+            // A swap in a four-letter word leaves too little of it standing: `gray` swaps into `Gary`.
+            if word.count >= 5, letters.count + word.count <= 64 {
+                swappable |= (word.count == 64 ? .max : (1 << UInt64(word.count)) - 1) << UInt64(letters.count)
+            }
+            for (i, b) in word.enumerated() {
+                let isLetter = b >= 0x61 && b <= 0x7A
+                // Operators, extensions, paths and anything non-ASCII say exactly what the query wants.
+                guard isLetter || (b >= 0x30 && b <= 0x39) else { return nil }
+                guard letters.count < 64 else { return nil }
+                // Nobody misspells the letter a word starts with, and letting it go reads `grey` as `rey`. Digits are
+                // typed on purpose too.
+                if i == 0 {
+                    wordStarts |= 1 << UInt64(letters.count)
+                } else if isLetter {
+                    skippable |= 1 << UInt64(letters.count)
+                }
+                letters.append(b)
+            }
+        }
+        guard letters.count >= 4, skippable != 0 else { return nil }
+        // A query without its vowels is an abbreviation, and one with a letter skipped reads as some other word
+        // spelt out in full: `mkfl` came out as `mkall.sh` and `mcfly.rb`, both ranked as whole words above the
+        // Makefiles it abbreviates. Words people misspell keep their vowels, so a quarter of the letters is the floor.
+        var vowels = 0, alpha = 0
+        for b in letters where b >= 0x61 {
+            alpha += 1
+            if b == 0x61 || b == 0x65 || b == 0x69 || b == 0x6F || b == 0x75 || b == 0x79 {
+                vowels += 1
+            }
+        }
+        guard vowels * 4 >= alpha else { return nil }
+
+        self.words = words
+        self.letters = letters
+        self.skippable = skippable
+        self.wordStarts = wordStarts
+        self.swappable = swappable
+        budget = letters.count >= 8 ? 2 : 1
+        mask = letters.withUnsafeBufferPointer { letterMaskBytes($0) }
+        var peq = [UInt64](repeating: 0, count: 256)
+        for (i, b) in letters.enumerated() {
+            peq[Int(b)] |= 1 << UInt64(i)
+        }
+        self.peq = peq
+        twinScore = words.reduce(0) { sum, word in
+            sum + word.withUnsafeBufferPointer { fuzzyScoreBytes($0, $0)?.score ?? 0 }
+        }
+    }
+
+    let words: [[UInt8]]
+    /// The words run together, which is how a name is matched against them.
+    let letters: [UInt8]
+    /// Bit i: `letters[i]` may be skipped.
+    let skippable: UInt64
+    /// Bit i: `letters[i]` starts one of the words.
+    let wordStarts: UInt64
+    /// Bit i: `letters[i]` may be found swapped with its neighbour.
+    let swappable: UInt64
+    /// Most letters one reading may skip.
+    let budget: Int
+    let mask: UInt64
+    /// Bit i of entry b: `letters[i] == b`, for `lcsLength`.
+    let peq: [UInt64]
+    /// What the words score against a name that starts with them spelt exactly as typed, before the rest of the name
+    /// is charged for.
+    let twinScore: Int
+
+    /// The query with the letters in `skip` left out, its words kept apart.
+    func reading(skipping skip: UInt64) -> String {
+        var out: [UInt8] = []
+        var li = 0
+        for word in words {
+            if !out.isEmpty {
+                out.append(0x20)
+            }
+            for b in word {
+                if skip & (1 << UInt64(li)) == 0 {
+                    out.append(b)
+                }
+                li += 1
+            }
+        }
+        return String(decoding: out, as: UTF8.self)
+    }
+}
+
+/// Length of the longest common subsequence of the query and `txt`, bit-parallel (Hyyrö 2004): an add and a few logic
+/// ops per byte, so it rules out nearly every name before a single reading of the query is tried on it.
+@inline(__always)
+private func lcsLength(_ peq: UnsafePointer<UInt64>, _ m: Int, _ txt: UnsafePointer<UInt8>, _ n: Int) -> Int {
+    var v = UInt64.max
+    var j = 0
+    while j < n {
+        let u = v & peq[Int(txt[j])]
+        v = (v &+ u) | (v &- u)
+        j &+= 1
+    }
+    let full: UInt64 = m == 64 ? .max : (1 << UInt64(m)) &- 1
+    return (~v & full).nonzeroBitCount
+}
+
+/// Whether a word of the name starts at `pos`: its first byte, after a delimiter, or a camelCase hump.
+@inline(__always)
+private func startsWord(_ bn: UnsafeBufferPointer<UInt8>, _ pos: Int, _ bounds: UInt64) -> Bool {
+    if pos == 0 {
+        return true
+    }
+    if pos < 64 {
+        return bounds & (1 << UInt64(pos)) != 0
+    }
+    let prev = bn[pos - 1]
+    return prev < 0x80 && !(prev >= 0x61 && prev <= 0x7A) && !(prev >= 0x30 && prev <= 0x39)
+}
+
+/// Whether a word of the name ends right before `pos`.
+@inline(__always)
+private func endsWord(_ bn: UnsafeBufferPointer<UInt8>, _ pos: Int, _ bounds: UInt64) -> Bool {
+    if pos >= bn.count {
+        return true
+    }
+    let b = bn[pos]
+    if (b >= 0x61 && b <= 0x7A) || b >= 0x80 {
+        return pos < 64 && bounds & (1 << UInt64(pos)) != 0
+    }
+    return true
+}
+
+/// The best reading of the name `bn` as a misspelling of the query: the query letters it skips, the stretch of the name
+/// it covers and how many typos it takes. Nil when the name holds the query as typed, which the plain search ranks on
+/// its own, or when no reading lands on a word of it.
+///
+/// Fewest typos first, and among those the one covering most of the name, which is the one whose twin wastes least.
+private func typoReading(
+    _ tq: TypoQuery, _ bn: UnsafeBufferPointer<UInt8>, bounds: UInt64, lcs: Int
+) -> (skip: UInt64, window: Int, typos: Int)? {
+    let m = tq.letters.count
+    if lcs == m, typoAlignment(tq, skipping: 0, dropping: 0, bn, bounds: bounds) != nil {
+        return nil
+    }
+    var best: (skip: UInt64, window: Int, typos: Int)?
+    func consider(_ skip: UInt64) {
+        let skipped = skip.nonzeroBitCount
+        guard let a = typoAlignment(tq, skipping: skip, dropping: tq.budget - skipped, bn, bounds: bounds) else { return }
+        let window = a.end - a.start
+        let typos = skipped + a.dropped
+        // A reading has to cover a word worth the name: three letters match half the disk, so `encd` read as `enc`
+        // and `barg` as `bar` buried what those queries abbreviate.
+        guard typos > 0, window >= 4 else { return }
+        if best == nil || typos < best!.typos || typos == best!.typos && window > best!.window {
+            best = (skip, window, typos)
+        }
+    }
+    // Every reading is a common subsequence of query and name, so `lcs` says how many letters it has to skip. Skipping
+    // none, the name may still hold letters the query dropped: `installr` against `installer`.
+    if lcs == m {
+        consider(0)
+    }
+    if lcs >= m - 1, best?.typos ?? 2 > 1 {
+        for i in 0 ..< m where tq.skippable & (1 << UInt64(i)) != 0 {
+            // Skipping either half of a doubled letter reads the same.
+            if i > 0, tq.letters[i] == tq.letters[i - 1], tq.skippable & (1 << UInt64(i - 1)) != 0 {
+                continue
+            }
+            consider(1 << UInt64(i))
+        }
+    }
+    if best == nil, tq.budget >= 2, lcs >= m - 2 {
+        for i in 0 ..< m where tq.skippable & (1 << UInt64(i)) != 0 {
+            for j in i + 1 ..< m where tq.skippable & (1 << UInt64(j)) != 0 {
+                consider(1 << UInt64(i) | 1 << UInt64(j))
+            }
+        }
+    }
+    return best
+}
+
+/// Most bytes that may separate two words of a misspelt query in a name: ` - ` at most.
+private let typoMaxSeparator = 3
+
+/// Where the query, less the letters in `skip`, sits in the name `bn` as a misspelt word: the stretch of the name it
+/// covers and how many of the name's letters the query dropped, or nil.
+///
+/// The name may differ from the query only where a letter was skipped: by as many letters of its own as were skipped
+/// there (`gray` has its `a` right where `grey` has the `e`), or by the skipped letter turning up one place late, which
+/// is two letters swapped (`metre` against `meter`, `recieve` against `receive`). Anywhere else inside a word it may
+/// hold up to `dropping` letters the query left out (`installr` against `installer`). Each word of the query stays
+/// inside one word of the name, starting where that word starts, and the misspelt word ends where the name's word
+/// does, give or take a plural `s`. That is what keeps `grey` off `Gary` and `gcrypt` (the stray letter is in the
+/// wrong place), off `green` (`gre` stops mid-word), and `centre` off `certreloader` and `macCentEuro`.
+private func typoAlignment(
+    _ tq: TypoQuery, skipping skip: UInt64, dropping: Int, _ bn: UnsafeBufferPointer<UInt8>, bounds: UInt64
+) -> (start: Int, end: Int, dropped: Int)? {
+    let m = tq.letters.count
+    let n = bn.count
+    @inline(__always) func isWordByte(_ b: UInt8) -> Bool {
+        (b >= 0x61 && b <= 0x7A) || (b >= 0x30 && b <= 0x39) || b >= 0x80
+    }
+
+    /// The end of the stretch and the drops left, matching on from query letter `qi` found at name position `pos`.
+    /// `late` is a letter skipped right before `qi` that may still turn up next, or 0.
+    func matchRest(_ qi: Int, _ pos: Int, _ late: UInt8, _ left: Int) -> (end: Int, left: Int)? {
+        var next = qi + 1
+        while next < m, skip & (1 << UInt64(next)) != 0 {
+            next += 1
+        }
+        let skipped = next - qi - 1
+        let lateHere = late != 0 && pos + 1 < n && bn[pos + 1] == late && !startsWord(bn, pos + 1, bounds)
+        if next == m {
+            // A swap finishes the word as typed, whatever the name goes on with: `metre` finds `metering`.
+            if lateHere {
+                return (pos + 2, left)
+            }
+            // Spelt exactly as typed, which the plain search ranks on its own.
+            if skip == 0, left == dropping {
+                return (pos + 1, left)
+            }
+            if endsWord(bn, pos + 1, bounds) {
+                return (pos + 1, left)
+            }
+            if pos + 1 < n, bn[pos + 1] == 0x73, endsWord(bn, pos + 2, bounds) {
+                return (pos + 2, left)
+            }
+            return nil
+        }
+        // Try with the late letter taken first, then without it.
+        var attempt = lateHere ? 0 : 1
+        while attempt < 2 {
+            let from = attempt == 0 ? pos + 2 : pos + 1
+            attempt += 1
+            if tq.wordStarts & (1 << UInt64(next)) != 0 {
+                // The next word of the query starts the next word of the name, past whatever separates them: a space,
+                // punctuation, or nothing at a camelCase hump.
+                var p = from
+                while p < n, p - from < typoMaxSeparator, !isWordByte(bn[p]) {
+                    p += 1
+                }
+                if p < n, bn[p] == tq.letters[next], startsWord(bn, p, bounds), let r = matchRest(next, p, 0, left) {
+                    return r
+                }
+                continue
+            }
+            // Inside a word, the name may hold up to `skipped` letters of its own before the next one, and any it
+            // holds past those are letters the query dropped. When it holds none, the skipped letter may still turn
+            // up right after, as half of a swap.
+            var p = from
+            while p < n, p <= from + skipped + left, isWordByte(bn[p]), !startsWord(bn, p, bounds) {
+                let carry = skipped > 0 && p == from && tq.swappable & (1 << UInt64(next - 1)) != 0
+                    ? tq.letters[next - 1]
+                    : 0
+                if bn[p] == tq.letters[next], let r = matchRest(next, p, carry, left - max(0, p - from - skipped)) {
+                    return r
+                }
+                p += 1
+            }
+        }
+        return nil
+    }
+
+    let first = tq.letters[0]
+    var s = 0
+    while s < n {
+        if bn[s] == first, startsWord(bn, s, bounds), let r = matchRest(0, s, 0, dropping) {
+            return (s, r.end, dropping - r.left)
+        }
+        s += 1
+    }
+    return nil
+}
+
 func tokenizeQuery(_ s: String) -> [String] {
     var tokens: [String] = []
     var cur = ""
@@ -683,6 +990,14 @@ struct SearchResult: Comparable {
     /// Score credited for an extension the user typed approximately, on the same scale as characters
     /// the matcher really did match. Zero unless this result came from an extension reading.
     var extCredit = 0
+    /// Letters of the query this result's name doesn't have: `colour` finds `color.pdf` with one.
+    /// Zero for everything the query matches as typed.
+    var typos = 0
+    /// Highest rank this result may have, set by `typosAfterTypedMatches`.
+    var rankCap = Int.max
+    /// For a misspelt reading of a name the plain search found too: the rank that match earned, which the
+    /// reading never drops the name below.
+    var rankAsTyped = Int.min
 
     /// Composite rank combining match type, importance, and quality into a single comparable value.
     /// hasBase and prefixMatch provide bonuses, but quality differences can overcome them.
@@ -696,6 +1011,11 @@ struct SearchResult: Comparable {
     /// below half the score: dense matches, which is nearly all of them, are left exactly as they
     /// were, so this costs the ranking nothing where the match already looks human.
     var rank: Int {
+        max(rankAsTyped, min(scoredRank, rankCap))
+    }
+
+    /// The rank the match itself earns, before `typosAfterTypedMatches` places a misspelt one.
+    var scoredRank: Int {
         var r = max(score, quality)
         let densityFloor = score / 2
         if quality < densityFloor {
@@ -709,9 +1029,17 @@ struct SearchResult: Comparable {
             r += SC.rankPrefixMatchBonus
         }
         r += extCredit
+        r -= typoCost(typos)
         r += pathImportance * SC.rankImportanceMultiplier
         r -= max(0, path.count - SC.rankLongPathThreshold)
         return r
+    }
+
+    /// Whether the name holds the query exactly as typed, where the name or one of its words starts: the
+    /// query names something that exists. A match the fuzzy subsequence assembled doesn't count, since on
+    /// a full disk nearly every misspelling assembles one somewhere (`cahin` out of `caching`).
+    var matchesAsTyped: Bool {
+        typos == 0 && hasBase && prefixMatch
     }
 
     static func < (lhs: SearchResult, rhs: SearchResult) -> Bool {
@@ -726,6 +1054,35 @@ struct SearchResult: Comparable {
             return lhs.depth > rhs.depth
         }
         return lhs.path.count > rhs.path.count
+    }
+}
+
+extension [SearchResult] {
+    /// These results with every name found by reading the query as misspelt ranked below the last name it matched as
+    /// typed. Applied wherever results meet, since one index's typo can't be weighed against another's exact match
+    /// any other way.
+    ///
+    /// A query that matches something as typed meant that something: `licenses` wants the files called licenses
+    /// before every `LICENSE`, and `picker` the pickers before any `packer`. Ranked on score alone, the shorter
+    /// misspelt name won.
+    ///
+    /// A misspelt name drops at most `typoTypedReach` for it, though. One name that happens to start with the query,
+    /// deep in some system folder at the bottom of the list, otherwise sank every typo under the scattered matches
+    /// ranked above it: `configre` lost all of its `configure` files to `Recoll.org` that way.
+    func typosAfterTypedMatches() -> [SearchResult] {
+        var floor = Int.max
+        for r in self where r.matchesAsTyped {
+            floor = Swift.min(floor, r.rank)
+        }
+        guard floor != Int.max, contains(where: { $0.typos > 0 && $0.scoredRank >= floor }) else { return self }
+        // From the match's own rank, so placing the same results again, as each index does and then the merge of
+        // all of them, never sinks a name further than the lowest floor does on its own.
+        return map { r in
+            guard r.typos > 0, r.scoredRank >= floor else { return r }
+            var capped = r
+            capped.rankCap = Swift.min(r.rankCap, Swift.max(floor - 1, r.scoredRank - typoTypedReach))
+            return capped
+        }
     }
 }
 
@@ -2105,14 +2462,9 @@ final class SearchEngine: @unchecked Sendable {
         return result
     }
 
-    /// Searches, and for a bare query also reads it as a name plus a possibly-mistyped extension,
-    /// keeping whichever reading produces the better top result. `hrdrcfgyml` finds
-    /// `.config/herdr/config.toml`, because `yml` is two edits from `toml` and so is credited as a
-    /// near-match instead of having to contain its letters.
-    ///
-    /// The literal reading always competes on equal terms and keeps ties, so a query that today
-    /// finds what the user wanted still finds it. A split only wins by ranking higher, which needs
-    /// both a better name match and an extension that resembles what they typed.
+    /// Searches, and for a bare query also reads it as misspelt: `colour` finds `color_profile.icc`
+    /// and `grey` finds `gray_background.png`. A name found that way ranks as it would spelt the way
+    /// it was typed, less `typoCost`, so one that really is spelt that way keeps its place ahead.
     func search(
         query: String,
         maxResults: Int = 200,
@@ -2126,58 +2478,72 @@ final class SearchEngine: @unchecked Sendable {
         literalDefault: Bool = false,
         cancelled: (() -> Bool)? = nil
     ) -> [SearchResult] {
-        let strict = searchCore(
+        let found = searchReadingExtension(
             query: query, maxResults: maxResults, folderPrefixes: folderPrefixes,
             excludedPrefixes: excludedPrefixes, excludedPaths: excludedPaths,
             suffixPattern: suffixPattern, dirsOnly: dirsOnly, maxDepth: maxDepth,
             candidatePool: candidatePool, literalDefault: literalDefault, cancelled: cancelled
         )
-        guard !literalDefault else { return strict }
-        // The literal reading matched a filename, so it found something the user could have meant.
-        // Guessing at a mistyped extension on top of that is how `modifiedpyc` stops finding
-        // `modified.cpython-311.pyc` and starts finding `modified.py`, one edit away and not what
-        // was asked for. Reinterpret only when every literal match is scattered down a path.
-        guard !strict.contains(where: { $0.hasBase || $0.segmentMatches > 0 }) else { return strict }
-        // A dense literal match is one a human could have typed on purpose, so leave it alone.
-        // Without this `srcmainjava` pays for four extra searches to re-derive the `Main.java` it
-        // had already found.
-        if let top = strict.first, top.quality >= top.score / 2 {
-            return strict
+        guard !literalDefault, let tq = TypoQuery(query), cancelled?() != true else { return found }
+        // A misspelt name ranks at most its score plus this, in an important folder with every bonus a name can get.
+        // Once the plain results fill the list, a name that can't beat the last of them is left out before it costs a
+        // search, which is most of them for a common word: `contents` reads as every `Content*` on the disk.
+        let bonus = SC.rankHasBaseBonus * (tq.words.count > 1 ? tq.words.count + 1 : 1)
+            + SC.rankPrefixMatchBonus + 4 * SC.rankImportanceMultiplier - typoCost(1)
+        let minScore = if found.count >= maxResults, let last = found.last {
+            last.rank - bonus
+        } else {
+            Int.min
+        }
+        guard tq.twinScore >= minScore else { return found }
+        // A full list that ends on a name matched as typed has no room for a misspelt one, which ranks below it.
+        if found.count >= maxResults, found.last?.matchesAsTyped == true {
+            return found
         }
 
-        let splits = extensionTailSplits(query.trimmingCharacters(in: .whitespaces).lowercased())
-        // Only the reading whose tail comes closest to a real extension is worth a search. Scoring
-        // the splits against the extension list first keeps this to one extra search rather than
-        // one per candidate tail length.
-        guard let split = Self.closestExtensionSplit(splits, maxDist: extTailMaxDistance) else { return strict }
-        if cancelled?() == true {
-            return strict
-        }
-
-        let table = Self.extCreditTable(for: split.tail, maxDist: extTailMaxDistance)
-        let retry = searchCore(
-            query: split.head, maxResults: maxResults, folderPrefixes: folderPrefixes,
-            excludedPrefixes: excludedPrefixes, excludedPaths: excludedPaths,
-            suffixPattern: suffixPattern, dirsOnly: dirsOnly, maxDepth: maxDepth,
-            candidatePool: candidatePool, literalDefault: literalDefault, cancelled: cancelled,
-            extCredits: table
+        let groups = typoMatches(
+            tq, minScore: minScore, candidatePool: candidatePool, dirsOnly: dirsOnly, suffixPattern: suffixPattern,
+            cancelled: cancelled
         )
-        // Three things before a split may displace the literal reading: it landed on a file whose
-        // extension really does resemble the typed one, its own match is dense rather than
-        // scattered, and it wins by a clear margin. Ranks from two different queries aren't
-        // strictly comparable, so a hair's-breadth win means nothing and the literal keeps ties.
-        //
-        // Density is what stops gibberish inventing answers: `xyzwvutsrq` has no literal match at
-        // all, so anything the split turns up would otherwise win by default.
-        //
-        // The split's match may still be path-scattered across segments: `hrdrcfg` finds
-        // `.config/herdr/config.toml` over two directories and a filename, so requiring a basename
-        // match would rule out the case this exists for. Density allows that; noise it does not.
-        guard let top = retry.first, top.extCredit > 0,
-              top.quality >= top.score / 2,
-              top.rank > (strict.first?.rank ?? Int.min) + SC.rankPrefixMatchBonus
-        else { return strict }
-        return retry
+        var misspelt: [SearchResult] = []
+        // One search per reading, over only the names that reading was picked for, so every result is filtered and
+        // ranked by the same code as the plain ones. In a fixed order, so equal ranks don't trade places as you type.
+        for (skip, hits) in groups.sorted(by: { $0.key < $1.key }) {
+            if cancelled?() == true {
+                return found
+            }
+            let reading = searchCore(
+                query: tq.reading(skipping: skip), maxResults: maxResults, folderPrefixes: folderPrefixes,
+                excludedPrefixes: excludedPrefixes, excludedPaths: excludedPaths,
+                suffixPattern: suffixPattern, dirsOnly: dirsOnly, maxDepth: maxDepth,
+                candidatePool: hits.keys.sorted(), cancelled: cancelled,
+                misspelt: hits
+            )
+            misspelt.append(contentsOf: reading.filter { $0.typos > 0 })
+        }
+        guard !misspelt.isEmpty else { return found }
+
+        // A name both readings found takes the misspelt one, which may rank it higher (`installr` reads `installer` as
+        // one dropped letter, not a scattered match) but never lower than it ranked as typed, however far placing
+        // the typos below the exact matches sinks it.
+        var all = found
+        var at: [String: Int] = [:]
+        for (i, r) in found.enumerated() {
+            at[r.path] = i
+        }
+        for var r in misspelt {
+            if let i = at[r.path] {
+                guard !all[i].matchesAsTyped else { continue }
+                r.rankAsTyped = all[i].rank
+                all[i] = r
+            } else {
+                at[r.path] = all.count
+                all.append(r)
+            }
+        }
+        all = all.typosAfterTypedMatches()
+        all.sort { $0 > $1 }
+        return Array(all.prefix(maxResults))
     }
 
     // MARK: - Paths from the stored bytes
@@ -2618,6 +2984,164 @@ final class SearchEngine: @unchecked Sendable {
         return lower.withUnsafeBufferPointer { PathTable.hash($0.baseAddress!, $0.count) }
     }
 
+    /// Searches, and for a bare query also reads it as a name plus a possibly-mistyped extension,
+    /// keeping whichever reading produces the better top result. `hrdrcfgyml` finds
+    /// `.config/herdr/config.toml`, because `yml` is two edits from `toml` and so is credited as a
+    /// near-match instead of having to contain its letters.
+    ///
+    /// The literal reading always competes on equal terms and keeps ties, so a query that today
+    /// finds what the user wanted still finds it. A split only wins by ranking higher, which needs
+    /// both a better name match and an extension that resembles what they typed.
+    private func searchReadingExtension(
+        query: String,
+        maxResults: Int,
+        folderPrefixes: [String]?,
+        excludedPrefixes: [String]?,
+        excludedPaths: Set<String>?,
+        suffixPattern: String?,
+        dirsOnly: Bool,
+        maxDepth: Int?,
+        candidatePool: [Int]?,
+        literalDefault: Bool,
+        cancelled: (() -> Bool)?
+    ) -> [SearchResult] {
+        let strict = searchCore(
+            query: query, maxResults: maxResults, folderPrefixes: folderPrefixes,
+            excludedPrefixes: excludedPrefixes, excludedPaths: excludedPaths,
+            suffixPattern: suffixPattern, dirsOnly: dirsOnly, maxDepth: maxDepth,
+            candidatePool: candidatePool, literalDefault: literalDefault, cancelled: cancelled
+        )
+        guard !literalDefault else { return strict }
+        // The literal reading matched a filename, so it found something the user could have meant.
+        // Guessing at a mistyped extension on top of that is how `modifiedpyc` stops finding
+        // `modified.cpython-311.pyc` and starts finding `modified.py`, one edit away and not what
+        // was asked for. Reinterpret only when every literal match is scattered down a path.
+        guard !strict.contains(where: { $0.hasBase || $0.segmentMatches > 0 }) else { return strict }
+        // A dense literal match is one a human could have typed on purpose, so leave it alone.
+        // Without this `srcmainjava` pays for four extra searches to re-derive the `Main.java` it
+        // had already found.
+        if let top = strict.first, top.quality >= top.score / 2 {
+            return strict
+        }
+
+        let splits = extensionTailSplits(query.trimmingCharacters(in: .whitespaces).lowercased())
+        // Only the reading whose tail comes closest to a real extension is worth a search. Scoring
+        // the splits against the extension list first keeps this to one extra search rather than
+        // one per candidate tail length.
+        guard let split = Self.closestExtensionSplit(splits, maxDist: extTailMaxDistance) else { return strict }
+        if cancelled?() == true {
+            return strict
+        }
+
+        let table = Self.extCreditTable(for: split.tail, maxDist: extTailMaxDistance)
+        let retry = searchCore(
+            query: split.head, maxResults: maxResults, folderPrefixes: folderPrefixes,
+            excludedPrefixes: excludedPrefixes, excludedPaths: excludedPaths,
+            suffixPattern: suffixPattern, dirsOnly: dirsOnly, maxDepth: maxDepth,
+            candidatePool: candidatePool, literalDefault: literalDefault, cancelled: cancelled,
+            extCredits: table
+        )
+        // Three things before a split may displace the literal reading: it landed on a file whose
+        // extension really does resemble the typed one, its own match is dense rather than
+        // scattered, and it wins by a clear margin. Ranks from two different queries aren't
+        // strictly comparable, so a hair's-breadth win means nothing and the literal keeps ties.
+        //
+        // Density is what stops gibberish inventing answers: `xyzwvutsrq` has no literal match at
+        // all, so anything the split turns up would otherwise win by default.
+        //
+        // The split's match may still be path-scattered across segments: `hrdrcfg` finds
+        // `.config/herdr/config.toml` over two directories and a filename, so requiring a basename
+        // match would rule out the case this exists for. Density allows that; noise it does not.
+        guard let top = retry.first, top.extCredit > 0,
+              top.quality >= top.score / 2,
+              top.rank > (strict.first?.rank ?? Int.min) + SC.rankPrefixMatchBonus
+        else { return strict }
+        return retry
+    }
+
+    /// Every entry a misspelt reading of the query finds by name, grouped by the letters that reading skipped, with the
+    /// score its name would have had spelt the way the query was. Names scoring under `minScore` are left out.
+    private func typoMatches(
+        _ tq: TypoQuery, minScore: Int, candidatePool: [Int]?, dirsOnly: Bool, suffixPattern: String?,
+        cancelled: (() -> Bool)?
+    ) -> [UInt64: [Int: TypoHit]] {
+        lock.lock()
+        defer { lock.unlock() }
+        let n = entries.count
+        let total = candidatePool?.count ?? n
+        guard total > 0 else { return [:] }
+        let m = tq.letters.count
+        let waste = SC.basenameWastePenalty
+        let widest = m + typoMaxSeparator * (tq.words.count - 1)
+        let suffix = suffixPattern.map { Array($0.lowercased().utf8) }
+        let isCancelled = cancelled ?? { false }
+
+        let procs = max(ProcessInfo.processInfo.activeProcessorCount, 1)
+        let chunkSize = max((total + procs - 1) / procs, 4096)
+        let chunks = (total + chunkSize - 1) / chunkSize
+        let store = UnsafeMutablePointer<[(id: Int, skip: UInt64, hit: TypoHit)]>.allocate(capacity: chunks)
+        store.initialize(repeating: [], count: chunks)
+        defer {
+            store.deinitialize(count: chunks)
+            store.deallocate()
+        }
+
+        allBytes.withUnsafeBufferPointer { all in
+            tq.peq.withUnsafeBufferPointer { peq in
+                DispatchQueue.concurrentPerform(iterations: chunks) { chunk in
+                    var local: [(id: Int, skip: UInt64, hit: TypoHit)] = []
+                    var k = chunk * chunkSize
+                    let end = min(k + chunkSize, total)
+                    while k < end {
+                        if k & 0xFFF == 0, isCancelled() {
+                            break
+                        }
+                        let i = candidatePool?[k] ?? k
+                        k &+= 1
+                        // A name missing more of the query's letters than it may skip can't be read as it.
+                        guard i >= 0, i < n, (tq.mask & ~self.bnMasks[i]).nonzeroBitCount <= tq.budget else { continue }
+                        let e = self.entries[i]
+                        let off = self.byteOffsets[i]
+                        let len = self.byteLengths[i]
+                        let bnLen = len - e.bnStart
+                        // A reading covers the query's letters and the separators between its words at most, so a name
+                        // this much longer is charged too much waste to score enough, whatever it reads as.
+                        guard bnLen >= m - tq.budget, tq.twinScore - (bnLen - widest) * waste >= minScore else { continue }
+                        // A pool comes already narrowed to these, the way searchCore takes it.
+                        if candidatePool == nil {
+                            if dirsOnly, !e.isDir {
+                                continue
+                            }
+                            if let suffix {
+                                guard len >= suffix.count, memcmp(all.baseAddress! + off + len - suffix.count, suffix, suffix.count) == 0 else { continue }
+                            }
+                        }
+                        let bn = UnsafeBufferPointer(start: all.baseAddress! + off + e.bnStart, count: bnLen)
+                        let lcs = lcsLength(peq.baseAddress!, m, bn.baseAddress!, bnLen)
+                        guard lcs >= m - tq.budget else { continue }
+                        if let r = typoReading(tq, bn, bounds: self.bnBoundaries[i], lcs: lcs) {
+                            // The twin has the query's letters where the reading found its own, and the rest of the
+                            // name around them, which searchCore charges for as basename waste.
+                            let score = tq.twinScore - (bnLen - r.window) * waste
+                            if score >= minScore {
+                                local.append((i, r.skip, (score, r.typos)))
+                            }
+                        }
+                    }
+                    store[chunk] = local
+                }
+            }
+        }
+
+        var groups: [UInt64: [Int: TypoHit]] = [:]
+        for c in 0 ..< chunks {
+            for hit in store[c] {
+                groups[hit.skip, default: [:]][hit.id] = hit.hit
+            }
+        }
+        return groups
+    }
+
     /// Maps each section of a v4 file into its column (or reads it there when mapping is off), checks every entry
     /// against the file's own counts unless the file was just written by this engine, and brings extension IDs into
     /// this process's numbering.
@@ -2878,7 +3402,8 @@ final class SearchEngine: @unchecked Sendable {
         candidatePool: [Int]? = nil,
         literalDefault: Bool = false,
         cancelled: (() -> Bool)? = nil,
-        extCredits: [UInt16: Int]? = nil
+        extCredits: [UInt16: Int]? = nil,
+        misspelt: [Int: TypoHit]? = nil
     ) -> [SearchResult] {
         let t0 = CFAbsoluteTimeGetCurrent()
 
@@ -4571,17 +5096,21 @@ final class SearchEngine: @unchecked Sendable {
         var results = pool.map { s in
             let e = entries[s.id]
             let credit = extCredits.map { $0[s.id < extIDs.count ? extIDs[s.id] : 0] ?? 0 } ?? 0
+            // A misspelt name scores as its twin spelt the way it was typed would, which starts on a word the way the
+            // reading had to.
+            let twin = misspelt?[s.id]
             return SearchResult(
                 path: shownPath(s.id),
                 isDir: e.isDir,
-                score: s.bestScore,
-                quality: s.quality,
+                score: twin?.score ?? s.bestScore,
+                quality: twin?.score ?? s.quality,
                 hasBase: s.hasBase,
                 segmentMatches: s.segmentMatches,
                 pathImportance: Int(s.key.c),
-                prefixMatch: s.key.b > 0,
+                prefixMatch: twin != nil || s.key.b > 0,
                 depth: e.segCount,
-                extCredit: credit
+                extCredit: credit,
+                typos: twin?.typos ?? 0
             )
         }
         results.sort { $0 > $1 }

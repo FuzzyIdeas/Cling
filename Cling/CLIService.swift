@@ -144,6 +144,7 @@ final class SearchCoordinator: @unchecked Sendable {
             }
             i &+= 1
         }
+        allResults = allResults.typosAfterTypedMatches()
         allResults.sort(by: >)
         var seen = Set<String>()
         return allResults.prefix(maxResults * 2).filter { seen.insert($0.path).inserted }.prefix(maxResults).map { $0 }
