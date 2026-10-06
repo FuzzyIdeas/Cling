@@ -289,6 +289,12 @@ struct IndexBrowserView: View {
 
     @State private var browser = IndexBrowser.shared
     @State private var deleteMonitor: Any?
+    @State private var stats: IndexStats?
+    /// Set by clicking the stats header; cleared whenever the automatic choice changes, so entering a scope or making
+    /// the window shorter closes the stats again.
+    @State private var statsOpen: Bool?
+    /// Height shared by the list and the stats.
+    @State private var listHeight: CGFloat = 0
 
     private var rows: [IndexNode] {
         browser.current?.rows ?? []
@@ -305,24 +311,52 @@ struct IndexBrowserView: View {
         )
     }
 
+    /// Open at the top level when the window has room for the list of scopes and the stats both, and closed inside a
+    /// scope or drive, whose list is what's being looked at then.
+    private var statsAuto: Bool {
+        guard browser.levels.count <= 1, let stats else { return false }
+        let topRows = browser.levels.first?.rows.count ?? 0
+        let table = FontScale.length(28) + CGFloat(topRows) * FontScale.length(24)
+        let header = FontScale.length(26)
+        return listHeight >= table + header + IndexStatsView.gridHeight(stats)
+    }
+
+    private var statsExpanded: Bool {
+        statsOpen ?? statsAuto
+    }
+
     private var browserPanel: some View {
         VStack(spacing: 0) {
             breadcrumb
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
             Divider()
-            ZStack {
-                table
-                if rows.isEmpty, !browser.loading {
-                    Text("Nothing indexed here")
-                        .font(.scaled(12))
-                        .foregroundStyle(.secondary)
+            VStack(spacing: 0) {
+                ZStack {
+                    table
+                    if rows.isEmpty, !browser.loading {
+                        Text("Nothing indexed here")
+                            .font(.scaled(12))
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                Divider()
+                IndexStatsView(stats: stats, expanded: statsExpanded) { statsOpen = !statsExpanded }
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
+            .animation(.easeOut(duration: 0.18), value: statsExpanded)
             Divider()
             keyHints
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
+        }
+        .onChange(of: statsAuto) { statsOpen = nil }
+        // Memory moves as searches read pages in and the system drops them, so keep measuring while this is open.
+        .task {
+            while !Task.isCancelled {
+                stats = await IndexStats.gather()
+                try? await Task.sleep(for: .seconds(5))
+            }
         }
     }
 

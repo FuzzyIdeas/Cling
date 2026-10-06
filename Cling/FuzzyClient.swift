@@ -1577,6 +1577,7 @@ class FuzzyClient {
 
         scopeIndexTask?.cancel()
         scopeIndexTask = Task.detached(priority: .userInitiated) {
+            let started = Date()
             // Invalidate the gitignore cache off-main: it takes a lock the in-flight
             // background walk may still hold, so calling it on the main thread (the hourly
             // index-checker Repeater fires there) could freeze the app for the walk's
@@ -1594,6 +1595,8 @@ class FuzzyClient {
                         let scopeEngine = SearchEngine()
                         scopeEngine.reserveCapacity(100_000)
                         for dir in dirs {
+                            // A walk counts from zero for each of the scope's roots; the progress shows the scope's.
+                            let before = scopeEngine.count
                             let excludeSkip: ((String) -> Bool)? = dir.excludePrefix.map { excl in
                                 { path in path.hasPrefix(excl) }
                             }
@@ -1614,7 +1617,7 @@ class FuzzyClient {
                             let opKey = "scope:\(scope.rawValue)"
                             scopeEngine.walkDirectory(dir.dir, ignoreFile: ignore, ignoreRoot: ignoreRoot, skipDir: skipDir, applyBlocklist: true, discoverGitignore: honorGitignore, progress: { count, _ in
                                 Task { @MainActor in
-                                    self.logActivity("Indexing \(scope.label): \(count.formatted()) files", ongoing: true, operationKey: opKey, count: count)
+                                    self.logActivity("Indexing \(scope.label): \((before + count).formatted()) files", ongoing: true, operationKey: opKey, count: before + count)
                                 }
                             })
                         }
@@ -1645,6 +1648,7 @@ class FuzzyClient {
                         releaseInBackground(self.scopeEngines.updateValue(engineToStore, forKey: scope))
                         self.scopesIndexing.remove(scope)
                         self.updateIndexedCount()
+                        IndexWalks.record(.scope(scope), started: started)
                         self.logActivity("Indexed \(scope.label): \(added.formatted()) files (\(self.indexedCount.formatted()) total)", operationKey: "scope:\(scope.rawValue)")
 
                         if !searchTriggered {

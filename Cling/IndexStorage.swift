@@ -266,6 +266,24 @@ struct ColumnStorage<T> {
         munmap(base, length)
     }
 
+    /// Bytes of these pages that count toward the app's memory, as Activity Monitor shows it: those written to (a copied
+    /// file page, or anonymous memory), in RAM or compressed. Clean pages mapped from the index file don't count, however
+    /// much of the file sits in the system's file cache: they belong to the cache, which drops them when it needs the
+    /// room. Counting those put a gigabyte against an app using under a hundred megabytes.
+    func footprintBytes() -> Int {
+        let page = Int(getpagesize())
+        let pages = (length + page - 1) / page
+        guard pages > 0 else { return 0 }
+        var vec = [CChar](repeating: 0, count: pages)
+        guard mincore(UnsafeRawPointer(base), length, &vec) == 0 else { return 0 }
+        let written = MINCORE_ANONYMOUS | MINCORE_MODIFIED | MINCORE_COPIED
+        return vec.reduce(0) { total, flags in
+            let v = Int32(UInt8(bitPattern: flags))
+            let counts = v & MINCORE_PAGED_OUT != 0 || (v & MINCORE_INCORE != 0 && v & written != 0)
+            return counts ? total + page : total
+        }
+    }
+
     private var length: Int
 
     private static func pages(_ bytes: Int) -> Int {
@@ -294,6 +312,9 @@ final class Column<T> {
     }
     var byteCount: Int {
         storage.count * MemoryLayout<T>.stride
+    }
+    var footprintBytes: Int {
+        storage.footprintBytes()
     }
 
     @inline(__always) subscript(i: Int) -> T {
@@ -348,6 +369,9 @@ final class IntColumn<S: FixedWidthInteger & UnsignedInteger> {
     }
     var byteCount: Int {
         storage.count * MemoryLayout<S>.stride
+    }
+    var footprintBytes: Int {
+        storage.footprintBytes()
     }
 
     @inline(__always) subscript(i: Int) -> Int {

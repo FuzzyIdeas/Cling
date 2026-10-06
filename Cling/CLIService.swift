@@ -638,6 +638,7 @@ extension FuzzyClient {
             var volumeStatuses: [ClingVolumeStatus] = []
             var everythingState: String?
             var everythingCount: Int?
+            var everythingWalked: Int?
             let sem = DispatchSemaphore(value: 0)
             DispatchQueue.main.async {
                 defer { sem.signal() }
@@ -721,11 +722,14 @@ extension FuzzyClient {
                 }
                 everythingState = EVERYTHING.state
                 everythingCount = EVERYTHING.count
+                everythingWalked = EVERYTHING.walking ? EVERYTHING.walked : nil
                 switch EVERYTHING.state {
                 case "unloaded":
                     lines.append("everything: unloaded")
                 case "loading":
                     lines.append("everything: loading")
+                case "indexing" where !EVERYTHING.building:
+                    lines.append("everything: indexing, \(EVERYTHING.walked.formatted()) entries walked, \(EVERYTHING.count.formatted()) searchable until it finishes")
                 default:
                     lines.append("everything: \(EVERYTHING.state), \(EVERYTHING.count.formatted()) entries")
                 }
@@ -754,7 +758,8 @@ extension FuzzyClient {
                 scopes: scopeStatuses,
                 volumes: volumeStatuses,
                 everything: everythingState,
-                everythingCount: everythingCount
+                everythingCount: everythingCount,
+                everythingWalked: everythingWalked
             )
 
         case .recents:

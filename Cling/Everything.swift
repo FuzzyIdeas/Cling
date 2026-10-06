@@ -64,6 +64,10 @@ final class EverythingIndex {
     /// How long it stays in memory after it is switched off, or after the window goes away while it is on.
     static let unloadDelay: TimeInterval = 10 * 60
 
+    nonisolated static var indexFile: FilePath {
+        everythingIndexFile
+    }
+
     /// Searches go to this index instead of the normal one.
     private(set) var enabled = false
     private(set) var loading = false
@@ -72,6 +76,9 @@ final class EverythingIndex {
     /// Any walk, including one that replaces the loaded engine when it is done.
     private(set) var walking = false
     private(set) var count = 0
+    /// Entries the walk in progress has reached. A walk that replaces the loaded engine fills one of its own, so
+    /// `count` stays the size of the index still being searched until the walk is done.
+    private(set) var walked = 0
     /// Set when the toggle is used without a Pro licence; the search bar button shows the Pro prompt for it.
     var showProPrompt = false
 
@@ -387,6 +394,7 @@ final class EverythingIndex {
     private func walk(priority: TaskPriority) {
         guard !walking else { return }
         walking = true
+        walked = 0
         // Changes made from here on are replayed on top of this walk once it is watched.
         let start = EverythingSnapshot.current
         let fresh = SearchEngine()
@@ -400,8 +408,14 @@ final class EverythingIndex {
             snapshot.volumes = Self.internalVolumes()
             let started = snapshot
             let t0 = CFAbsoluteTimeGetCurrent()
+            let began = Date()
             await Self.walkEverything(into: fresh, volumes: started.volumes) {
-                Task { @MainActor in self.applied(to: fresh) }
+                Task { @MainActor in
+                    if self.walking {
+                        self.walked = fresh.count
+                    }
+                    self.applied(to: fresh)
+                }
             }
             let walked = CFAbsoluteTimeGetCurrent()
             try? FileManager.default.createDirectory(at: everythingFolder.url, withIntermediateDirectories: true)
@@ -424,6 +438,8 @@ final class EverythingIndex {
             await MainActor.run {
                 self.walking = false
                 self.building = false
+                self.walked = n
+                IndexWalks.record(.everything, started: began)
                 FUZZY.logActivity("Everything indexed: \(n.formatted()) files")
                 guard self.engine != nil else { return }
                 self.stopWatching()

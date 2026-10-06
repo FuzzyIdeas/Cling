@@ -373,20 +373,17 @@ struct Reindex: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Trigger reindexing of the filesystem",
         discussion: """
-        By default, performs an incremental reindex that re-walks enabled scopes and \
-        updates the in-memory index with any changes since the last full index.
+        Walks the enabled scopes again from scratch. Search keeps using the current \
+        index meanwhile, and each scope's saved index is replaced as its walk finishes.
 
-        With --rebuild, performs a full rebuild: deletes all persisted .idx files, \
-        clears the in-memory index, and re-walks the entire filesystem from scratch. \
-        This is useful when the index is corrupted or after significant changes to \
-        the ignore file or blocklist.
+        With --rebuild, the same walk runs with search paused until it finishes.
 
         With --cancel, stops any ongoing indexing. Combine with --scope to cancel \
         specific scopes or volumes only.
         """
     )
 
-    @Flag(name: .shortAndLong, help: "Force full rebuild: delete persisted indexes and re-walk from scratch")
+    @Flag(name: .shortAndLong, help: "Pause search until the walk finishes")
     var rebuild = false
 
     @Flag(name: .shortAndLong, help: "Cancel ongoing indexing instead of starting a new one")
@@ -431,6 +428,7 @@ struct Reindex: ParsableCommand {
             }
         }
 
+        let t0 = CFAbsoluteTimeGetCurrent()
         let command: ClingCommand = cancel ? .cancelIndex : .reindex
         let request = ClingRequest(command: command, rebuild: rebuild, scopes: scopes.isEmpty && volumes.isEmpty ? nil : scopes, paths: volumes.isEmpty ? nil : volumes)
         guard let data = try sendMachPort(data: request.encoded(), recvTimeout: 300) else {
@@ -456,6 +454,11 @@ struct Reindex: ParsableCommand {
         let scopeFilter = Set(scopes.map { $0.lowercased() })
         let volumeFilter = Set(volumes)
         let hasFilter = !scopeFilter.isEmpty || !volumeFilter.isEmpty
+        // Every scope and volume seen indexing during this wait. One that finishes keeps its place in the progress
+        // line with its final count, and the total adds them all up: picking only those still indexing left nothing
+        // to count once the last one finished, so a reindex of everything always ended in "0 entries".
+        var seenScopes = Set<String>()
+        var seenVolumes = Set<String>()
 
         // Must observe at least one "indexing" poll before exiting, to avoid
         // returning before the app picks up the reindex request. If we never see
@@ -478,13 +481,15 @@ struct Reindex: ParsableCommand {
             else { continue }
 
             let matchingScopes = (statusResp.scopes ?? []).filter { s in
-                guard hasFilter else { return s.indexing }
+                guard hasFilter else { return s.indexing || seenScopes.contains(s.rawValue) }
                 return scopeFilter.contains(s.rawValue.lowercased()) || scopeFilter.contains(s.name.lowercased())
             }
             let matchingVolumes = (statusResp.volumes ?? []).filter { v in
-                guard hasFilter else { return v.indexing }
+                guard hasFilter else { return v.indexing || seenVolumes.contains(v.path) }
                 return volumeFilter.contains(v.path) || volumeFilter.contains("/Volumes/\(v.name)")
             }
+            seenScopes.formUnion(matchingScopes.filter(\.indexing).map(\.rawValue))
+            seenVolumes.formUnion(matchingVolumes.filter(\.indexing).map(\.path))
 
             let scopeParts = matchingScopes.compactMap { s -> String? in
                 if let opCount = s.operationCount {
@@ -493,7 +498,7 @@ struct Reindex: ParsableCommand {
                 if let op = s.operation {
                     return "[\(s.name)] \(op)"
                 }
-                return nil
+                return !s.indexing && seenScopes.contains(s.rawValue) ? "[\(s.name)] \(s.count.formatted()) files" : nil
             }
             let volumeParts = matchingVolumes.compactMap { v -> String? in
                 if let opCount = v.operationCount {
@@ -502,13 +507,14 @@ struct Reindex: ParsableCommand {
                 if let op = v.operation {
                     return "[\(v.name)] \(op)"
                 }
-                return nil
+                return !v.indexing && seenVolumes.contains(v.path) ? "[\(v.name)] \(v.count.formatted()) files" : nil
             }
             let progressLine = (scopeParts + volumeParts).joined(separator: "  ")
             let liveCount = matchingScopes.reduce(0) { $0 + ($1.operationCount ?? 0) }
                 + matchingVolumes.reduce(0) { $0 + ($1.operationCount ?? 0) }
             let finalCount = matchingScopes.reduce(0) { $0 + $1.count } + matchingVolumes.reduce(0) { $0 + $1.count }
-            let display = progressLine.isEmpty ? "indexing... \(finalCount.formatted()) entries" : progressLine
+            let operation = statusResp.operation.flatMap { $0.isEmpty ? nil : $0 }
+            let display = progressLine.isEmpty ? operation ?? "indexing..." : progressLine
             fputs("\r\u{1B}[K\(display)", stderr)
 
             let anyScopeIndexing = matchingScopes.contains { $0.indexing }
@@ -545,7 +551,7 @@ struct Reindex: ParsableCommand {
             if !stillIndexing, sawIndexing || completedFast {
                 fputs("\n", stderr)
                 let reportCount = finalCount > 0 ? finalCount : liveCount
-                print("indexed: \(reportCount.formatted()) entries")
+                print("indexed: \(reportCount.formatted()) entries in \(Int(CFAbsoluteTimeGetCurrent() - t0))s")
                 break
             }
             if !sawIndexing, pollsWithoutIndexing >= gracePolls {
@@ -576,6 +582,7 @@ extension Reindex {
         }
 
         let t0 = CFAbsoluteTimeGetCurrent()
+        var showedProgress = false
         while true {
             if let deadline = CLI_DEADLINE, Date() > deadline {
                 print("still indexing everything; the status command shows how far it got")
@@ -587,12 +594,17 @@ extension Reindex {
                   let status = try? JSONDecoder().decode(ClingResponse.self, from: statusData)
             else { continue }
             let count = status.everythingCount ?? 0
-            fputs("\rindexing everything: \(count.formatted()) entries (\(Int(CFAbsoluteTimeGetCurrent() - t0))s)", stderr)
             if status.everything != "indexing" {
-                fputs("\n", stderr)
+                if showedProgress {
+                    fputs("\n", stderr)
+                }
                 print("everything: \(count.formatted()) entries in \(Int(CFAbsoluteTimeGetCurrent() - t0))s")
                 return
             }
+            // The walk's own count: the index it replaces stays searchable, at its full size, until the walk is done.
+            let walked = status.everythingWalked ?? count
+            fputs("\r\u{1B}[Kindexing everything: \(walked.formatted()) entries (\(Int(CFAbsoluteTimeGetCurrent() - t0))s)", stderr)
+            showedProgress = true
         }
     }
 }

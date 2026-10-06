@@ -1355,6 +1355,23 @@ final class SearchEngine: @unchecked Sendable {
     /// `-mapIndexFiles NO` reads them into the heap, for comparing the two.
     nonisolated(unsafe) static var mapIndexFiles = UserDefaults.standard.object(forKey: "mapIndexFiles") as? Bool ?? true
 
+    /// Memory held by the file extension table every engine shares, built from the first index loaded: its three
+    /// dictionaries, and the names too long for a String to keep inline (stored once, both dictionaries holding them).
+    static var extensionTableBytes: Int {
+        extLock.withLock {
+            func storage<K, V>(_ dictionary: [K: V]) -> Int {
+                // `capacity` is three quarters of the buckets, each holding a key, a value and a bit of the occupancy map.
+                let buckets = dictionary.capacity * 4 / 3
+                return buckets * (MemoryLayout<K>.stride + MemoryLayout<V>.stride) + buckets / 8
+            }
+            let names = globalExtToID.keys.reduce(0) { total, ext in
+                let n = ext.utf8.count
+                return n > 15 ? total + (32 + n + 1 + 15) / 16 * 16 : total
+            }
+            return storage(globalExtToID) + storage(globalExtHashToID) + storage(globalIdToExt) + names
+        }
+    }
+
     var count: Int {
         lock.withLock { liveCount }
     }
@@ -1367,6 +1384,18 @@ final class SearchEngine: @unchecked Sendable {
     /// Whether the index is read from a mapped file rather than held in the heap.
     var isMapped: Bool {
         lock.withLock { masks.storage.isMapped }
+    }
+
+    /// What the index adds to the app's memory: the pages of its columns it has written to, and the tables kept on the
+    /// heap. The clean pages mapped from its file are left to the system's file cache.
+    var footprintBytes: Int {
+        lock.withLock {
+            let columns = entries.footprintBytes + bnBoundaries.footprintBytes + masks.footprintBytes + bnMasks.footprintBytes
+                + allBytes.footprintBytes + caseBits.footprintBytes + byteOffsets.footprintBytes + byteLengths.footprintBytes
+                + extIDs.footprintBytes
+            let tables = pathTable.memoryBytes + (free.capacity + (sortedByPath?.capacity ?? 0)) * MemoryLayout<Int>.stride
+            return columns + tables
+        }
     }
 
     // MARK: - FTS Filesystem Walker

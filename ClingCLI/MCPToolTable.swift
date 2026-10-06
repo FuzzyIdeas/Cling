@@ -447,8 +447,8 @@ extension MCPServer {
         MCPTool(
             name: "cling_reindex",
             description: "Walk scopes or volumes again. With no scopes it walks everything, which takes minutes on "
-                + "a large home folder; name the scope or volume that changed instead. rebuild throws away the "
-                + "saved index first, for a corrupted one, and is slower. cancel stops indexing. everything walks "
+                + "a large home folder; name the scope or volume that changed instead. rebuild pauses search until "
+                + "the walk is done; the walk is the same without it, and both replace the saved index. cancel stops indexing. everything walks "
                 + "the Everything index again (Pro), which normally follows file changes on its own. wait returns "
                 + "when it is done, or after 10 minutes saying it is still going. Changing an ignore list through "
                 + "cling_ignore already reindexes what it covers. " + gate,

@@ -217,6 +217,7 @@ public struct ClingResponse: Codable {
         volumes: [ClingVolumeStatus]? = nil,
         everything: String? = nil,
         everythingCount: Int? = nil,
+        everythingWalked: Int? = nil,
         payload: String? = nil
     ) {
         self.results = results
@@ -230,6 +231,7 @@ public struct ClingResponse: Codable {
         self.volumes = volumes
         self.everything = everything
         self.everythingCount = everythingCount
+        self.everythingWalked = everythingWalked
         self.payload = payload
     }
 
@@ -245,6 +247,9 @@ public struct ClingResponse: Codable {
     /// State of the Everything index: unloaded, loading, indexing or ready.
     public var everything: String?
     public var everythingCount: Int?
+    /// Entries a walk of the Everything index has reached so far. A walk that replaces a loaded index fills a new
+    /// one, and `everythingCount` stays the size of the one still searched until it does.
+    public var everythingWalked: Int?
     /// The configuration commands' answer as JSON, for `--json` and the MCP server. `status` carries the
     /// same answer worded for a terminal.
     public var payload: String?

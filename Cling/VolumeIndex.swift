@@ -318,6 +318,7 @@ extension FuzzyClient {
         try? FileManager.default.removeItem(at: checkpointFile)
 
         let task = Task.detached(priority: .utility) {
+            let started = Date()
             let volumeName = volume.name.string
             let opKey = "volume:\(volume.string)"
             await MainActor.run { self.logActivity("Indexing volume: \(volumeName)", ongoing: true, operationKey: opKey) }
@@ -360,6 +361,7 @@ extension FuzzyClient {
                         releaseInBackground(self.smbMetadataCaches.updateValue(metaCache, forKey: volume))
                     }
                     self.updateIndexedCount()
+                    IndexWalks.record(.volume(volume), started: started)
                     self.logActivity("Indexed volume: \(volumeName) (\(result.added.formatted()) files)", operationKey: opKey)
                     if !Defaults[.metadataPrunedVolumes].contains(volume) {
                         Defaults[.metadataPrunedVolumes].append(volume)
