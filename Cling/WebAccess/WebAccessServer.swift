@@ -299,8 +299,8 @@ final class WebAccessServer: @unchecked Sendable {
     }
 
     /// The real path `raw` names, with its symlinks resolved and the case on disk, when it exists and is outside the
-    /// private locations. What is served or walked is always this spelling, so `/users/alin` can't reach
-    /// `/Users/alin/.ssh` through a ZIP of the folder that the blocklist, which compares strings, wouldn't catch.
+    /// private locations. What is served or walked is always this spelling, so `/users/alex` can't reach
+    /// `/Users/alex/.ssh` through a ZIP of the folder that the blocklist, which compares strings, wouldn't catch.
     private static func cleanPath(_ raw: String) -> String? {
         guard raw.hasPrefix("/"), !raw.contains("//") else { return nil }
         guard !raw.split(separator: "/").contains(where: { $0 == "." || $0 == ".." }) else { return nil }

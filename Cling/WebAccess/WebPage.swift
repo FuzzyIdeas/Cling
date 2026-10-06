@@ -2,8 +2,7 @@
 //  WebPage.swift
 //  Cling
 //
-//  The HTML for Web Access: one page, and the fragments htmx swaps into it. Copy is drafted in
-//  docs/web-access-copy.md.
+//  The HTML for Web Access: one page, and the fragments htmx swaps into it.
 //
 
 import Foundation

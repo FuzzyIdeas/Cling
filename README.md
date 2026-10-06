@@ -91,17 +91,29 @@ Cling is for quickly finding one or more specific files by roughly knowing the n
 
 #### Memory usage
 
-To provide instant search results, Cling maintains an in-memory index of your filesystem split across separate engines for each search scope. This can consume a significant amount of memory, ranging from `300MB` to `2GB` depending on the size of your filesystem and the number of files indexed.
+Each search scope and each drive has its own index, saved as a file on disk. Cling maps those files into memory instead of reading them in: macOS loads the pages a search needs straight from the file, and drops them again whenever it needs the room. A loaded index adds almost nothing to Cling's memory until something changes it.
 
-Whenever Cling is in background *(the window is not visible)*, the index will be marked as **swappable to disk**. This allows macOS to move the index to disk and free up RAM when memory pressure is high. Cling will reload the index from disk when you open its window again.
+What does count:
+
+- **File changes**: a change rewrites the few pages that hold it, and the first change also builds a lookup table, a few megabytes for a scope with a few hundred thousand files
+- **Extension table**: one table of file extensions shared by every index, usually under 10 MB
+- **Search buffers**: a search over millions of files works in memory that goes back to the system as soon as the search is done
+
+The **Everything** index stays on disk until you turn it on, and leaves memory 10 minutes after you turn it off or close the window.
+
+On disk, an index takes about 160 bytes per file. The index size view in the status bar shows each index's files, size on disk, memory and when it was last indexed in full.
 
 #### CPU usage
 
 The most CPU-intensive operations are:
 
-- **Indexing**: when Cling is indexing your filesystem for the first time, it will consume a significant amount of CPU for about 1 to 5 minutes
-- **Re-indexing**: periodically, about once every 3 days, Cling will re-index the filesystem to keep the index up-to-date
+- **Indexing**: when Cling is indexing your filesystem for the first time, it will keep the CPU busy for about 1 to 5 minutes
+- **Following changes**: the indexes follow file changes as they happen, through FSEvents, instead of being re-indexed on a schedule
 - **Fuzzy search**: when you type in the search bar, Cling performs a parallel fuzzy search across all active engines
+
+When Cling launches, each index catches up by replaying the file changes made since it was saved. While Cling is closed, a small background job gathers those changes every few hours, waiting for a moment when you're not using the Mac, so the next launch has less to replay. It can be turned off with *Watch file events in the background* in Settings > Search.
+
+A scope is walked again from scratch only when there is no history to replay: after a macOS update, when its ignore rules changed while Cling was closed, or when macOS threw away its file change history. External drives are walked again once a week by default, which can be changed per drive in Settings > Drives & Volumes.
 
 Searching will consume CPU in short bursts. In a Release build, a typical search across 9+ million files completes in under 100ms. When Cling is in background, it will pause searching and consume very little CPU for processing file changes.
 
@@ -111,7 +123,7 @@ The impact on battery is proportional to how many searches you do and how many f
 
 Even though a search will look like it's consuming 100% CPU of multiple cores, it's a very fast operation and the battery energy used isn't that high in the long term.
 
-Processing and indexing file changes is very efficient and will not impact battery life significantly.
+Processing and indexing file changes is very efficient and barely touches battery life. Walking a scope again waits while the battery is under 30%.
 
 ---
 
@@ -124,19 +136,21 @@ Filesystem ──► fts_read (local) / FileManager (external)
               ┌───────────────────────┐
               │  Binary Index (.idx)  │  one per scope/volume
               │  parallel arrays:     │  persists across launches
-              │   · path bytes (LC)   │
+              │   · path bytes (LC)   │  saved again after 20k changes or 6h
               │   · 64-bit bitmasks   │
               │   · basename bitmasks │
               │   · word boundaries   │
               │   · extension IDs     │
               └────────┬──────────────┘
-                       │ load (mmap + memcpy)
+                       │ mmap: pages read on demand,
+                       │ copied only when a change writes them
                        ▼
               ┌───────────────────────┐
               │  Search Engines       │◄── FSEvents (live updates)
-              │  · per-scope (Home,   │◄── MDQuery  (recents)
-              │    Apps, Library, …) │
-              │  · per-volume         │
+              │  · per-scope (Home,   │◄── replay since last save (launch)
+              │    Apps, Library, …) │◄── catch-up journal (while closed)
+              │  · per-volume         │◄── MDQuery  (recents)
+              │  · Everything         │
               │  · recents            │
               └────────┬──────────────┘
                        │
@@ -158,6 +172,8 @@ Filesystem ──► fts_read (local) / FileManager (external)
                · multi-token independent scoring
                · SIMD byte search for long paths
                · boundary/camelCase/delimiter bonuses
+               · typo pass: one letter extra, missing,
+                 swapped or mistyped (two in long words)
                        │
                        ▼
               Multi-engine Orchestration
@@ -169,6 +185,7 @@ Filesystem ──► fts_read (local) / FileManager (external)
                · quality gate (top-third filter)
                · composite rank: score, importance,
                  prefix match, basename match, depth
+               · misspelt names after exact matches
                · deduplicate by path
                        │
                        ▼

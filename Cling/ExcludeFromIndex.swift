@@ -830,7 +830,7 @@ struct ExcludeFromIndexSheet: View {
     /// Whether every selected path is still excluded by `rules`. fsignore rules are tested with the real
     /// gitignore matcher (so wildcards, anchoring and dir contents behave exactly like the index walker);
     /// blocklist rules use the literal byte matcher. Using the engine's own matcher is why a wildcarded rule
-    /// like `/Music/nano/*.m4a` correctly reports as still matching `/Music/nano/uke-gdbf.m4a`.
+    /// like `/Music/Demos/*.m4a` correctly reports as still matching `/Music/Demos/take-3.m4a`.
     private func selectionMatches(_ rules: [ExcludeRule], infos: [ExcludePathInfo]) -> Bool {
         let blockRules = rules.filter { $0.mechanism == .blocklist }
         let fsLines = rules.filter { $0.mechanism != .blocklist }.map(\.line).filter { !$0.isEmpty }

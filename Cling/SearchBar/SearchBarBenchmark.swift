@@ -672,6 +672,12 @@
                 WM.open("main")
                 return
             }
+            // The main window on the index size view, for its stats.
+            if CommandLine.arguments.contains("-searchBarShowcaseIndexBrowser") {
+                WM.open("main")
+                FUZZY.showIndexBrowser = true
+                return
+            }
             if CommandLine.arguments.contains("-searchBarShowcaseCheatsheet") {
                 let window = NSWindow(contentViewController: NSHostingController(rootView: QuerySyntaxCheatsheet().frame(height: 560)))
                 window.title = "Search syntax"

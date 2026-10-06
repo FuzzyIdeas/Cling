@@ -342,7 +342,7 @@ private func fuzzyScoreBytes(
 
     // Anchor enumeration: try matching from each pat[0] occurrence and keep
     // the best-scoring alignment. Plain leftmost-greedy misses tighter matches:
-    // e.g. "lnr" against "/users/alin/projects/lunar/..." picks 'l' in 'alin'
+    // e.g. "lnr" against "/users/alex/projects/lunar/..." picks 'l' in 'alex'
     // (cross-segment, low score) and never explores 'lunar' (single-segment,
     // boundary-aligned, much higher score).
     var anchorFrom = 0
@@ -470,7 +470,7 @@ private func letterMaskBytes(_ p: UnsafeBufferPointer<UInt8>) -> UInt64 {
 /// How far a typed extension is from a real one, in the terms the person typing was thinking in.
 ///
 /// Dropping letters is abbreviation, not error: `ml` is how you shorten `toml`, the same way
-/// `cfghrd` shortens `config herdr`. Levenshtein charges two deletions for that while charging only
+/// `cfghlx` shortens `config helix`. Levenshtein charges two deletions for that while charging only
 /// one substitution for `ml` against `md`, which ranked a README above the `.toml` actually being
 /// looked for. A tail contained in the extension in order is therefore free, and edit distance is
 /// left to do what it is good at: catching a genuine slip like `yml` for `toml`.
@@ -530,7 +530,7 @@ private let extTailMaxDistance = 2
 
 /// What an approximately-matched extension is worth, on the same scale the fuzzy matcher pays for
 /// characters it really did match (`scoreMatch` each). An exact extension earns the full amount, so
-/// reading `hrdrcfgtml` as name + `tml` scores like the ten-character match it is; two edits away
+/// reading `helixcfgtml` as name + `tml` scores like the eleven-character match it is; two edits away
 /// earns a third of it. Without this a split reading always loses to a longer literal subsequence,
 /// however much junk that subsequence had to walk through.
 private func extCredit(distance: Int, maxDist: Int, tailLen: Int) -> Int {
@@ -552,8 +552,8 @@ private func extensionTailSplits(_ q: String) -> [(head: String, tail: [UInt8])]
     }
     var splits: [(head: String, tail: [UInt8])] = []
     // The name has to carry the search on its own. At 4 or 5 bytes a head matches half the disk,
-    // and the extension credit then promotes whichever of those happened to rank well:
-    // `hrdrcfg` split into `hrdr` + `cfg` lands on `hdr_sdr.cc`, two edits from `cfg`.
+    // and the extension credit then promotes whichever of those happened to rank well, even a
+    // `.cc` file, two edits from `cfg`.
     for tailLen in 2 ... 5 where bytes.count - tailLen >= 6 {
         splits.append((
             String(decoding: bytes[0 ..< (bytes.count - tailLen)], as: UTF8.self),
@@ -3013,8 +3013,8 @@ final class SearchEngine: @unchecked Sendable {
     }
 
     /// Searches, and for a bare query also reads it as a name plus a possibly-mistyped extension,
-    /// keeping whichever reading produces the better top result. `hrdrcfgyml` finds
-    /// `.config/herdr/config.toml`, because `yml` is two edits from `toml` and so is credited as a
+    /// keeping whichever reading produces the better top result. `hlxcfgyml` finds
+    /// `.config/helix/config.toml`, because `yml` is two edits from `toml` and so is credited as a
     /// near-match instead of having to contain its letters.
     ///
     /// The literal reading always competes on equal terms and keeps ties, so a query that today
@@ -3077,8 +3077,8 @@ final class SearchEngine: @unchecked Sendable {
         // Density is what stops gibberish inventing answers: `xyzwvutsrq` has no literal match at
         // all, so anything the split turns up would otherwise win by default.
         //
-        // The split's match may still be path-scattered across segments: `hrdrcfg` finds
-        // `.config/herdr/config.toml` over two directories and a filename, so requiring a basename
+        // The split's match may still be path-scattered across segments: `hlxcfg` finds
+        // `.config/helix/config.toml` over two directories and a filename, so requiring a basename
         // match would rule out the case this exists for. Density allows that; noise it does not.
         guard let top = retry.first, top.extCredit > 0,
               top.quality >= top.score / 2,
@@ -3680,7 +3680,7 @@ final class SearchEngine: @unchecked Sendable {
         // Per-token byte arrays for independent multi-token scoring. NFD-normalized to match APFS
         // storage (like qBytes), with a per-token NFC alternate (like qAltBytes) so an IME-typed
         // CJK/accented token still matches a path stored in the other normalization form. Without
-        // this, a query like "게임플라자 공지 2026" (typed NFC) never matches the NFD-stored path in
+        // this, a query like "회의록 2026" (typed NFC) never matches the NFD-stored path in
         // the multi-token pass, silently dropping the gap-free per-token score and its boundary
         // bonuses, so the file sinks below less relevant results.
         let tokenBytes: [[UInt8]]?
@@ -4698,8 +4698,8 @@ final class SearchEngine: @unchecked Sendable {
                                     var tokenSegMatches = 0
                                     // Terms get added in the order they occur to the person typing,
                                     // which need not be the order the path stores them in: someone
-                                    // narrowing `brgldpng` to one project types `brgldpng redink`,
-                                    // and the path spells it `redinkCore/.../ltg-barglider.png`.
+                                    // narrowing `bkgprvpng` to one project types `bkgprvpng vacation`,
+                                    // and the path spells it `Vacation/.../background-preview.png`.
                                     // Attempt 0 walks the tokens as typed; on failure, attempt 1
                                     // places each token independently and walks them in the order
                                     // the path actually puts them in. Only a query that would have

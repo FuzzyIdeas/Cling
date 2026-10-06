@@ -65,7 +65,7 @@ struct WebLink: Hashable, Identifiable {
     let host: String
     /// Served over HTTPS, with Tailscale's certificate for the name.
     var secure = false
-    /// Tailscale · black.tail1c1c.ts.net
+    /// Tailscale · mac.example.ts.net
     let title: String
 
     var id: String {

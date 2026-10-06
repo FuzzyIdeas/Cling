@@ -2,8 +2,7 @@
 //  WebAccessSettingsPane.swift
 //  Cling
 //
-//  Settings > File server: the switch, the port, and the link (with its QR code) that signs a browser in. Copy is
-//  drafted in docs/web-access-copy.md.
+//  Settings > File server: the switch, the port, and the link (with its QR code) that signs a browser in.
 //
 
 import AppKit
