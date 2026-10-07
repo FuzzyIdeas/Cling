@@ -118,6 +118,7 @@ extension SearchBarController {
         case .actions: showActionsMenu()
         case .window: switchToWindow()
         case .syntax: toggleSyntaxReference()
+        case .settings: WM.open("settings")
         }
     }
 

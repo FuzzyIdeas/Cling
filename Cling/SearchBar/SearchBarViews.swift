@@ -191,7 +191,7 @@ final class SearchBarIconButton: NSButton {
 
 struct SearchBarHint: Equatable {
     enum ID: Equatable {
-        case open, paste, showInFinder, quickLook, copy, drill, actions, window, syntax
+        case open, paste, showInFinder, quickLook, copy, drill, actions, window, syntax, settings
     }
 
     let id: ID
@@ -292,11 +292,19 @@ final class SearchBarHintBar: NSView {
         let capAlpha: CGFloat = dimmed ? 0.55 : 1
         let textAlpha: CGFloat = dimmed ? 0.65 : 1
 
+        // A gear at the far end, for anyone who doesn't know ⌘, opens Settings.
+        let gear = Self.gearImage()
+        let gearRect = NSRect(
+            x: bounds.width - gear.size.width - 14, y: (bounds.height - gear.size.height) / 2,
+            width: gear.size.width, height: gear.size.height
+        )
+        context.setAlpha(textAlpha)
+        gear.draw(in: gearRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+
         let statusText = flashText ?? status
         let statusStyle: SearchBarTextCache.Style = flashText == nil ? .status : .flash
         let statusSize = text.size(statusText, style: statusStyle)
-        let statusX = bounds.width - statusSize.width - 14
-        context.setAlpha(textAlpha)
+        let statusX = gearRect.minX - statusSize.width - 12
         text.draw(
             statusText, style: statusStyle, at: NSPoint(x: statusX, y: (bounds.height - statusSize.height) / 2),
             color: flashText == nil ? .tertiaryLabelColor : .controlAccentColor
@@ -342,11 +350,16 @@ final class SearchBarHintBar: NSView {
             rects.append((hint.id, NSRect(x: x - 4, y: 0, width: width + 8, height: bounds.height)))
             x += width + 16
         }
+        rects.append((.settings, NSRect(x: gearRect.minX - 6, y: 0, width: gearRect.width + 12, height: bounds.height)))
         // Cursor rects are part of the window's structural regions, which AppKit recomputes in
         // full when they're invalidated, so only when the hints actually moved.
         if !rects.elementsEqual(hintRects, by: { $0.0 == $1.0 && $0.1 == $1.1 }) {
             hintRects = rects
             window?.invalidateCursorRects(for: self)
+            removeAllToolTips()
+            if let gearHit = rects.last?.1 {
+                addToolTip(gearHit, owner: self, userData: nil)
+            }
         }
     }
 
@@ -389,6 +402,14 @@ final class SearchBarHintBar: NSView {
         }
     }
 
+    /// In the hint keys' grey, resolved now, while this view's appearance is the current one.
+    private static func gearImage() -> NSImage {
+        let color = NSColor(cgColor: NSColor.secondaryLabelColor.cgColor) ?? .secondaryLabelColor
+        let config = NSImage.SymbolConfiguration(pointSize: FontScale.size(11, .chrome), weight: .semibold)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        return NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Settings")?.withSymbolConfiguration(config) ?? NSImage()
+    }
+
     private func updateDimming() {
         needsDisplay = true
     }
@@ -400,6 +421,14 @@ final class SearchBarHintBar: NSView {
         hovering = bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
     }
 
+}
+
+// MARK: NSViewToolTipOwner
+
+extension SearchBarHintBar: NSViewToolTipOwner {
+    func view(_: NSView, stringForToolTip _: NSView.ToolTipTag, point _: NSPoint, userData _: UnsafeMutableRawPointer?) -> String {
+        "Settings ⌘,"
+    }
 }
 
 // MARK: - SearchBarCardView
