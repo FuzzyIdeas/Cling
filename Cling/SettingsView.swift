@@ -680,6 +680,32 @@ func selectionResetLabel(_ seconds: TimeInterval) -> String {
     }
 }
 
+// MARK: - LaunchAtLoginToggle
+
+/// Stands in for `LaunchAtLogin.Toggle`, whose binding reads `SMAppService.mainApp.status` (a synchronous XPC call to
+/// the login-items daemon) every time SwiftUI reads it, including on each layout pass of the Settings window. The status
+/// is read here when the view appears and when the app is activated, since the user may change it in System Settings.
+private struct LaunchAtLoginToggle: View {
+    @State private var isEnabled = false
+
+    var body: some View {
+        Toggle(
+            "Launch at login",
+            isOn: Binding(
+                get: { isEnabled },
+                set: { newValue in
+                    LaunchAtLogin.isEnabled = newValue
+                    isEnabled = LaunchAtLogin.isEnabled
+                }
+            )
+        )
+        .onAppear { isEnabled = LaunchAtLogin.isEnabled }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            isEnabled = LaunchAtLogin.isEnabled
+        }
+    }
+}
+
 // MARK: - GeneralSettingsPane
 
 private struct GeneralSettingsPane: View {
@@ -688,7 +714,7 @@ private struct GeneralSettingsPane: View {
     var body: some View {
         Form {
             Section {
-                LaunchAtLogin.Toggle()
+                LaunchAtLoginToggle()
                     .accessibilityLabel("Launch at login")
             }
 
