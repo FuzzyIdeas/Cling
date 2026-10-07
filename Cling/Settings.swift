@@ -710,6 +710,8 @@ extension Defaults.Keys {
     static let fontScale = Key<Double>("fontScale", default: 1)
     static let defaultResultsMode = Key<DefaultResultsMode>("defaultResultsMode", default: .recentFiles)
     static let showSearchHints = Key<Bool>("showSearchHints", default: true)
+    /// Paths the live index changes list leaves out while they stay indexed: a file, or a folder and what's in it.
+    static let hiddenLiveEventPaths = Key<[String]>("hiddenLiveEventPaths", default: [])
     static let searchHintsManuallyEnabled = Key<Bool>("searchHintsManuallyEnabled", default: false)
     static let searchHintsFirstShownAt = Key<TimeInterval>("searchHintsFirstShownAt", default: 0)
     /// When on, a plain word must appear as contiguous text instead of as a fuzzy subsequence, and

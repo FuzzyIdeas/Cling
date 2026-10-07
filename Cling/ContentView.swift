@@ -388,7 +388,10 @@ struct ContentView: View {
 
     @State private var liveChangeSortOrder = [KeyPathComparator(\FuzzyClient.IndexChange.date, order: .reverse)]
     @State private var liveChangesIndexedOnly = true
-
+    /// The list as it was when Pause was pressed, shown instead of the live one until Resume, so rows don't move under
+    /// a selection.
+    @State private var pausedLiveChanges: [FuzzyClient.IndexChange]?
+    @State private var liveShowHidden = false
     @State private var runHistorySelection = Set<String>()
     @State private var liveIndexSelection = Set<UUID>()
     @State private var pathNotFoundMessage: String?
@@ -400,6 +403,8 @@ struct ContentView: View {
     @State private var lastSelectionQuery: String? = nil
 
     @Environment(\.colorScheme) private var colorScheme
+
+    @Default(.hiddenLiveEventPaths) private var hiddenLiveEventPaths
 
     @Default(.fontScale) private var fontScale
     @Default(.minQueryLength) private var minQueryLength
@@ -539,11 +544,27 @@ struct ContentView: View {
 
     private var sortedLiveChanges: [FuzzyClient.IndexChange] {
         let q = fuzzy.query.trimmingCharacters(in: .whitespaces).lowercased()
-        // No query: show the most recent slice. With a query: search the whole deduplicated history (bounded,
-        // so a change from a day ago is still findable), then cap the rendered rows.
-        let filtered: [FuzzyClient.IndexChange] = q.isEmpty
-            ? Array(fuzzy.liveIndexChanges.suffix(2000))
-            : fuzzy.liveIndexChanges.filter { $0.path.lowercased().contains(q) }
+        let changes = pausedLiveChanges ?? fuzzy.liveIndexChanges
+        let hidden = PathMatcher(hiddenLiveEventPaths)
+        let excluded = PathMatcher(fuzzy.excludedPaths)
+        func listed(_ change: FuzzyClient.IndexChange) -> Bool {
+            !excluded.contains(change.path) && (liveShowHidden || !hidden.contains(change.path))
+                && (q.isEmpty || change.path.lowercased().contains(q))
+        }
+        // No query: show the most recent slice, counted after hiding, so a log written every second can't push
+        // everything else out of it. With a query: search the whole deduplicated history (bounded, so a change from
+        // a day ago is still findable), then cap the rendered rows.
+        var filtered: [FuzzyClient.IndexChange] = []
+        if q.isEmpty {
+            for change in changes.reversed() where listed(change) {
+                filtered.append(change)
+                if filtered.count == 2000 {
+                    break
+                }
+            }
+        } else {
+            filtered = changes.filter(listed)
+        }
         let afterBlock: [FuzzyClient.IndexChange] = if liveChangesIndexedOnly {
             filtered.filter { change in
                 !isPathBlocked(change.path) && !(change.path.hasPrefix(HOME.string) && change.path.isIgnored(in: fsignoreString))
@@ -667,6 +688,15 @@ struct ContentView: View {
         NSApp.keyWindow === AppDelegate.shared.mainWindow
     }
 
+    private var hiddenLiveEvents: PathMatcher {
+        PathMatcher(hiddenLiveEventPaths)
+    }
+
+    /// The selected rows' paths, each once.
+    private var selectedLivePaths: [String] {
+        sortedLiveChanges.filter { liveIndexSelection.contains($0.id) }.map(\.path).uniqued
+    }
+
     /// Nothing at all while searching everything, so the tint itself carries the signal. Two
     /// filters at once give a gradient instead of a flat wash, so the window says both.
     @ViewBuilder private var scopeTint: some View {
@@ -690,6 +720,15 @@ struct ContentView: View {
         HStack(spacing: 10) {
             middleSection
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Here rather than on one of the lists, so every list can ask for it: the live changes list too.
+                .onReceive(NotificationCenter.default.publisher(for: .clingRequestExcludeSheet)) { notif in
+                    guard let paths = notif.object as? [FilePath], !paths.isEmpty else { return }
+                    excludeRequest = ExcludeSheetRequest(paths: paths)
+                }
+                .sheet(item: $excludeRequest) { request in
+                    ExcludeFromIndexSheet(paths: request.paths)
+                        .frame(width: 600, height: 540)
+                }
 
             if showFilePreview, isShowingResultsTable {
                 FilePreviewPanel(paths: previewPaths)
@@ -706,7 +745,28 @@ struct ContentView: View {
         if fuzzy.showLiveIndex {
             VStack(spacing: 0) {
                 HStack {
+                    if !liveIndexSelection.isEmpty {
+                        liveSelectionActions
+                            .padding(.leading, 8)
+                    }
                     Spacer()
+                    Button {
+                        pausedLiveChanges = pausedLiveChanges == nil ? fuzzy.liveIndexChanges : nil
+                    } label: {
+                        Label(pausedLiveChanges == nil ? "Pause" : "Resume", systemImage: pausedLiveChanges == nil ? "pause.fill" : "play.fill")
+                    }
+                    .controlSize(.mini)
+                    .font(.system(size: 10))
+                    .help("Freezes the list, the index keeps updating")
+                    if !hiddenLiveEventPaths.isEmpty {
+                        Toggle("Show hidden", isOn: $liveShowHidden)
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            // A mini switch reaches AX unnamed.
+                            .accessibilityLabel("Show hidden")
+                    }
                     Button("Run live index compaction") { fuzzy.compactLiveChangesManually() }
                         .controlSize(.mini)
                         .font(.system(size: 10))
@@ -718,6 +778,7 @@ struct ContentView: View {
                         .controlSize(.mini)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
+                        .accessibilityLabel("Indexed only")
                         .padding(.trailing, 8).padding(.vertical, 4)
                 }
                 liveIndexTable
@@ -1387,14 +1448,6 @@ struct ContentView: View {
             fuzzy.reverseSort = true
             sortOrder = [] // drop the sort indicator from the previously clicked column
         }
-        .onReceive(NotificationCenter.default.publisher(for: .clingRequestExcludeSheet)) { notif in
-            guard let paths = notif.object as? [FilePath], !paths.isEmpty else { return }
-            excludeRequest = ExcludeSheetRequest(paths: paths)
-        }
-        .sheet(item: $excludeRequest) { request in
-            ExcludeFromIndexSheet(paths: request.paths)
-                .frame(width: 600, height: 540)
-        }
     }
 
     private var runHistoryTable: some View {
@@ -1439,12 +1492,21 @@ struct ContentView: View {
                 Text(change.kind.rawValue)
                     .font(.scaled(12, design: .monospaced))
                     .foregroundStyle(liveChangeColor(change.kind))
+                    .opacity(liveRowOpacity(change))
             }.width(16)
 
             TableColumn("Name", value: \.name) { change in
-                Text(change.name)
-                    .lineLimit(1).truncationMode(.middle)
-                    .help(change.name)
+                HStack(spacing: 4) {
+                    if liveShowHidden, hiddenLiveEvents.contains(change.path) {
+                        Image(systemName: "eye.slash")
+                            .font(.scaled(10))
+                            .accessibilityLabel("Hidden")
+                    }
+                    Text(change.name)
+                        .lineLimit(1).truncationMode(.middle)
+                        .help(change.name)
+                }
+                .opacity(liveRowOpacity(change))
             }.width(min: 100, ideal: 200)
 
             TableColumn("Path", value: \.dir) { change in
@@ -1452,21 +1514,70 @@ struct ContentView: View {
                     .lineLimit(1).truncationMode(.middle)
                     .foregroundStyle(.secondary)
                     .help(change.dir)
+                    .opacity(liveRowOpacity(change))
             }.width(min: 100, ideal: 300)
 
             TableColumn("Time", value: \.date) { change in
                 Text(change.date.formatted(.dateTime.hour().minute().second()))
                     .font(.scaled(11, design: .monospaced))
                     .help(change.date.formatted(date: .abbreviated, time: .standard))
+                    .opacity(liveRowOpacity(change))
             }.width(min: 70, ideal: 80)
         }
         .homeEndSelectsRow(in: { sortedLiveChanges.map(\.id) }, select: { liveIndexSelection = [$0] })
         .contextMenu(forSelectionType: UUID.self) { ids in
             let paths = ids.compactMap { id in sortedLiveChanges.first { $0.id == id }.map { FilePath($0.path) } }
             filePathContextMenu(paths: paths)
+            Divider()
+            liveEventMenuItems(paths.map(\.string))
         } primaryAction: { ids in
             let paths = ids.compactMap { id in sortedLiveChanges.first { $0.id == id }.map { FilePath($0.path) } }
             openPathsIfExist(paths)
+        }
+    }
+
+    @ViewBuilder
+    private var liveSelectionActions: some View {
+        let paths = selectedLivePaths
+        let hidden = hiddenLiveEvents
+        HStack(spacing: 6) {
+            Button("Exclude from Index...") {
+                excludeRequest = ExcludeSheetRequest(paths: paths.map { FilePath($0) })
+            }
+            if paths.contains(where: { !hidden.contains($0) }) {
+                Menu("Hide from Events") {
+                    Button(paths.parents.count == 1 ? "Hide Folder from Events" : "Hide Folders from Events") {
+                        hideLiveEvents(paths.parents)
+                    }
+                } primaryAction: {
+                    hideLiveEvents(paths)
+                }
+                .fixedSize()
+                .help("Stays in the index")
+            }
+            if paths.contains(where: hidden.contains) {
+                Button("Unhide") { unhideLiveEvents(paths) }
+            }
+        }
+        .controlSize(.mini)
+        .font(.system(size: 10))
+    }
+
+    @ViewBuilder
+    private func liveEventMenuItems(_ rawPaths: [String]) -> some View {
+        let paths = rawPaths.uniqued
+        let hidden = hiddenLiveEvents
+        Button("Exclude from Index...") {
+            excludeRequest = ExcludeSheetRequest(paths: paths.map { FilePath($0) })
+        }
+        if paths.contains(where: { !hidden.contains($0) }) {
+            Button("Hide from Events") { hideLiveEvents(paths) }
+            Button(paths.parents.count == 1 ? "Hide Folder from Events" : "Hide Folders from Events") {
+                hideLiveEvents(paths.parents)
+            }
+        }
+        if paths.contains(where: hidden.contains) {
+            Button("Unhide") { unhideLiveEvents(paths) }
         }
     }
 
@@ -1617,6 +1728,20 @@ struct ContentView: View {
                 ? "Example: **`'rprt`** *(fuzzy text: finds report.pdf)*"
                 : "Example: **`'cat`** *(exact text: finds Cats or vacation, not contact)*",
         ]
+    }
+
+    private func liveRowOpacity(_ change: FuzzyClient.IndexChange) -> Double {
+        liveShowHidden && hiddenLiveEvents.contains(change.path) ? 0.45 : 1
+    }
+
+    private func hideLiveEvents(_ paths: [String]) {
+        hiddenLiveEventPaths = (hiddenLiveEventPaths + paths).uniqued
+        liveIndexSelection = []
+    }
+
+    /// Takes away every entry hiding one of `paths`, the folders above them included.
+    private func unhideLiveEvents(_ paths: [String]) {
+        hiddenLiveEventPaths.removeAll { entry in paths.contains { PathMatcher([entry]).contains($0) } }
     }
 
     private func handleFilterKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
@@ -2633,5 +2758,29 @@ struct RunHistoryRow: Identifiable {
 
     var id: String {
         path.string
+    }
+}
+
+// MARK: - PathMatcher
+
+/// Paths matched as entries or through a folder above them: an entry stands for itself and everything in it.
+private struct PathMatcher {
+    init(_ paths: some Sequence<String>) {
+        exact = Set(paths)
+        folders = exact.map { $0 + "/" }
+    }
+
+    func contains(_ path: String) -> Bool {
+        exact.contains(path) || folders.contains { path.hasPrefix($0) }
+    }
+
+    private let exact: Set<String>
+    private let folders: [String]
+}
+
+private extension [String] {
+    /// The folders holding these paths, each once.
+    var parents: [String] {
+        map { ($0 as NSString).deletingLastPathComponent }.uniqued
     }
 }

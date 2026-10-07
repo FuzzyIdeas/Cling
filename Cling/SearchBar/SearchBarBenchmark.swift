@@ -672,6 +672,16 @@
                 WM.open("main")
                 return
             }
+            // The main window on the live index changes.
+            if CommandLine.arguments.contains("-searchBarShowcaseLiveIndex") {
+                NSApp.activate(ignoringOtherApps: true)
+                WM.open("main")
+                FUZZY.showLiveIndex = true
+                if query != "-" {
+                    FUZZY.query = query
+                }
+                return
+            }
             // The main window on the index size view, for its stats.
             if CommandLine.arguments.contains("-searchBarShowcaseIndexBrowser") {
                 WM.open("main")
