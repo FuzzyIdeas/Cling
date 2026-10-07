@@ -24,6 +24,8 @@ enum WebPage {
         let name: String
         /// The one item is a folder, which the send dialog names as one.
         let folder: Bool
+        /// Something in it may be online only, for the page to get onto the Mac first.
+        let fetchFirst: Bool
     }
 
     /// What the options sheet narrows a search to. It rides in the page's URL, so a reload keeps it.
@@ -328,7 +330,7 @@ enum WebPage {
             """
             html += """
             <header class="crumb">\(back)<h1>\(escape(folderName(folder)))</h1>\
-            <a class="pill" href="\(escape(downloadURL(folder)))" download data-size="?">\(icon("download"))<span>Download folder</span></a></header>
+            <a class="pill" href="\(escape(downloadURL(folder)))" download data-size="?"\(WebCloudFetch.inCloud(folder) ? " data-cloud" : "")>\(icon("download"))<span>Download folder</span></a></header>
             """
         case nil:
             break
@@ -374,10 +376,13 @@ enum WebPage {
         if item.offline {
             meta.append("<span>Drive not connected</span>")
         } else {
+            let cloud = item.onlineOnly ? #"<span class="cloud" role="img" aria-label="Online only">\#(icon("cloud"))</span>"# : ""
             if item.browsable {
                 meta.append("<span>Folder</span>")
             } else if let size = item.size ?? (item.isPackage ? nil : 0) {
-                meta.append("<span>\(formatBytes(size))</span>")
+                meta.append("<span>\(cloud)\(formatBytes(size))</span>")
+            } else if !cloud.isEmpty {
+                meta.append("<span>\(cloud)</span>")
             }
             if let modified = item.modified {
                 meta.append("<span>\(escape(relativeDate(modified)))</span>")
@@ -389,7 +394,7 @@ enum WebPage {
         } else if item.browsable {
             #"<a class="main" href="\#(escape(pageURL(query: "", folder: item.path)))">"#
         } else if kind != .none {
-            #"<a class="main" href="\#(escape(viewURL(item.path)))" data-kind="\#(kind.rawValue)">"#
+            #"<a class="main" href="\#(escape(viewURL(item.path)))" data-kind="\#(kind.rawValue)"\#(item.fetchFirst ? " data-cloud" : "")>"#
         } else {
             #"<a class="main" href="\#(escape(downloadURL(item.path)))" download\#(sizeAttributes(item))>"#
         }
@@ -517,11 +522,12 @@ enum WebPage {
         let urls = "[" + summary.downloads.map { "\"\($0)\"" }.joined(separator: ",") + "]"
         let sized = #" data-size="\#(summary.bytes)" data-size-label="\#(escape(formatBytes(summary.bytes)))""#
             + (summary.complete ? "" : #" data-size-floor="1""#)
+        let cloud = summary.fetchFirst ? #" data-cloud="sel""# : ""
         let download = summary.count == 1
-            ? #"<a class="btn" href="\#(escape(summary.downloads[0]))" download\#(sized) aria-label="Download">\#(icon("download"))<span>Download</span></a>"#
-            : #"<button class="btn" type="button" data-urls="\#(escape(urls))"\#(sized) aria-label="Download">\#(icon("download"))<span>Download</span></button>"#
+            ? #"<a class="btn" href="\#(escape(summary.downloads[0]))" download\#(sized)\#(cloud) aria-label="Download">\#(icon("download"))<span>Download</span></a>"#
+            : #"<button class="btn" type="button" data-urls="\#(escape(urls))"\#(sized)\#(cloud) aria-label="Download">\#(icon("download"))<span>Download</span></button>"#
         let zip = summary.count == 1 ? "" : """
-        <a class="btn primary" href="\(escape(summary.zipURL))" download\(sized) aria-label="ZIP">\(icon("zip"))<span>ZIP</span></a>
+        <a class="btn primary" href="\(escape(summary.zipURL))" download\(sized)\(cloud) aria-label="ZIP">\(icon("zip"))<span>ZIP</span></a>
         """
         let kind = summary.count > 1 ? #" data-count="\#(summary.count)""# : summary.folder ? " data-folder" : ""
         let link = #"<button class="btn icon" type="button" data-link="selection" data-name="\#(escape(summary.name))"\#(sized)\#(kind) aria-label="Send securely">\#(icon("send"))</button>"#
@@ -580,8 +586,11 @@ enum WebPage {
 
     /// What a download's confirmation weighs (cling-web.js): a file's size, or "?" for a folder or package, whose ZIP
     /// is measured only when it's tapped.
+    /// What a download link carries for the page: the size its confirmation weighs, and whether the Mac has to get it
+    /// from the cloud first.
     static func sizeAttributes(_ item: WebItem) -> String {
-        item.isDir ? #" data-size="?""# : #" data-size="\#(item.size ?? 0)" data-size-label="\#(escape(formatBytes(item.size ?? 0)))""#
+        (item.isDir ? #" data-size="?""# : #" data-size="\#(item.size ?? 0)" data-size-label="\#(escape(formatBytes(item.size ?? 0)))""#)
+            + (item.fetchFirst ? " data-cloud" : "")
     }
 
     static func formatBytes(_ bytes: UInt64) -> String {
@@ -618,6 +627,7 @@ enum WebPage {
 
     private static let sprite = """
     <svg xmlns="http://www.w3.org/2000/svg" class="sprite">
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7.5 18.5H17a3.75 3.75 0 0 0 .4-7.48 5.5 5.5 0 0 0-10.6 1.24A3.25 3.25 0 0 0 7.5 18.5z"/></symbol>
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></symbol>
     <symbol id="i-send" viewBox="0 0 24 24"><path d="M20.5 3.5 3.9 10.2a.6.6 0 0 0 0 1.1l6.4 2.4 2.4 6.4a.6.6 0 0 0 1.1 0zM10.3 13.7 20.5 3.5"/></symbol>
     <symbol id="i-zip" viewBox="0 0 24 24"><path d="M4.5 8h15v10.5a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2zM3.5 4h17v4h-17zM10 12h4"/></symbol>

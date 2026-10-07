@@ -33,6 +33,11 @@ struct WebItem {
     var hidden = false
     /// Safe to read a little of, to see whether it's text: see `WebViewKind.of`.
     var readable = false
+    /// A file or package a cloud service keeps online only.
+    var onlineOnly = false
+    /// Online only, or a folder in a cloud folder, which may hold such files: the page has the Mac get it from the
+    /// cloud before viewing or downloading it (see `WebCloudFetch`).
+    var fetchFirst = false
 
     var name: String {
         (path as NSString).lastPathComponent
@@ -252,6 +257,7 @@ final class WebAccessServer: @unchecked Sendable {
     private var bundleOrder: [String] = []
     private var plans: [String: (archive: ZipArchive, made: Date)] = [:]
     private var folderSizes: [String: (bytes: UInt64, complete: Bool, made: Date)] = [:]
+    private var cloudFetches: [String: (fetch: WebCloudFetch, made: Date)] = [:]
     private let thumbnails: NSCache<NSString, NSData> = {
         let cache = NSCache<NSString, NSData>()
         cache.totalCostLimit = 64 << 20
@@ -290,7 +296,10 @@ final class WebAccessServer: @unchecked Sendable {
     /// A folder Finder shows as one file: an app, a Photos library, a bundle. Asked of the file system, since the
     /// extension alone can't tell (and a type looked up by extension defaults to a plain file's).
     private static func isPackage(_ path: String) -> Bool {
-        (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.isPackageKey]))?.isPackage == true
+        // A package kept online only would come down whole if anything looked inside it.
+        let downloads = CloudDownloads.pause()
+        defer { downloads.resume() }
+        return (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.isPackageKey]))?.isPackage == true
     }
 
     private static func isWebKit(_ request: HTTPRequest) -> Bool {
@@ -373,6 +382,18 @@ final class WebAccessServer: @unchecked Sendable {
         return HTTPResponse(status: status, headers: [("Content-Type", "application/json"), ("Cache-Control", "no-store")], body: .data(data))
     }
 
+    private static func isOnlineOnly(_ path: String) -> Bool {
+        var st = Darwin.stat()
+        return lstat(path, &st) == 0 && st.st_flags & UInt32(SF_DATALESS) != 0
+    }
+
+    /// A folder reached through a link (a Home folder link to Dropbox) is in the cloud folder the link points to.
+    private func realPath(_ path: String) -> String {
+        guard let real = realpath(path, nil) else { return path }
+        defer { free(real) }
+        return String(cString: real)
+    }
+
     private func route(_ request: HTTPRequest) async -> HTTPResponse {
         let path = request.path
         guard ["GET", "HEAD", "POST"].contains(request.method) else {
@@ -416,6 +437,10 @@ final class WebAccessServer: @unchecked Sendable {
             // Same guard as the other posts (blockingRoute): a cross-site form can't send this header.
             guard request.isHTMX else { return .text("Forbidden", status: 403) }
             return await shareLink(request, sid: sid)
+        }
+        if request.method == "POST", path == "/fetch" {
+            guard request.isHTMX else { return .text("Forbidden", status: 403) }
+            return await fetchFromCloud(request, sid: sid)
         }
         return await offload { self.blockingRoute(request, path: path, sid: sid) }
     }
@@ -709,9 +734,12 @@ final class WebAccessServer: @unchecked Sendable {
         }
         let dir = st.st_mode & S_IFMT == S_IFDIR
         let modified = Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec))
+        let package = dir && Self.isPackage(path)
+        let onlineOnly = st.st_flags & UInt32(SF_DATALESS) != 0 && (!dir || package)
         return WebItem(
-            path: path, isDir: dir, isPackage: dir && Self.isPackage(path), size: dir ? nil : UInt64(st.st_size),
-            modified: modified, offline: false, hidden: st.st_flags & UInt32(UF_HIDDEN) != 0, readable: WebViewKind.readable(st)
+            path: path, isDir: dir, isPackage: package, size: dir ? nil : UInt64(st.st_size),
+            modified: modified, offline: false, hidden: st.st_flags & UInt32(UF_HIDDEN) != 0, readable: WebViewKind.readable(st),
+            onlineOnly: onlineOnly, fetchFirst: onlineOnly || (dir && WebCloudFetch.inCloud(realPath(path)))
         )
     }
 
@@ -771,6 +799,50 @@ final class WebAccessServer: @unchecked Sendable {
         case .stillZipping: return Self.json(["pending": true], status: 202)
         case .failed: return Self.json(["error": "Couldn't create a link"], status: 502)
         }
+    }
+
+    /// Gets online-only files onto the Mac before the page views or downloads them: `p` for a file or a folder, `sel`
+    /// for the selection. Answers within a second with how far it got, and the page asks again until it's done.
+    private func fetchFromCloud(_ request: HTTPRequest, sid: String) async -> HTTPResponse {
+        let raw = request.formValue("sel") == "1" ? selection(sid) : request.form.filter { $0.name == "p" }.map(\.value)
+        let paths = raw.compactMap(Self.cleanPath)
+        guard !paths.isEmpty else { return Self.json(["error": "Not found"], status: 404) }
+        let fetch = await withCheckedContinuation { continuation in
+            Self.work.async { continuation.resume(returning: self.cloudFetch(for: paths)) }
+        }
+        let until = Date().addingTimeInterval(1)
+        var status = await fetch.status()
+        while !status.done, status.error == nil, Date() < until {
+            try? await Task.sleep(for: .milliseconds(200))
+            status = await fetch.status()
+        }
+        if status.done {
+            return Self.json(["done": true])
+        }
+        if let error = status.error {
+            lock.withLock { cloudFetches[cloudFetchKey(paths)] = nil }
+            return Self.json(["error": error, "service": fetch.service], status: 502)
+        }
+        return Self.json(["pending": true, "fraction": status.fraction, "service": fetch.service, "count": fetch.items.count], status: 202)
+    }
+
+    /// The fetch under way for `paths`, or a new one, started. Walks folders, so it runs off the cooperative pool.
+    private func cloudFetch(for paths: [String]) -> WebCloudFetch {
+        let key = cloudFetchKey(paths)
+        if let known = lock.withLock({ cloudFetches[key] }), !known.fetch.isDone, Date().timeIntervalSince(known.made) < 600 {
+            return known.fetch
+        }
+        let fetch = WebCloudFetch(paths: paths)
+        fetch.start()
+        lock.withLock {
+            cloudFetches = cloudFetches.filter { Date().timeIntervalSince($0.value.made) < 600 }
+            cloudFetches[key] = (fetch, Date())
+        }
+        return fetch
+    }
+
+    private func cloudFetchKey(_ paths: [String]) -> String {
+        paths.sorted().joined(separator: "\n")
     }
 
     /// What a folder's or a package's ZIP will weigh, measured for up to a second, for the page to decide whether to
@@ -834,7 +906,8 @@ final class WebAccessServer: @unchecked Sendable {
             downloads: items.map { WebPage.downloadURL($0.path) },
             zipURL: "/z/\(id)/" + WebPage.encodePath(zipName(for: paths)),
             name: items.count == 1 ? items[0].name : "\(items.count) files",
-            folder: items.count == 1 && items[0].browsable
+            folder: items.count == 1 && items[0].browsable,
+            fetchFirst: items.contains(where: \.fetchFirst)
         )
         return WebPage.selectionBar(summary)
     }
@@ -902,6 +975,11 @@ final class WebAccessServer: @unchecked Sendable {
             return zip(request, items: [(path, name)], name: name + ".zip")
         }
         guard st.st_mode & S_IFMT == S_IFREG else { return notFound() }
+        // Online only, and asked for without the page getting it onto the Mac first (see `fetchFromCloud`): sent
+        // once its bytes are here, rather than headers followed by a download stuck at nothing until then.
+        if st.st_flags & UInt32(SF_DATALESS) != 0, request.method != "HEAD" {
+            guard cloudFetch(for: [path]).waitUntilLocal(), stat(path, &st) == 0 else { return unreadable() }
+        }
 
         let size = UInt64(st.st_size)
         let kind = download ? nil : WebViewKind.of(path, size: size, webkit: Self.isWebKit(request), readable: WebViewKind.readable(st))
@@ -965,6 +1043,11 @@ final class WebAccessServer: @unchecked Sendable {
         var archive = lock.withLock { () -> ZipArchive? in
             guard let plan = plans[key], Date().timeIntervalSince(plan.made) < 600 else { return nil }
             return plan.archive
+        }
+        // The same for a ZIP, where each online-only file would hold the download up in turn.
+        if request.method != "HEAD", items.contains(where: { WebCloudFetch.inCloud($0.path) || Self.isOnlineOnly($0.path) }) {
+            let fetch = cloudFetch(for: items.map(\.path))
+            guard fetch.isEmpty || fetch.waitUntilLocal() else { return unreadable() }
         }
         // A plan is reused while a dropped download resumes; a new download looks at the files again.
         if archive == nil || request.headers["range"] == nil {

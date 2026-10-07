@@ -516,8 +516,20 @@
         wireFileButtons(preview.querySelector(".viewer-bar"), row, name);
         const body = preview.querySelector(".viewer-body");
         const kind = link.dataset.kind;
-        if (kind && kind !== "none") renderFile(body, link.href, kind, name, false);
+        // Online only, it shows its picture until a tap gets it onto the Mac (see Cloud): moving through the list
+        // with the arrow keys doesn't download every file it passes.
+        if (kind && kind !== "none" && !("cloud" in link.dataset)) renderFile(body, link.href, kind, name, false);
         else previewCard(body, row, name);
+    }
+
+    // A tap on an online-only file in the column: the Mac gets it from the cloud, then the column shows it.
+    function fetchIntoPreview(link) {
+        if (!("cloud" in link.dataset) || !link.dataset.kind || link.dataset.kind === "none") return;
+        getFromCloud(link).then((ok) => {
+            if (!ok || previewed !== link) return;
+            previewed = null;
+            showPreview(link);
+        });
     }
 
     // A file the browser can't show: the Mac's Quick Look picture of it, large, and what the row says about it.
@@ -548,6 +560,7 @@
         event.preventDefault();
         event.stopImmediatePropagation();
         showPreview(link);
+        fetchIntoPreview(link);
     }, true);
 
     document.addEventListener("click", (event) => {
@@ -587,7 +600,15 @@
             event.stopImmediatePropagation();
             return;
         }
-        if (!confirmOver) return;
+        if (!confirmOver) {
+            // With no size to ask about, an online-only file still goes to the Mac first (see Cloud).
+            const cloudy = event.target.closest?.("a[download][data-cloud], [data-urls][data-cloud]");
+            if (!cloudy || cloudy.protocol === "blob:" || (cloudy.matches(".main") && document.body.classList.contains("selecting"))) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            startDownload(cloudy);
+            return;
+        }
         const target = event.target.closest?.("a[download][data-size], [data-urls][data-size]");
         if (!target || target.protocol === "blob:") return;
         // In selection mode a tap on a row picks it (see Selection) instead of downloading it.
@@ -639,7 +660,8 @@
         askDialog.showModal();
     }
 
-    function startDownload(target) {
+    async function startDownload(target) {
+        if ("cloud" in target.dataset && !(await getFromCloud(target))) return;
         // The installed app saves through memory (see Downloads), and only for a tap the person made.
         if (iosApp && target.matches("a[download]")) {
             saveInApp([target.href]);
@@ -1266,10 +1288,16 @@
         close.addEventListener("click", () => closeViewer(true));
 
         const body = viewer.querySelector(".viewer-body");
-        const zoom = renderFile(body, url, kind, name, true);
+        // Online only: its picture while the Mac gets it from the cloud (see Cloud), then the file, in place.
+        const cloud = "cloud" in link.dataset;
+        const zoom = cloud ? null : renderFile(body, url, kind, name, true);
+        if (cloud) {
+            previewCard(body, row, name);
+            getFromCloud(link).then((ok) => ok && viewing === link && openViewer(link));
+        }
         // Text scrolls, so a pull down only closes it from the top. A PDF or a web page takes its own touches, which
         // leaves the bar to drag it by. Only pictures and videos swipe sideways to the next file.
-        const draggable = kind === "text" ? () => body.scrollTop <= 0 : kind === "pdf" || kind === "html" ? () => false : () => !zoom?.zoomed;
+        const draggable = cloud ? () => true : kind === "text" ? () => body.scrollTop <= 0 : kind === "pdf" || kind === "html" ? () => false : () => !zoom?.zoomed;
         const swipeable = kind === "image" || kind === "video" ? () => !zoom?.zoomed : () => false;
         dismissible(viewer, body, draggable, swipeable, zoom);
         document.body.append(viewer);
@@ -1294,6 +1322,7 @@
         for (const key of ["size", "sizeLabel"]) {
             if (download.dataset[key]) save.dataset[key] = share.dataset[key] = download.dataset[key];
         }
+        if ("cloud" in download.dataset) save.dataset.cloud = "";
         share.dataset.link = decodeURIComponent(new URL(download.href).pathname.slice(2));
         share.dataset.name = name;
         if (download.classList.contains("busy")) save.className = download.className.replace(/\bdl\b/, "clear dl");
@@ -1793,5 +1822,80 @@
         } else if (event.key === "Escape" && selecting()) {
             setSelecting(false);
         }
+    });
+    // MARK: Cloud
+
+    // A file a cloud service keeps online only (Dropbox, iCloud Drive…) has to come down to the Mac before the Mac can
+    // send any of it, which for a big one takes a while. So the page asks the Mac for it first and says how far it got,
+    // instead of a download sitting at nothing. The rows mark what may need it with `data-cloud`, "sel" for the
+    // selection. Asked once at a time per file: a second tap waits on the same answer.
+    const gettingFromCloud = new Map();
+    const cloudPathOf = (element) => decodeURIComponent(new URL(element.href, location.href).pathname.slice(2));
+
+    function getFromCloud(target) {
+        const selection = target.dataset.cloud === "sel";
+        const path = selection ? null : cloudPathOf(target);
+        const key = selection ? "sel" : path;
+        if (gettingFromCloud.has(key)) return gettingFromCloud.get(key);
+        const name = downloadName(target);
+        const asked = (async () => {
+            const body = new URLSearchParams(selection ? { sel: "1" } : { p: path });
+            let cancelled = false;
+            target.classList.add("busy");
+            try {
+                for (;;) {
+                    const response = await fetch("/fetch", { method: "POST", headers: { "HX-Request": "true" }, body });
+                    const result = await response.json();
+                    if (cancelled) return false;
+                    const service = result.service || "the cloud";
+                    if (result.done) {
+                        toast.hide();
+                        onTheMac(target, path);
+                        return true;
+                    }
+                    if (result.error) {
+                        toast.show(`Couldn't get ${name} from ${service}: ${result.error}`);
+                        return false;
+                    }
+                    const what = result.count > 1 ? `${result.count} files` : name;
+                    // No percentage until there is one: a service that doesn't report progress would sit at 0%.
+                    const percent = Math.floor((result.fraction || 0) * 100);
+                    toast.show(`Getting ${what} from ${service}${percent > 0 ? ` · ${percent}%` : "…"}`, null, null, () => {
+                        cancelled = true;
+                    });
+                }
+            } catch {
+                if (!cancelled) toast.show(`Can't reach ${document.body.dataset.mac || "the Mac"}`);
+                return false;
+            } finally {
+                target.classList.remove("busy");
+                gettingFromCloud.delete(key);
+            }
+        })();
+        gettingFromCloud.set(key, asked);
+        return asked;
+    }
+
+    // Now on the Mac: every link to it goes straight through, and its row loses the cloud.
+    function onTheMac(target, path) {
+        delete target.dataset.cloud;
+        if (path === null) {
+            for (const element of document.querySelectorAll("#selbar [data-cloud]")) delete element.dataset.cloud;
+            return;
+        }
+        for (const element of document.querySelectorAll("a[data-cloud]")) {
+            if (cloudPathOf(element) !== path) continue;
+            delete element.dataset.cloud;
+            element.closest(".row")?.querySelector(".meta .cloud")?.remove();
+        }
+    }
+
+    // A computer's browser opens a file in the tab, once it's on the Mac. After the viewer's and the column's handlers,
+    // which take the tap where they apply.
+    document.addEventListener("click", (event) => {
+        const link = event.target.closest?.("a.main[data-kind][data-cloud]");
+        if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        getFromCloud(link).then((ok) => ok && location.assign(link.href));
     });
 })();

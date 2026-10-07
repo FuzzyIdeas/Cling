@@ -1597,3 +1597,12 @@ pre.code {
     color: var(--secondary);
     font-size: 13px;
 }
+
+/* An online-only file: the Mac gets it from its cloud service before sending it. */
+.meta .cloud .i {
+    width: 1.15em;
+    height: 1.15em;
+    margin-right: 0.3em;
+    vertical-align: -0.22em;
+    stroke-width: 2;
+}
