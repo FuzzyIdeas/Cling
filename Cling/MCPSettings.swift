@@ -122,7 +122,7 @@ enum MCPSettingsBridge {
         )),
         triggerKeys(row(
             .general, "Global Hotkey", "Hotkey",
-            note: "The modifier half of the global hotkey, as a list. rcmd alone means pressing right Command and the key. Left and right sides are told apart.",
+            note: "The modifier half of the global hotkey, as a list. rcmd alone means pressing right Command and the key. Left and right sides are told apart, except by cmd, alt, ctrl and shift, which match either side and turn on Side-independent modifiers in Settings.",
             keywords: ["shortcut", "summon", "modifier", "command", "option"]
         )),
 

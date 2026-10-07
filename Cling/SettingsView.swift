@@ -784,14 +784,21 @@ private struct GeneralSettingsPane: View {
                     title: "Hotkey"
                 ) {
                     HStack(spacing: 6) {
-                        DirectionalModifierView(triggerKeys: $triggerKeys, showFnCaps: false)
-                            .disabled(!enableGlobalHotkey)
+                        if triggerKeys.onEitherSide {
+                            ModifierKeysView(triggerKeys: $triggerKeys)
+                        } else {
+                            DirectionalModifierView(triggerKeys: $triggerKeys, showFnCaps: false)
+                                .disabled(!enableGlobalHotkey)
+                        }
                         Text("+").heavy(12)
                         DynamicKey(key: $showAppKey, recording: $env.recording, allowedKeys: .showAppKeyChoices)
                     }
                     .disabled(!enableGlobalHotkey)
                     .opacity(enableGlobalHotkey ? 1 : 0.5)
                 }
+
+                Toggle("Side-independent modifiers", isOn: eitherSide)
+                    .disabled(!enableGlobalHotkey)
             }
 
             Section("Privacy") {
@@ -805,6 +812,9 @@ private struct GeneralSettingsPane: View {
         .scrollContentBackground(.hidden)
     }
 
+    /// The sides the hotkey had before Side-independent modifiers went on, so turning it off again gives them back.
+    @State private var oneSideKeys: [TriggerKey]?
+
     @Default(.showWindowAtLaunch) private var showWindowAtLaunch
     @Default(.showDockIcon) private var showDockIcon
     @Default(.showMenuBarIcon) private var showMenuBarIcon
@@ -815,6 +825,24 @@ private struct GeneralSettingsPane: View {
     @Default(.enableGlobalHotkey) private var enableGlobalHotkey
     @Default(.showAppKey) private var showAppKey
     @Default(.triggerKeys) private var triggerKeys
+
+    /// Derived from the modifiers themselves rather than kept apart, so a hotkey set through the CLI or an agent shows
+    /// the same way.
+    private var eitherSide: Binding<Bool> {
+        Binding(
+            get: { triggerKeys.onEitherSide },
+            set: { on in
+                if on {
+                    oneSideKeys = triggerKeys
+                    triggerKeys = triggerKeys.eitherSide
+                } else if let oneSideKeys, oneSideKeys.eitherSide == triggerKeys {
+                    triggerKeys = oneSideKeys
+                } else {
+                    triggerKeys = triggerKeys.oneSide
+                }
+            }
+        )
+    }
 
     private var windowMode: Binding<WindowMode> {
         Binding(
@@ -835,6 +863,71 @@ private struct GeneralSettingsPane: View {
         )
     }
 
+}
+
+// MARK: - ModifierKeysView
+
+/// The hotkey's modifiers held on either side: one key each, in the order menus show them.
+private struct ModifierKeysView: View {
+    @Binding var triggerKeys: [TriggerKey]
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(Self.keys.indices, id: \.self) { i in
+                let (key, symbol, name) = Self.keys[i]
+                Button(symbol) {
+                    let toggled = triggerKeys.toggling(key: key)
+                    // Never down to none: an empty list would turn the hotkey off and bring the left and right keys back.
+                    if !toggled.isEmpty {
+                        triggerKeys = toggled
+                    }
+                }
+                .buttonStyle(ToggleButton(isOn: .constant(triggerKeys.contains(key)), radius: 6))
+                .accessibilityLabel(name)
+            }
+        }
+        .fixedSize()
+    }
+
+    private static let keys: [(TriggerKey, String, String)] = [
+        (.ctrl, "⌃", "Control"), (.alt, "⌥", "Option"), (.shift, "⇧", "Shift"), (.cmd, "⌘", "Command"),
+    ]
+}
+
+extension [TriggerKey] {
+    /// Every modifier matches on either side: `cmd` rather than `lcmd` or `rcmd`.
+    var onEitherSide: Bool {
+        !isEmpty && allSatisfy { [.ctrl, .alt, .shift, .cmd, .fn].contains($0) }
+    }
+
+    var eitherSide: [TriggerKey] {
+        map { key -> TriggerKey in
+            switch key {
+            case .lcmd, .rcmd: .cmd
+            case .lalt, .ralt: .alt
+            case .lctrl, .rctrl: .ctrl
+            case .lshift, .rshift: .shift
+            default: key
+            }
+        }.reduce(into: []) { keys, key in
+            if !keys.contains(key) {
+                keys.append(key)
+            }
+        }
+    }
+
+    /// The right side, like Cling's own default, except Control: most Mac keyboards only have it on the left.
+    var oneSide: [TriggerKey] {
+        map { key -> TriggerKey in
+            switch key {
+            case .cmd: .rcmd
+            case .alt: .ralt
+            case .shift: .rshift
+            case .ctrl: .lctrl
+            default: key
+            }
+        }
+    }
 }
 
 // MARK: - AppsSettingsPane
@@ -1173,10 +1266,6 @@ private struct VolumesSettingsPane: View {
                     CloudStorageList()
                 } header: {
                     Text("Cloud Storage")
-                } footer: {
-                    Text("Online-only folders are listed so their files can be found. Files download only when you preview them.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
                 }
             }
 
