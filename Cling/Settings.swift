@@ -524,6 +524,9 @@ enum HiddenActionButton: String, CaseIterable, Defaults.Serializable {
 enum SearchScope: String, CaseIterable, Defaults.Serializable {
     case home
     case library
+    /// iCloud Drive and the folders in ~/Library/CloudStorage. Not a scope people turn on: it is searched while any of
+    /// its folders is on, in Settings > Drives & Volumes, and the Library scope leaves them out.
+    case cloud
     case applications
     case system
     case root
@@ -532,6 +535,7 @@ enum SearchScope: String, CaseIterable, Defaults.Serializable {
         switch self {
         case .home: "Home"
         case .library: "Library"
+        case .cloud: "Cloud Storage"
         case .applications: "Applications"
         case .system: "System"
         case .root: "Root (/usr, /bin, /etc, ...)"
@@ -728,6 +732,8 @@ extension Defaults.Keys {
     static let minQueryLength = Key<Int>("minQueryLength", default: 3)
     static let externalVolumes = Key<[FilePath]>("externalVolumes", default: [])
     static let disabledVolumes = Key<[FilePath]>("disabledVolumes", default: [])
+    /// Cloud folders (iCloud Drive, the ones in ~/Library/CloudStorage) left out of the index, by their root.
+    static let disabledCloudLocations = Key<[FilePath]>("disabledCloudLocations", default: [])
     static let indexedVolumePaths = Key<[FilePath]>("indexedVolumePaths", default: [])
     /// Drives whose saved index no longer holds the drive's metadata folders: walked since the walk skipped them, or
     /// cleared of them on a load.

@@ -1297,9 +1297,23 @@ struct CloudDownloads {
         return Self(previous: max(previous, IOPOL_MATERIALIZE_DATALESS_FILES_DEFAULT))
     }
 
+    /// A package kept online only: a document that is a folder on disk, like a book, a GarageBand project or a
+    /// Pixelmator image. iCloud Drive downloads a package whole as soon as anything lists it, so it counts as a file.
+    /// Telling one apart reads the folder's own attributes with downloads paused, never what is inside it.
+    static func isOnlinePackage(_ path: String) -> Bool {
+        var st = stat()
+        guard lstat(path, &st) == 0, st.st_flags & UInt32(SF_DATALESS) != 0, st.st_mode & S_IFMT == S_IFDIR else {
+            return false
+        }
+        let paused = pause()
+        defer { paused.resume() }
+        return (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.isPackageKey]))?.isPackage == true
+    }
+
     func resume() {
         setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD, previous)
     }
+
 }
 
 // MARK: - SearchEngine
@@ -1519,6 +1533,19 @@ final class SearchEngine: @unchecked Sendable {
                 paths.append(path(i))
             }
             return paths
+        }
+    }
+
+    /// Appends every entry `other` holds, without a duplicate check. A folder walked into an engine of its own then
+    /// replaces its old entries in one step, rather than going missing from results while it is walked again.
+    func appendEntries(of other: SearchEngine) {
+        let added = other.lock.withLock {
+            (0 ..< other.entries.count).filter { other.byteLengths[$0] > 0 }.map { (other.path($0), other.entries[$0].isDir) }
+        }
+        lock.withLock {
+            for (path, isDir) in added {
+                _appendPath(path, isDir: isDir)
+            }
         }
     }
 
@@ -2024,13 +2051,16 @@ final class SearchEngine: @unchecked Sendable {
         skipJunkFiles: Bool = true,
         skipAppleDouble: Bool = false,
         dedupe: Bool = true,
+        listOnlineFolders: Bool = false,
         progress: ((Int, String) -> Void)? = nil,
         cancelled: (() -> Bool)? = nil
     ) -> Int {
         let t0 = CFAbsoluteTimeGetCurrent()
 
-        let downloads = CloudDownloads.pause()
-        defer { downloads.resume() }
+        // `listOnlineFolders` lets the walk wait for a cloud service to list the folders it keeps online only. That
+        // fetches their names and nothing else: the walk opens folders, never files or packages.
+        let downloads = listOnlineFolders ? nil : CloudDownloads.pause()
+        defer { downloads?.resume() }
 
         let cDir = strdup(dir)!
         defer { Darwin.free(cDir) }
@@ -2151,6 +2181,10 @@ final class SearchEngine: @unchecked Sendable {
                     }
                 }
 
+                // Listing an online-only package would download all of it; it goes in as one entry, unopened.
+                if listOnlineFolders, CloudDownloads.isOnlinePackage(fullPath) {
+                    fts_set(ftsp, ent, Int32(FTS_SKIP))
+                }
                 batch.append((fullPath, true))
                 added &+= 1
 
@@ -2229,6 +2263,10 @@ final class SearchEngine: @unchecked Sendable {
             if now - lastProgress > 0.5 {
                 lastProgress = now
                 progress?(added, batch.last?.0 ?? dir)
+                // A walk that waits on the network gets each folder's files into search as it lists them.
+                if listOnlineFolders {
+                    flushBatch()
+                }
             }
         }
 
@@ -3779,6 +3817,7 @@ final class SearchEngine: @unchecked Sendable {
             homePrefix + "/projects", homePrefix + "/temp",
             homePrefix + "/music", homePrefix + "/movies", homePrefix + "/pictures",
             homePrefix + "/library/mobile documents", // iCloud Drive
+            homePrefix + "/library/cloudstorage", // Dropbox, Google Drive, OneDrive…
             homePrefix + "/.config",
             "/applications",
         ].map { Array($0.utf8) }
@@ -3790,7 +3829,7 @@ final class SearchEngine: @unchecked Sendable {
 
         /// Path importance (higher = more relevant to the user), shared by the fuzzy scoring loop
         /// and the extension-only fast path:
-        ///   4 = important user dir (Documents, Desktop, Downloads, Projects, Music, Movies, Pictures, iCloud, /Applications)
+        ///   4 = important user dir (Documents, Desktop, Downloads, Projects, Music, Movies, Pictures, iCloud, cloud storage, /Applications)
         ///   3 = other home visible
         ///   2 = home Library visible
         ///   1 = system/root visible

@@ -75,11 +75,15 @@ func race<T: Sendable>(timeout: TimeInterval, _ operation: @escaping @Sendable (
         let resumed = OSAllocatedUnfairLock(initialState: false)
         @Sendable func resumeOnce(_ value: T?) -> Bool {
             let first = resumed.withLock { done in
-                if done { return false }
+                if done {
+                    return false
+                }
                 done = true
                 return true
             }
-            if first { cont.resume(returning: value) }
+            if first {
+                cont.resume(returning: value)
+            }
             return first
         }
         let timer = Task {
@@ -90,7 +94,9 @@ func race<T: Sendable>(timeout: TimeInterval, _ operation: @escaping @Sendable (
             let value = await operation()
             // Stop the timer when the operation wins, so a fast fetch does not
             // leave a sleeping task behind for the full timeout.
-            if resumeOnce(value) { timer.cancel() }
+            if resumeOnce(value) {
+                timer.cancel()
+            }
         }
     }
 }
@@ -133,8 +139,9 @@ enum FileInfo {
         return FUZZY.smbMetadataCaches.first { path.starts(with: $0.key) }?.value.get(path.string)
     }
 
+    /// `onlineOnly` files get only what the file system knows without reading them: reading one downloads it.
     @MainActor
-    static func fetch(for path: FilePath, kind: PreviewKind) async -> FileFacts {
+    static func fetch(for path: FilePath, kind: PreviewKind, onlineOnly: Bool = false) async -> FileFacts {
         let volumeClass = classify(path)
         let url = path.url
 
@@ -154,17 +161,35 @@ enum FileInfo {
 
         if case .offline = volumeClass {
             var facts = FileFacts()
-            if let size = common.size { facts.primary.append(size.humanSize) }
+            if let size = common.size {
+                facts.primary.append(size.humanSize)
+            }
             facts.primary.append("offline")
             facts.secondary = datesLine(common)
             return facts
         }
 
-        if let hit = cached(path, mtime: common.modified) { return hit }
+        if onlineOnly {
+            // Not cached: the date stays the same once the file is downloaded, and the facts that need its contents
+            // only come then.
+            var facts = FileFacts()
+            if let size = common.size {
+                facts.primary.append(size.humanSize)
+            }
+            facts.primary.append("Online only")
+            facts.secondary = datesLine(common)
+            return facts
+        }
+
+        if let hit = cached(path, mtime: common.modified) {
+            return hit
+        }
 
         if kind == .archive {
             var facts = FileFacts()
-            if let size = common.size { facts.primary.append(size.humanSize) }
+            if let size = common.size {
+                facts.primary.append(size.humanSize)
+            }
             // cachedList shares the 7z subprocess with ArchivePreview; the
             // subprocess has its own 6s watchdog, and offline volumes never
             // reach this point.
@@ -177,7 +202,9 @@ enum FileInfo {
                     facts.primary.append("\(Int(listing.totalUncompressedSize).humanSize)\(listing.truncated ? "+" : "") uncompressed")
                 }
             }
-            if common.isSymlink, let target = common.symlinkTarget { facts.primary.append("→ \(target)") }
+            if common.isSymlink, let target = common.symlinkTarget {
+                facts.primary.append("→ \(target)")
+            }
             facts.secondary = datesLine(common)
             store(facts, for: path, mtime: common.modified)
             return facts
@@ -191,7 +218,9 @@ enum FileInfo {
             kindFacts = await kindSpecificFacts(url, kind: kind, size: common.size, allowContentReads: true)
         case let .externalLocal(volume), let .network(volume):
             var allowContentReads = true
-            if case .network = volumeClass { allowContentReads = false }
+            if case .network = volumeClass {
+                allowContentReads = false
+            }
             if VolumeFetchGate.tryAcquire(volume.string) {
                 let volumeKey = volume.string
                 kindFacts = await race(timeout: 2) { [size = common.size] in
@@ -207,10 +236,16 @@ enum FileInfo {
         }
 
         var facts = FileFacts()
-        if let size = common.size, kind != .folder { facts.primary.append(size.humanSize) }
+        if let size = common.size, kind != .folder {
+            facts.primary.append(size.humanSize)
+        }
         facts.primary += kindFacts
-        if kind == .quicklook, let kindName = common.kindName { facts.primary.append(kindName) }
-        if common.isSymlink, let target = common.symlinkTarget { facts.primary.append("→ \(target)") }
+        if kind == .quicklook, let kindName = common.kindName {
+            facts.primary.append(kindName)
+        }
+        if common.isSymlink, let target = common.symlinkTarget {
+            facts.primary.append("→ \(target)")
+        }
         facts.secondary = datesLine(common)
 
         store(facts, for: path, mtime: common.modified)
@@ -266,7 +301,9 @@ enum FileInfo {
         guard let doc = CGPDFDocument(url as CFURL) else { return [] }
         let pages = doc.numberOfPages
         var facts = ["\(pages.formatted()) page\(pages == 1 ? "" : "s")"]
-        if doc.isEncrypted { facts.append("encrypted") }
+        if doc.isEncrypted {
+            facts.append("encrypted")
+        }
         return facts
     }
 
@@ -294,7 +331,9 @@ enum FileInfo {
         var count = 0
         for case _ as URL in enumerator {
             count += 1
-            if count >= 2000 { return ["\(2000.formatted())+ items"] }
+            if count >= 2000 {
+                return ["\(2000.formatted())+ items"]
+            }
         }
         return ["\(count.formatted()) item\(count == 1 ? "" : "s")"]
     }
@@ -320,7 +359,9 @@ enum FileInfo {
                 lastByte = buf[buf.count - 1]
             }
         }
-        if lastByte != 0x0A { count += 1 } // final line without trailing newline
+        if lastByte != 0x0A {
+            count += 1
+        } // final line without trailing newline
         return ["\(count.formatted()) line\(count == 1 ? "" : "s")"]
     }
 
@@ -402,6 +443,7 @@ enum FileInfo {
 struct FileInfoBar: View {
     let path: FilePath
     let kind: PreviewKind
+    var onlineOnly = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -416,14 +458,16 @@ struct FileInfoBar: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .task(id: "\(path.string)|\(kind)") {
+        .task(id: "\(path.string)|\(kind)|\(onlineOnly)") {
             // .task(id:) cancels when the path (or its detected kind, which
             // can flip once QuickLook support detection finishes) changes;
             // that is the generation token dropping late results from an
             // abandoned fetch.
             facts = FileFacts()
-            let result = await FileInfo.fetch(for: path, kind: kind)
-            if !Task.isCancelled { facts = result }
+            let result = await FileInfo.fetch(for: path, kind: kind, onlineOnly: onlineOnly)
+            if !Task.isCancelled {
+                facts = result
+            }
         }
     }
 

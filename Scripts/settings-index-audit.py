@@ -41,6 +41,7 @@ PANE_FILES = [
 HANDLED_ELSEWHERE = {
     "searchScopes": "cling_scopes, which refuses the Pro scopes without a licence",
     "disabledVolumes": "cling_volumes",
+    "disabledCloudLocations": "cling_cloud",
     "reindexTimeIntervalPerVolume": "cling_volumes interval",
     "blockedPrefixes": "cling_ignore, target blocklist-prefix",
     "blockedContains": "cling_ignore, target blocklist-contains",

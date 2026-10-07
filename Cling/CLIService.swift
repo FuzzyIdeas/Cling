@@ -657,7 +657,7 @@ extension FuzzyClient {
                 lines.append("")
                 lines.append("scopes:")
                 for scope in SearchScope.allCases {
-                    let enabled = enabledScopes.contains(scope)
+                    let enabled = scope == .cloud ? !FUZZY.cloudRoots.isEmpty : enabledScopes.contains(scope)
                     let count = FUZZY.scopeEngines[scope]?.count ?? 0
                     let indexed = FUZZY.scopeEngines[scope] != nil
                     let scopeKey = "scope:\(scope.rawValue)"
@@ -828,7 +828,7 @@ extension FuzzyClient {
             }
             return ClingResponse(status: messages.joined(separator: "\n"), indexCount: coord.count)
 
-        case .explain where request.action == "diagnose", .why, .settings, .filters, .scripts, .volumes, .scopes, .ignore, .shortcuts:
+        case .explain where request.action == "diagnose", .why, .settings, .filters, .scripts, .volumes, .cloud, .scopes, .ignore, .shortcuts:
             return CLIConfig.handle(request, coordinator: coord)
 
         case .explain:

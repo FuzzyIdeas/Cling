@@ -523,6 +523,43 @@ struct VolumeCommand: ParsableCommand {
     }
 }
 
+// MARK: - CloudCommand
+
+struct CloudCommand: ParsableCommand {
+    enum Action: String, ExpressibleByArgument, CaseIterable {
+        case list
+        case enable
+        case disable
+        case refresh
+    }
+
+    static let configuration = CommandConfiguration(
+        commandName: "cloud",
+        abstract: "List cloud storage folders and turn their indexing on or off.",
+        discussion: """
+        cling cloud list
+        cling cloud enable|disable <name or path>
+        cling cloud refresh [<name or path>]      list online-only folders again now
+        """
+    )
+
+    @Argument(help: "list, enable, disable or refresh")
+    var action: Action = .list
+
+    @Argument(help: "The cloud folder's name, account or path")
+    var location: String?
+
+    @Flag(name: .long, help: "Output as JSON")
+    var json = false
+
+    mutating func run() throws {
+        if action == .enable || action == .disable, location == nil {
+            throw CLIError("\(action.rawValue) needs a name or path")
+        }
+        try runConfig(ClingRequest(command: .cloud, action: action.rawValue, value: location), json: json)
+    }
+}
+
 // MARK: - ScopeCommand
 
 struct ScopeCommand: ParsableCommand {

@@ -182,7 +182,7 @@ final class IndexBrowser {
 
     private func topLevel() -> IndexLevel {
         var rows: [IndexNode] = []
-        for scope in Defaults[.searchScopes] {
+        for scope in SearchScope.allCases {
             if let engine = FUZZY.scopeEngines[scope] {
                 rows.append(IndexNode(id: "scope:\(scope.rawValue)", name: scope.label, kind: .scope(scope), path: nil, count: engine.count))
             }

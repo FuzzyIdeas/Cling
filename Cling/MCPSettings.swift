@@ -775,7 +775,7 @@ extension ClingRequest {
             true
         case .settings:
             action == "set"
-        case .filters, .scripts, .volumes, .scopes, .ignore, .shortcuts:
+        case .filters, .scripts, .volumes, .cloud, .scopes, .ignore, .shortcuts:
             !["list", "show", nil].contains(action)
         }
     }

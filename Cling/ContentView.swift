@@ -2057,6 +2057,9 @@ class FilePathBackgroundTasks {
         let fetcher = DispatchWorkItem {
             let attrs: [FileAttributeKey: Any]
             let icon: NSImage
+            // An online-only package's icon would download all of it; paused, it gets its type's icon.
+            let downloads = CloudDownloads.pause()
+            defer { downloads.resume() }
             do {
                 attrs = try FileManager.default.attributesOfItem(atPath: path.string)
                 icon = NSWorkspace.shared.icon(forFile: path.string)
@@ -2108,7 +2111,10 @@ class FilePathBackgroundTasks {
         guard iconCache[path] == nil, iconFetchers[path] == nil else { return }
 
         let fetcher = DispatchWorkItem {
+            // An online-only package's icon would download all of it; paused, it gets its type's icon.
+            let downloads = CloudDownloads.pause()
             let icon = NSWorkspace.shared.icon(forFile: path.string)
+            downloads.resume()
             var isDirectory = ObjCBool(false)
             let exists = FileManager.default.fileExists(atPath: path.string, isDirectory: &isDirectory)
 

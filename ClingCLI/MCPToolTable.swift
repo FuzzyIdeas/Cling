@@ -25,6 +25,10 @@ extension MCPServer {
     and cling_search allDrives searches all of them at once. Everything is a separate Pro index of every file on \
     the internal disk, with no ignore rules, searched alone when it is on: the startup volume plus any other volume \
     on that disk that is on in Settings > Drives. External drives are never in it, whatever their toggle says.
+    - Cloud storage (iCloud Drive and ~/Library/CloudStorage: Dropbox, Google Drive, OneDrive…) is the cloud \
+    scope, which the library scope leaves out. It is on while any of its folders is, and cling_cloud turns each \
+    one on or off. Files there can be online only: Cling lists their folders without downloading anything, and \
+    only previewing a file downloads it.
     - What the index leaves out is decided by, in order: the global blocklist (prefix and contains rules, \
     checked first and on every scope), then gitignore-style ignore files: ~/.fsignore for home and library, one \
     per rooted scope, and a .fsignore at the root of each volume.
@@ -268,6 +272,15 @@ extension MCPServer {
         return try run(["volume", action], tail: [volume, seconds].filter { !$0.isEmpty })
     }
 
+    static func cloud(_ a: [String: Any]) throws -> ToolOutput {
+        let action = argument(a["action"] ?? "list")
+        guard ["list", "enable", "disable", "refresh"].contains(action) else {
+            throw ClingMCPError("action must be list, enable, disable or refresh")
+        }
+        let location = a["location"].map { argument($0) } ?? ""
+        return try run(["cloud", action], tail: [location].filter { !$0.isEmpty })
+    }
+
     static func scopes(_ a: [String: Any]) throws -> ToolOutput {
         let action = argument(a["action"] ?? "list")
         guard ["list", "enable", "disable"].contains(action) else {
@@ -369,8 +382,8 @@ extension MCPServer {
     static let gate = "Refused until the user allows agent changes in Cling Settings, MCP (cling_start_server asks "
         + "them). Cling's own words come back verbatim when it refuses."
 
-    static let scopeNames = "home, library, applications, system, root"
-    static let ignoreTargets = "home (~/.fsignore, for the home and library scopes), blocklist-prefix, blocklist-contains, "
+    static let scopeNames = "home, library, cloud, applications, system, root"
+    static let ignoreTargets = "home (~/.fsignore, for the home, library and cloud scopes), blocklist-prefix, blocklist-contains, "
         + "applications, system, root (each rooted scope's own ignore file), or a connected volume's path"
 
     static let tools: [MCPTool] = [
@@ -605,6 +618,22 @@ extension MCPServer {
                 "seconds": ["type": "integer", "description": "for interval"],
             ]],
             handler: volumes
+        ),
+        MCPTool(
+            name: "cling_cloud",
+            description: "Cloud storage folders: iCloud Drive and anything macOS keeps in ~/Library/CloudStorage "
+                + "(Dropbox, Google Drive, OneDrive, Box…). Together they are the cloud scope, which is free and "
+                + "separate from library. list shows each with whether it is indexed and how many entries it holds. "
+                + "enable and disable turn one on or off, as its toggle in Settings > Drives does; a disabled one is "
+                + "left out of the index and of live updates. refresh lists its online-only folders again now, or every one's with no location: "
+                + "names only, file contents are never downloaded, but it goes over the network and can take "
+                + "minutes on a large account. Previewing a file in Cling is what downloads it, searching never "
+                + "does. list: open; the rest: " + gate,
+            inputSchema: ["type": "object", "properties": [
+                "action": ["type": "string", "enum": ["list", "enable", "disable", "refresh"]],
+                "location": ["type": "string", "description": "its name (Dropbox), account (alex@example.com) or path"],
+            ]],
+            handler: cloud
         ),
         MCPTool(
             name: "cling_ignore",

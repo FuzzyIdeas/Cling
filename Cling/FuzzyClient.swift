@@ -239,12 +239,22 @@ nonisolated func explainPathExclusion(_ rawPath: String, coord: SearchCoordinato
     lines.append("  indexed:   " + (indexed ? "yes — \(engines.sorted().joined(separator: ", "))" : "no"))
 
     // 3. Scope membership + whether that scope is enabled.
-    let enabledScopes = Set(Defaults[.searchScopes])
+    var enabledScopes = Set(Defaults[.searchScopes])
+    // The cloud scope is on for a path when its own cloud folder is, whatever the scope list says.
+    let cloudRoot = CloudStorage.root(containing: rawPath)
+    if let cloudRoot, !Defaults[.disabledCloudLocations].contains(FilePath(cloudRoot)) {
+        enabledScopes.insert(.cloud)
+    } else {
+        enabledScopes.remove(.cloud)
+    }
     let home = HOME.string
     let library = home + "/Library"
     let (scope, scopeNote): (SearchScope?, String) = {
         if let (s, root) = ScopeIgnore.scopeAndRoot(forPath: rawPath) {
             return (s, " (root \(root))")
+        }
+        if let cloudRoot {
+            return (.cloud, " (root \(cloudRoot))")
         }
         if rawPath == library || rawPath.hasPrefix(library + "/") {
             return (.library, "")
@@ -297,6 +307,8 @@ nonisolated func explainPathExclusion(_ rawPath: String, coord: SearchCoordinato
         "INDEXED — searchable now"
     } else if !exists {
         "NOT INDEXED — path does not exist on disk"
+    } else if scope == .cloud, !enabledScopes.contains(.cloud) {
+        "EXCLUDED — this cloud folder is turned off in Settings > Drives & Volumes"
     } else if let scope, !enabledScopes.contains(scope) {
         "EXCLUDED — the \(scope.rawValue) scope is disabled in Settings"
     } else if scope == nil, !rawPath.hasPrefix("/Volumes/") {
@@ -428,6 +440,18 @@ class FuzzyClient {
         let durationMs: Double?
     }
 
+    /// The live engine a path belongs to and the rules its full walk applies there (same setup as `indexFiles`
+    /// and `indexVolumeEngine`), so the single-path walk adds exactly what the full one would.
+    struct PathWalk: @unchecked Sendable {
+        let engine: SearchEngine
+        var volume: FilePath?
+        var ignoreFile: String?
+        var ignoreRoot: String?
+        var skipDir: ((String) -> Bool)?
+        var applyBlocklist = false
+        var discoverGitignore = false
+    }
+
     /// How long FSEvents changes accumulate before one main-actor flush.
     nonisolated static let fsFlushInterval: DispatchTimeInterval = .milliseconds(100)
 
@@ -435,10 +459,10 @@ class FuzzyClient {
 
     /// Score biases per scope (higher = results ranked higher in merged output)
     static let scopeBiases: [SearchScope: Int] = [
-        .home: 2, .applications: 1, .library: 0, .system: -1, .root: -1,
+        .home: 2, .cloud: 2, .applications: 1, .library: 0, .system: -1, .root: -1,
     ]
 
-    static let freeScopes: Set<SearchScope> = [.home, .applications, .library]
+    static let freeScopes: Set<SearchScope> = [.home, .applications, .library, .cloud]
 
     /// How long `indexPathFirst` may walk before handing over to the full reindex. Past this the path is about as
     /// costly as its scope, and whatever the walk reached stays searchable until the reindex lands.
@@ -496,6 +520,14 @@ class FuzzyClient {
     var searching = false
     var hasFullDiskAccess: Bool = FullDiskAccess.isGranted
     var disabledVolumes: [FilePath] = Defaults[.disabledVolumes]
+    /// iCloud Drive and the folders in ~/Library/CloudStorage, see `CloudStorage`. Looked for at launch, before
+    /// anything is walked, as the cloud scope's roots come from it.
+    var cloudLocations: [CloudLocation] = CloudStorage.locations()
+    /// Cloud folders whose online-only folders are being listed, with how many files each has gone through so far.
+    var cloudListing: [String: Int] = [:]
+    @ObservationIgnored var cloudListTasks: [String: Task<Void, Never>] = [:]
+    /// The cloud scope's roots as of the last change applied to the index.
+    @ObservationIgnored var appliedCloudRoots: Set<String> = []
     var enabledVolumes: [FilePath] = computeEnabledVolumes(mounted: initialVolumes, disabled: Defaults[.disabledVolumes])
     var externalIndexes: [FilePath] = computeEnabledVolumes(mounted: initialVolumes, disabled: Defaults[.disabledVolumes])
         .map { volumeIndexFile($0) }
@@ -576,7 +608,11 @@ class FuzzyClient {
     /// The scopes search uses: the enabled ones, and without Pro only the free ones. Nothing else is walked, loaded,
     /// followed or saved, since its results would never be shown.
     var searchableScopes: [SearchScope] {
-        Defaults[.searchScopes].filter { proactive || Self.freeScopes.contains($0) }
+        var scopes = Defaults[.searchScopes].filter { $0 != .cloud && (proactive || Self.freeScopes.contains($0)) }
+        if !cloudRoots.isEmpty {
+            scopes.append(.cloud)
+        }
+        return scopes
     }
 
     @ObservationIgnored var livePoolRefresh: DispatchWorkItem? {
@@ -1050,6 +1086,13 @@ class FuzzyClient {
             helperApp.sink { HelperApp.refresh([$0]) }.store(in: &observers)
         }
 
+        appliedCloudRoots = Set(cloudRoots)
+        pub(.disabledCloudLocations)
+            .debounce(for: 1.0, scheduler: RunLoop.main)
+            .sink { [self] _ in
+                applyCloudRoots()
+            }.store(in: &observers)
+
         pub(.disabledVolumes)
             .debounce(for: 2.0, scheduler: RunLoop.main)
             .sink { [self] volumes in
@@ -1185,9 +1228,18 @@ class FuzzyClient {
 
         // The indexes follow file changes as they happen, so nothing is walked on a timer; this only writes them
         // to disk now and then, and walks what has no position to replay from.
+        // Once the launch work settles, the cloud folders' online-only folders are listed. A Library walk started
+        // above lists them itself when it is done.
+        Task { [self] in
+            try? await Task.sleep(for: .seconds(20))
+            refreshCloudLocations(thenList: true)
+        }
+
         indexChecker = Repeater(every: 60 * 60, name: "Index Checker", tolerance: 60 * 60) { [self] in
             saveLiveIndexIfWorthIt()
             chooseUnwatched()
+            // New folders a cloud service adds arrive online only; this lists them.
+            refreshCloudLocations(thenList: true)
             guard batteryLevel() > 0.3 else { return }
             let missing = searchableScopes.filter { liveBase[$0] == nil }
             if !missing.isEmpty {
@@ -1570,7 +1622,12 @@ class FuzzyClient {
 
         scopesIndexing.formUnion(scopes)
         let ignoreChecker: String? = fsignore.exists ? fsignoreString : nil
-        let volumePaths = Set(enabledVolumes.map(\.string))
+        // Volumes have their own indexes, and so does cloud storage: Library leaves its folders to the cloud scope.
+        let skippedFolders = Set(enabledVolumes.map(\.string)).union(cloudLocations.map(\.root.string))
+        if scopes.contains(.cloud) {
+            // The walk replaces the engine the listing adds to; it lists them again once it is done.
+            cancelCloudListing()
+        }
         // Whatever changes from here on is replayed onto the walked engines once the watcher restarts.
         let walkStartID = FSEventsGetCurrentEventId()
         let fingerprints = Dictionary(uniqueKeysWithValues: scopes.map { ($0, rulesFingerprint($0)) })
@@ -1607,10 +1664,7 @@ class FuzzyClient {
                                 if excludeSkip?(path) ?? false {
                                     return true
                                 }
-                                if volumePaths.contains(path) {
-                                    return true
-                                }
-                                return false
+                                return skippedFolders.contains(path)
                             }
                             let ignore = scopeIgnoreFile ?? (dir.applyIgnore ? ignoreChecker : nil)
                             let ignoreRoot = scopeIgnoreFile != nil ? dir.dir : nil
@@ -1650,6 +1704,9 @@ class FuzzyClient {
                         self.updateIndexedCount()
                         IndexWalks.record(.scope(scope), started: started)
                         self.logActivity("Indexed \(scope.label): \(added.formatted()) files (\(self.indexedCount.formatted()) total)", operationKey: "scope:\(scope.rawValue)")
+                        if scope == .cloud {
+                            self.listCloudFolders()
+                        }
 
                         if !searchTriggered {
                             searchTriggered = true
@@ -1766,6 +1823,11 @@ class FuzzyClient {
         parts.append(Defaults[.blockedPrefixes])
         parts.append(Defaults[.blockedContains])
         parts.append(scope == .home && Defaults[.honorGitignore] ? "gitignore" : "")
+        // Library stopped holding the cloud folders when they got a scope of their own: an index from before has them.
+        // Only Library's changes; the other scopes keep theirs and aren't walked again.
+        if scope == .library {
+            parts.append("without cloud storage")
+        }
 
         var hash: UInt64 = 0xCBF2_9CE4_8422_2325
         for byte in parts.joined(separator: "\u{0}").utf8 {
@@ -1777,7 +1839,7 @@ class FuzzyClient {
     /// The folders each enabled scope walks, with the same rules `indexFiles` walks them by.
     func liveRoutes() -> [LiveRoute] {
         let ignoreChecker: String? = fsignore.exists ? fsignoreString : nil
-        let volumePaths = Set(enabledVolumes.map(\.string))
+        let skippedFolders = Set(enabledVolumes.map(\.string)).union(cloudLocations.map(\.root.string))
         var routes: [LiveRoute] = []
         for scope in searchableScopes {
             guard let engine = scopeEngines[scope] else { continue }
@@ -1789,7 +1851,7 @@ class FuzzyClient {
                     walkRoot: dir.dir,
                     ignoreFile: scopeIgnoreFile ?? (dir.applyIgnore ? ignoreChecker : nil),
                     ignoreRoot: scopeIgnoreFile != nil ? dir.dir : nil,
-                    skipDir: { path in (excl.map { path.hasPrefix($0) } ?? false) || volumePaths.contains(path) },
+                    skipDir: { path in (excl.map { path.hasPrefix($0) } ?? false) || skippedFolders.contains(path) },
                     applyBlocklist: true,
                     discoverGitignore: honorGitignore
                 )
@@ -3101,6 +3163,8 @@ class FuzzyClient {
             }
             return dirs
         case .library: return [("\(HOME.string)/Library", nil, true)]
+        // Under HOME, so ~/.fsignore applies here as it does to Library.
+        case .cloud: return cloudRoots.map { ($0, nil, true) }
         case .applications: return [("/Applications", nil, false), ("/System/Applications", nil, false)]
         case .system: return [("/System", "/System/Volumes", false)]
         case .root:
@@ -3110,16 +3174,46 @@ class FuzzyClient {
         }
     }
 
-    /// The live engine a path belongs to and the rules its full walk applies there (same setup as `indexFiles`
-    /// and `indexVolumeEngine`), so the single-path walk adds exactly what the full one would.
-    private struct PathWalk: @unchecked Sendable {
-        let engine: SearchEngine
-        var volume: FilePath?
-        var ignoreFile: String?
-        var ignoreRoot: String?
-        var skipDir: ((String) -> Bool)?
-        var applyBlocklist = false
-        var discoverGitignore = false
+    func pathWalk(for path: String) -> PathWalk? {
+        func contains(_ root: String) -> Bool {
+            path == root || path.hasPrefix(root + "/")
+        }
+
+        if let volume = enabledVolumes.first(where: { contains($0.string) }) {
+            // The volume's own .fsignore is read off-main in indexPathFirst: stat on a stalled volume can block.
+            return volumeEngines[volume].map { PathWalk(engine: $0, volume: volume) }
+        }
+        let skippedFolders = Set(enabledVolumes.map(\.string)).union(cloudLocations.map(\.root.string))
+        let homeIgnore: String? = fsignore.exists ? fsignoreString : nil
+        // The deepest root holding the path: a cloud folder sits inside ~/Library, and it is the cloud scope's.
+        let candidates = searchableScopes.flatMap { scope in
+            walkDirs(for: scope)
+                .filter { contains($0.dir) && !($0.excludePrefix.map(contains) ?? false) }
+                .map { (scope: scope, root: $0) }
+        }
+        if let best = candidates.max(by: { $0.root.dir.count < $1.root.dir.count }), let engine = scopeEngines[best.scope] {
+            let scope = best.scope
+            let root = best.root
+            // Inside a cloud folder that is turned off: Library leaves it out too, so nothing walks it.
+            if scope == .library, cloudLocations.contains(where: { contains($0.root.string) }) {
+                return nil
+            }
+            let scopeIgnoreFile = ScopeIgnore.rootedScopes.contains(scope) ? ScopeIgnore.activeFile(for: scope) : nil
+            return PathWalk(
+                engine: engine,
+                ignoreFile: scopeIgnoreFile ?? (root.applyIgnore ? homeIgnore : nil),
+                ignoreRoot: scopeIgnoreFile != nil ? root.dir : nil,
+                skipDir: { dir in
+                    if let excl = root.excludePrefix, dir.hasPrefix(excl) {
+                        return true
+                    }
+                    return skippedFolders.contains(dir)
+                },
+                applyBlocklist: true,
+                discoverGitignore: scope == .home && Defaults[.honorGitignore]
+            )
+        }
+        return nil
     }
 
     @ObservationIgnored private var _lastOperationUpdate: CFAbsoluteTime = 0
@@ -3197,39 +3291,6 @@ class FuzzyClient {
                 self.scheduleSaveIndexes()
             }
         }
-    }
-
-    private func pathWalk(for path: String) -> PathWalk? {
-        func contains(_ root: String) -> Bool {
-            path == root || path.hasPrefix(root + "/")
-        }
-
-        if let volume = enabledVolumes.first(where: { contains($0.string) }) {
-            // The volume's own .fsignore is read off-main in indexPathFirst: stat on a stalled volume can block.
-            return volumeEngines[volume].map { PathWalk(engine: $0, volume: volume) }
-        }
-        let volumePaths = Set(enabledVolumes.map(\.string))
-        let homeIgnore: String? = fsignore.exists ? fsignoreString : nil
-        for scope in searchableScopes {
-            guard let engine = scopeEngines[scope],
-                  let root = walkDirs(for: scope).first(where: { contains($0.dir) && !($0.excludePrefix.map(contains) ?? false) })
-            else { continue }
-            let scopeIgnoreFile = ScopeIgnore.rootedScopes.contains(scope) ? ScopeIgnore.activeFile(for: scope) : nil
-            return PathWalk(
-                engine: engine,
-                ignoreFile: scopeIgnoreFile ?? (root.applyIgnore ? homeIgnore : nil),
-                ignoreRoot: scopeIgnoreFile != nil ? root.dir : nil,
-                skipDir: { dir in
-                    if let excl = root.excludePrefix, dir.hasPrefix(excl) {
-                        return true
-                    }
-                    return volumePaths.contains(dir)
-                },
-                applyBlocklist: true,
-                discoverGitignore: scope == .home && Defaults[.honorGitignore]
-            )
-        }
-        return nil
     }
 
     private func appendIgnoreLines(_ lines: [String], to file: FilePath, suppressWatcher: Bool) {

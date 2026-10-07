@@ -89,6 +89,29 @@ enum PreviewKind {
 
         self = .quicklook
     }
+
+    /// What an online-only file will preview as once it is downloaded, from its extension alone. Anything more (the
+    /// text sniff, Quick Look's support check) reads the file, and reading it downloads it.
+    @MainActor
+    init(onlineOnly url: URL) {
+        guard let type = UTType(filenameExtension: url.pathExtension.lowercased()) else {
+            self = .quicklook
+            return
+        }
+        if type.conforms(to: .image) {
+            self = .image
+        } else if type.conforms(to: .pdf) {
+            self = .pdf
+        } else if type.conforms(to: .audiovisualContent) || type.conforms(to: .movie) {
+            self = AVSupport.canPlay(type) ? .video : .quicklook
+        } else if type.conforms(to: .audio) {
+            self = AVSupport.canPlay(type) ? .audio : .quicklook
+        } else if type.conforms(to: .text), !type.conforms(to: .rtf), !type.conforms(to: .html) {
+            self = .text
+        } else {
+            self = .quicklook
+        }
+    }
 }
 
 extension URL {
@@ -169,20 +192,22 @@ struct FilePreviewPanel: View {
     var body: some View {
         ZStack(alignment: .top) {
             if plain, let path = current {
-                let kind = PreviewKind(for: path.url)
+                let onlineOnly = isOnlineOnly(path)
+                let kind = onlineOnly ? PreviewKind(onlineOnly: path.url) : PreviewKind(for: path.url)
                 VStack(spacing: 0) {
                     header(for: path)
-                    content(for: path, kind: kind, topInset: 0, bottomInset: 0)
+                    content(for: path, kind: kind, onlineOnly: onlineOnly, topInset: 0, bottomInset: 0)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .padding(.horizontal, 8)
-                    FileInfoBar(path: path, kind: kind)
+                    FileInfoBar(path: path, kind: kind, onlineOnly: onlineOnly)
                 }
             } else if plain {
                 emptyState
             } else if let path = current {
-                let kind = PreviewKind(for: path.url)
-                content(for: path, kind: kind, topInset: headerHeight, bottomInset: footerHeight)
+                let onlineOnly = isOnlineOnly(path)
+                let kind = onlineOnly ? PreviewKind(onlineOnly: path.url) : PreviewKind(for: path.url)
+                content(for: path, kind: kind, onlineOnly: onlineOnly, topInset: headerHeight, bottomInset: footerHeight)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 VStack(spacing: 0) {
                     header(for: path)
@@ -191,7 +216,7 @@ struct FilePreviewPanel: View {
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
                     Spacer(minLength: 0)
                     VStack(spacing: 0) {
-                        FileInfoBar(path: path, kind: kind)
+                        FileInfoBar(path: path, kind: kind, onlineOnly: onlineOnly)
                         if showHideHint {
                             hideHint
                         }
@@ -243,6 +268,8 @@ struct FilePreviewPanel: View {
 
     @State private var index = 0
     @State private var hintHovering = false
+    /// Bumped when an online-only file finishes downloading, so the panel draws its real preview.
+    @State private var downloads = 0
     // Live heights of the floating glass bars, reserved as content insets on the
     // scrollable previews so a text file's (or list's) first and last lines rest
     // clear of the header/footer instead of being hidden beneath them.
@@ -361,6 +388,17 @@ struct FilePreviewPanel: View {
     }
 
     @ViewBuilder
+    private func content(for path: FilePath, kind: PreviewKind, onlineOnly: Bool, topInset: CGFloat, bottomInset: CGFloat) -> some View {
+        if onlineOnly {
+            CloudFilePreview(path: path) { downloads &+= 1 }
+                .padding(.top, topInset)
+                .padding(.bottom, bottomInset)
+        } else {
+            content(for: path, kind: kind, topInset: topInset, bottomInset: bottomInset)
+        }
+    }
+
+    @ViewBuilder
     private func content(for path: FilePath, kind: PreviewKind, topInset: CGFloat, bottomInset: CGFloat) -> some View {
         switch kind {
         case .folder:
@@ -381,6 +419,16 @@ struct FilePreviewPanel: View {
             CodePreviewView(url: path.url, topInset: topInset, bottomInset: bottomInset)
         case .quicklook:
             QuickLookPreview(url: path.url)
+        }
+    }
+
+    /// Only files on this Mac's own disks are checked: a network share can't keep files online only, and a stalled
+    /// one could hang the check.
+    private func isOnlineOnly(_ path: FilePath) -> Bool {
+        _ = downloads
+        switch FileInfo.classify(path) {
+        case .internalDisk, .externalLocal: return path.isOnlineOnly
+        case .network, .offline: return false
         }
     }
 

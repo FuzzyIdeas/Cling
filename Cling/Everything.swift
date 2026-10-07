@@ -121,6 +121,15 @@ final class EverythingIndex {
             .sorted()
     }
 
+    /// The cloud folders on this Mac, and those of them Settings > Drives has on. Everything walks each one that is on
+    /// as a root of its own, the way it does an internal volume, and leaves out the others. Finding them reads the
+    /// disk, so this never runs on the main thread either.
+    nonisolated static func cloudRoots() -> (on: [String], all: [String]) {
+        let all = CloudStorage.locations().map(\.root.string)
+        let off = Set(Defaults[.disabledCloudLocations].map(\.string))
+        return (all.filter { !off.contains($0) }, all)
+    }
+
     func toggle() {
         guard proactive else {
             showProPrompt = true
@@ -180,6 +189,16 @@ final class EverythingIndex {
         }
     }
 
+    /// A cloud account came or went.
+    func cloudFoldersChanged() {
+        updater?.syncCloud()
+    }
+
+    /// Cling listed online-only folders in this cloud folder, filling them in on disk.
+    func cloudFolderListed(_ root: String) {
+        updater?.syncCloud(listed: root)
+    }
+
     /// FSEvents dropped events or lost its history, so the loaded engine may have missed changes.
     func historyLost(in engine: SearchEngine) {
         guard self.engine === engine, !walking else { return }
@@ -194,6 +213,7 @@ final class EverythingIndex {
     @ObservationIgnored private var lastBuildSearch: CFAbsoluteTime = 0
     @ObservationIgnored private var volumeObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var drivesObserver: AnyCancellable?
+    @ObservationIgnored private var cloudObserver: AnyCancellable?
     /// What the loaded engine reflects, and how many paths changed since it was last written to disk.
     @ObservationIgnored private var snapshot: EverythingSnapshot?
     @ObservationIgnored private var lastEventID: UInt64 = 0
@@ -202,23 +222,27 @@ final class EverythingIndex {
     // MARK: Walking
 
     /// Each top-level folder of the startup disk walks on its own task, and so does each other internal volume
-    /// under /Volumes. No ignore rules, `.git` folders and `.DS_Store` files stay in, and entries are appended without a
-    /// duplicate check.
-    private nonisolated static func walkEverything(into engine: SearchEngine, volumes: [String], progress: @escaping @Sendable () -> Void) async {
+    /// under /Volumes and each cloud folder that is on. No ignore rules, `.git` folders and `.DS_Store` files stay in,
+    /// and entries are appended without a duplicate check.
+    private nonisolated static func walkEverything(
+        into engine: SearchEngine, volumes: [String], cloud: (on: [String], all: [String]), progress: @escaping @Sendable () -> Void
+    ) async {
         let (roots, topLevel) = startupDiskRoots()
         for (path, isDir) in topLevel {
             engine.appendPath(path, isDir: isDir)
         }
-        for volume in volumes {
-            engine.appendPath(volume, isDir: true)
+        for root in volumes + cloud.on {
+            engine.appendPath(root, isDir: true)
         }
+        let cloudFolders = Set(cloud.all)
         await withTaskGroup(of: Void.self) { group in
-            for root in roots + volumes {
+            for root in roots + volumes + cloud.on {
                 group.addTask {
                     engine.walkDirectory(
                         root,
-                        // The data volume shows up a second time in here; its folders are already at /.
-                        skipDir: { $0 == "/System/Volumes" },
+                        // The data volume shows up a second time in here; its folders are already at /. Cloud folders
+                        // walk on their own.
+                        skipDir: { $0 == "/System/Volumes" || cloudFolders.contains($0) },
                         skipGitDirs: false,
                         skipJunkFiles: false,
                         dedupe: false,
@@ -370,10 +394,13 @@ final class EverythingIndex {
                 self.lastEventID = saved.eventID
                 self.unsavedChanges = 0
                 self.install(engine)
-                self.startWatching(since: saved.eventID, volumes: kept)
+                self.startWatching(since: saved.eventID, volumes: kept, cloud: ([], []))
                 for volume in added {
                     self.updater?.addVolume(volume)
                 }
+                // What Cling listed in a cloud folder while this was unloaded isn't sure to come back as file changes, so
+                // each cloud folder is walked again, and one turned off since it was saved leaves.
+                self.updater?.syncCloud(fresh: true)
             }
         }
     }
@@ -407,9 +434,10 @@ final class EverythingIndex {
             var snapshot = start
             snapshot.volumes = Self.internalVolumes()
             let started = snapshot
+            let cloud = Self.cloudRoots()
             let t0 = CFAbsoluteTimeGetCurrent()
             let began = Date()
-            await Self.walkEverything(into: fresh, volumes: started.volumes) {
+            await Self.walkEverything(into: fresh, volumes: started.volumes, cloud: cloud) {
                 Task { @MainActor in
                     if self.walking {
                         self.walked = fresh.count
@@ -447,7 +475,7 @@ final class EverythingIndex {
                 self.lastEventID = started.eventID
                 self.unsavedChanges = 0
                 self.install(engine)
-                self.startWatching(since: started.eventID, volumes: started.volumes)
+                self.startWatching(since: started.eventID, volumes: started.volumes, cloud: cloud)
             }
         }
     }
@@ -456,9 +484,9 @@ final class EverythingIndex {
 
     /// Replays every change since `since` (FSEvents keeps the history), then follows along until unloaded. `volumes`
     /// are the disks the engine already holds.
-    private func startWatching(since: UInt64, volumes: [String]) {
+    private func startWatching(since: UInt64, volumes: [String], cloud: (on: [String], all: [String])) {
         guard let engine else { return }
-        let updater = EverythingUpdater(engine: engine, volumes: volumes)
+        let updater = EverythingUpdater(engine: engine, volumes: volumes, cloud: cloud)
         self.updater = updater
         // Changes arrive a few seconds late, in fewer and larger batches.
         stream = FSChangeStream(paths: ["/"], since: since, latency: 3, queue: streamQueue) { events in
@@ -479,6 +507,7 @@ final class EverythingIndex {
         }
         volumeObservers = []
         drivesObserver = nil
+        cloudObserver = nil
     }
 
     /// A disk plugged in or turned on in Settings > Drives while loaded is walked into the engine; one ejected or
@@ -496,6 +525,7 @@ final class EverythingIndex {
             },
         ]
         drivesObserver = Defaults.publisher(.disabledVolumes, options: []).sink { _ in updater.syncVolumes() }
+        cloudObserver = Defaults.publisher(.disabledCloudLocations, options: []).sink { _ in updater.syncCloud() }
     }
 
 }
@@ -507,9 +537,11 @@ final class EverythingIndex {
 /// Applies file system events to a loaded Everything engine in batches, on its own background queue, so the
 /// normal index's watcher and the main thread never wait on it.
 final class EverythingUpdater: @unchecked Sendable {
-    init(engine: SearchEngine, volumes: [String]) {
+    init(engine: SearchEngine, volumes: [String], cloud: (on: [String], all: [String])) {
         self.engine = engine
         self.volumes = Set(volumes)
+        self.cloud = Set(cloud.on)
+        cloudOff = cloud.all.filter { !cloud.on.contains($0) }
     }
 
     /// Takes a delivery from the stream; changes are applied half a second after the first of a batch arrives.
@@ -560,6 +592,36 @@ final class EverythingUpdater: @unchecked Sendable {
         }
     }
 
+    /// Brings the cloud folders in line with Settings > Drives and the accounts on this Mac: one turned off leaves the
+    /// engine and one turned on is walked into it. `listed` is walked again, after Cling filled in folders there that
+    /// were online only. `fresh` walks them all again, for an engine loaded from disk, which holds them as they were
+    /// when it was saved.
+    func syncCloud(fresh: Bool = false, listed: String? = nil) {
+        queue.async { [self] in
+            let (on, all) = EverythingIndex.cloudRoots()
+            let now = Set(on)
+            cloudOff = all.filter { !now.contains($0) }
+            var walk = fresh ? now : now.subtracting(cloud)
+            if let listed, now.contains(listed) {
+                walk.insert(listed)
+            }
+            // What is walked replaces what the engine had there: an account added since the last walk was walked as
+            // a plain folder.
+            let remove = (fresh ? Set(all) : cloud.subtracting(now)).union(walk)
+            cloud = now
+            guard !remove.isEmpty else { return }
+            // Walked on the side and swapped in, so searches meanwhile still find the files from before.
+            let walked = SearchEngine()
+            for root in walk.sorted() {
+                walked.appendPath(root, isDir: true)
+                walked.walkDirectory(root, skipGitDirs: false, skipJunkFiles: false, dedupe: false)
+            }
+            engine.removeSubtrees(Array(remove))
+            engine.appendEntries(of: walked)
+            notify(eventID: 0, changes: remove.count)
+        }
+    }
+
     func removeVolume(_ path: String) {
         queue.async { [self] in
             guard volumes.remove(path) != nil else { return }
@@ -574,6 +636,9 @@ final class EverythingUpdater: @unchecked Sendable {
     private var flushScheduled = false
     /// The internal volumes under /Volumes being followed; events from anything else mounted there are ignored.
     private var volumes: Set<String>
+    /// The cloud folders that are on, and the ones that are off, whose events are ignored.
+    private var cloud: Set<String>
+    private var cloudOff: [String]
 
     private func notify(eventID: UInt64, changes: Int) {
         let engine = engine
@@ -646,9 +711,13 @@ final class EverythingUpdater: @unchecked Sendable {
         notify(eventID: maxEventID, changes: flagsByPath.count)
     }
 
-    /// Anything mounted under /Volumes that isn't an internal volume being followed is left out too.
+    /// Anything mounted under /Volumes that isn't an internal volume being followed is left out too, and so is
+    /// anything in a cloud folder that is off.
     private func normalized(_ raw: String) -> String? {
         guard let path = FSEventsHistory.normalized(raw) else { return nil }
+        if cloudOff.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
+            return nil
+        }
         if path.hasPrefix("/Volumes/") {
             let volume = "/Volumes/" + (path.dropFirst("/Volumes/".count).split(separator: "/", maxSplits: 1).first ?? "")
             guard volumes.contains(volume) else { return nil }

@@ -31,6 +31,7 @@ enum CLIConfig {
             case .filters: filters(request)
             case .scripts: scripts(request)
             case .volumes: volumes(request)
+            case .cloud: cloud(request)
             case .scopes: scopes(request)
             case .ignore: ignore(request)
             case .shortcuts: shortcuts(request)
@@ -701,6 +702,80 @@ extension CLIConfig {
     }
 }
 
+// MARK: - Cloud storage
+
+extension CLIConfig {
+    private struct CloudInfo: Encodable {
+        let name: String
+        let account: String?
+        let path: String
+        let enabled: Bool
+        /// Its online-only folders are being listed right now.
+        let listing: Bool
+        let count: Int
+    }
+
+    @MainActor private static func cloudResponse() -> ClingResponse {
+        let disabled = FUZZY.disabledCloudRoots
+        let engine = FUZZY.scopeEngines[.cloud]
+        let locations = FUZZY.cloudLocations.map { location in
+            let root = location.root.string
+            return CloudInfo(
+                name: location.name, account: location.account, path: root, enabled: !disabled.contains(root),
+                listing: FUZZY.cloudListing[root] != nil, count: engine?.countBelow(root) ?? 0
+            )
+        }
+        let lines = locations.isEmpty
+            ? ["No cloud storage on this Mac."]
+            : locations.map { l in
+                let state = !l.enabled ? "disabled" : l.listing ? "listing, \(l.count.formatted()) entries so far" : "indexed, \(l.count.formatted()) entries"
+                return "\(l.account.map { "\(l.name) \($0)" } ?? l.name) (\(l.path)): \(state)"
+            }
+        return ClingResponse(status: lines.joined(separator: "\n"), payload: payloadJSON(["locations": locations]))
+    }
+
+    @MainActor private static func findCloudLocation(_ raw: String?) -> CloudLocation? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return nil }
+        let path = (raw as NSString).expandingTildeInPath
+        let all = FUZZY.cloudLocations
+        let lower = raw.lowercased()
+        return all.first { $0.root.string == path }
+            ?? all.first { $0.label.lowercased() == lower }
+            ?? all.first { $0.account?.lowercased() == lower }
+            ?? all.first { $0.name.lowercased() == lower }
+    }
+
+    @MainActor static func cloud(_ req: ClingRequest) -> ClingResponse {
+        // Settings looks again each time it opens; so does the CLI, for an account added a moment ago.
+        FUZZY.cloudLocations = CloudStorage.locations()
+        let action = req.action ?? "list"
+        guard action != "list" else {
+            return cloudResponse()
+        }
+        if action == "refresh", req.value == nil {
+            FUZZY.listCloudFolders()
+            return cloudResponse()
+        }
+        guard let location = findCloudLocation(req.value) else {
+            return ClingResponse(error: "no cloud storage named '\(req.value ?? "")'. List them to see their names and paths.")
+        }
+        switch action {
+        case "enable":
+            // What the location's toggle in Settings writes: Cling walks and lists it once the change lands.
+            Defaults[.disabledCloudLocations].removeAll { $0 == location.root }
+        case "disable":
+            if !Defaults[.disabledCloudLocations].contains(location.root) {
+                Defaults[.disabledCloudLocations].append(location.root)
+            }
+        case "refresh":
+            FUZZY.listCloudFolders([location])
+        default:
+            return ClingResponse(error: "unknown cloud action '\(action)'")
+        }
+        return cloudResponse()
+    }
+}
+
 // MARK: - Scopes
 
 extension CLIConfig {
@@ -723,12 +798,15 @@ extension CLIConfig {
             let roots: [String] = switch s {
             case .home: [home]
             case .library: [home + "/Library"]
+            case .cloud: FUZZY.cloudRoots
             default: ScopeIgnore.roots(for: s)
             }
+            // The cloud scope follows its folders' toggles (cling cloud), not the scope list.
+            let on = s == .cloud ? !FUZZY.cloudRoots.isEmpty : enabled.contains(s)
             return ScopeInfo(
-                name: s.rawValue, label: s.label, enabled: enabled.contains(s),
+                name: s.rawValue, label: s.label, enabled: on,
                 needsPro: !FuzzyClient.freeScopes.contains(s),
-                searched: enabled.contains(s) && (proactive || FuzzyClient.freeScopes.contains(s)),
+                searched: on && (proactive || FuzzyClient.freeScopes.contains(s)),
                 indexed: FUZZY.scopeEngines[s] != nil, count: FUZZY.scopeEngines[s]?.count ?? 0, roots: roots
             )
         }
@@ -753,6 +831,9 @@ extension CLIConfig {
         }
         guard !chosen.isEmpty else {
             return ClingResponse(error: "\(action) needs one or more scopes")
+        }
+        if chosen.contains(.cloud) {
+            return ClingResponse(error: "the cloud scope is on while any cloud folder is. Turn those on and off with cling cloud enable|disable <name>")
         }
         switch action {
         case "enable":

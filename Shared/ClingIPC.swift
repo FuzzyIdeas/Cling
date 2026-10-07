@@ -28,6 +28,8 @@ public enum ClingCommand: String, Codable {
     case filters
     case scripts
     case volumes
+    /// iCloud Drive and the folders in ~/Library/CloudStorage.
+    case cloud
     case scopes
     case ignore
     case shortcuts

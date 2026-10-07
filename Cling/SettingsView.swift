@@ -1168,6 +1168,18 @@ private struct SearchSettingsPane: View {
 private struct VolumesSettingsPane: View {
     var body: some View {
         Form {
+            if !fuzzy.cloudLocations.isEmpty {
+                Section {
+                    CloudStorageList()
+                } header: {
+                    Text("Cloud Storage")
+                } footer: {
+                    Text("Online-only folders are listed so their files can be found. Files download only when you preview them.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section {
                 DescriptiveToggle(
                     title: "Don't index new volumes automatically",
@@ -1190,6 +1202,8 @@ private struct VolumesSettingsPane: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
     }
+
+    @State private var fuzzy = FUZZY
 
     @Default(.disableAutomaticVolumeIndexing) private var disableAutomaticVolumeIndexing
 
@@ -1711,6 +1725,62 @@ extension FilePath: @retroactive Comparable {
         Binding(
             get: { Defaults[.reindexTimeIntervalPerVolume][self] ?? DEFAULT_VOLUME_REINDEX_INTERVAL },
             set: { Defaults[.reindexTimeIntervalPerVolume][self] = $0 }
+        )
+    }
+}
+
+// MARK: - CloudStorageList
+
+/// iCloud Drive and the folders in ~/Library/CloudStorage, each one on or off. Together they are the cloud scope.
+struct CloudStorageList: View {
+    var body: some View {
+        ForEach(fuzzy.cloudLocations) { location in
+            Toggle(isOn: binding(location)) {
+                HStack(spacing: 8) {
+                    Image(nsImage: location.icon)
+                        .resizable()
+                        .frame(width: 18, height: 18)
+                    Text(location.name)
+                    if let account = location.account {
+                        Text(Self.shownAccount ?? account)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    if let count = fuzzy.cloudListing[location.root.string] {
+                        Text("Listing… \(count.formatted()) files")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+            }
+        }
+        .onAppear { fuzzy.refreshCloudLocations() }
+    }
+
+    #if SEARCHBAR_BENCH
+        /// Screenshots show an invented account instead of the real one: `-searchBarShowcaseCloudAccount alex@example.com`.
+        private static let shownAccount = UserDefaults.standard.string(forKey: "searchBarShowcaseCloudAccount")
+    #else
+        private static let shownAccount: String? = nil
+    #endif
+
+    @State private var fuzzy = FUZZY
+
+    @Default(.disabledCloudLocations) private var disabledCloudLocations
+
+    private func binding(_ location: CloudLocation) -> Binding<Bool> {
+        Binding(
+            get: { !disabledCloudLocations.contains(location.root) },
+            set: { enabled in
+                if enabled {
+                    disabledCloudLocations.removeAll { $0 == location.root }
+                } else if !disabledCloudLocations.contains(location.root) {
+                    disabledCloudLocations.append(location.root)
+                }
+            }
         )
     }
 }

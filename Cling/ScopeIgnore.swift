@@ -75,7 +75,7 @@ enum ScopeIgnore {
         case .applications: ["/Applications", "/System/Applications"]
         case .system: ["/System"]
         case .root: ["/usr", "/bin", "/sbin", "/opt", "/etc", "/Library", "/var", "/private"]
-        case .home, .library: []
+        case .home, .library, .cloud: []
         }
     }
 

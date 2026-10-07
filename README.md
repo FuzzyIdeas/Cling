@@ -28,8 +28,9 @@
 - **Search history** with `Up`/`Down` arrow cycling, `Tab` completion, and `Cmd+Down` to browse all history
 - **Extension-aware queries** like `.png icon` or `.pdf invoice`
 - **Search operators** to filter and exclude results as you type
-- **Configurable search scopes** (Home, Library, Applications, System, Root) with `.fsignore` support
+- **Configurable search scopes** (Home, Library, Cloud Storage, Applications, System, Root) with `.fsignore` support
 - **External volume indexing** with persistent indexes that work even when unmounted
+- **Cloud storage** search across iCloud Drive, Dropbox, Google Drive and other cloud folders, files kept online only included, without downloading them
 - **Live filesystem tracking** via FSEvents
 - **Index size view** showing how many files each scope and folder adds to the index, with a way to prune the ones you don't need
 - **Send securely** to share files over an encrypted, auto-expiring link
@@ -41,7 +42,7 @@
 
 ### Pro features
 
-Cling is free to use with Home, Library and Applications search scopes. A **Cling Pro** licence unlocks:
+Cling is free to use with Home, Library, Cloud Storage and Applications search scopes. A **Cling Pro** licence unlocks:
 
 - **Additional search scopes**: System, Root
 - **External volume indexing** with persistent indexes, and an *External drives* filter to find which drive holds a file
