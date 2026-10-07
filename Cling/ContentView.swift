@@ -365,6 +365,8 @@ struct ContentView: View {
     // Right-arrow drills into a folder (query becomes `in:<folder>`); left-arrow walks back out.
     @State private var queryDrillStack: [String] = []
     @State private var lastDrillSetQuery: String?
+    /// The file → was pressed on, selected again once its folder's results come in.
+    @State private var drilledFile: (query: String, path: FilePath)?
     @State private var showNeedsProPopover = false
     @State private var isAddingFolderFilter = false
     @State private var folderFilterID = ""
@@ -1360,7 +1362,14 @@ struct ContentView: View {
                             // Auto-select the top row only when the query actually changed (a real
                             // new search). Background updates to the list (file watching, reindexing,
                             // recents refresh) keep the user's current selection put.
-                            if lastSelectionQuery != fuzzy.query {
+                            if let drilledFile, drilledFile.query == fuzzy.query,
+                               let row = results.firstIndex(of: drilledFile.path)
+                            {
+                                lastSelectionQuery = fuzzy.query
+                                selectedResultIDs = [drilledFile.path.string]
+                                self.drilledFile = nil
+                                scrollResultsTable(toRow: row + stash.files.count)
+                            } else if lastSelectionQuery != fuzzy.query {
                                 lastSelectionQuery = fuzzy.query
                                 selectFirstResult()
                             } else {
@@ -1400,11 +1409,15 @@ struct ContentView: View {
                             return .handled
                         }
                         .onKeyPress(.rightArrow) {
-                            // Drill into the selected folder: replace the query with `in:<folder>`.
-                            guard focused == .list, selectedResults.count == 1,
-                                  let folder = selectedResults.first, folder.memoz.isDir
+                            // Drill into the selected folder, or the folder holding the selected file: replace the
+                            // query with `in:<folder>`. A file stays selected there.
+                            guard focused == .list, selectedResults.count == 1, let selected = selectedResults.first
                             else { return .ignored }
-                            let drilled = drillIntoFolderQuery(folder)
+                            let isFile = !selected.memoz.isDir
+                            let drilled = drillIntoFolderQuery(isFile ? selected.removingLastComponent() : selected)
+                            // Already searching in the file's folder.
+                            guard drilled != fuzzy.query else { return .ignored }
+                            drilledFile = isFile ? (drilled, selected) : nil
                             // A fresh drill (query isn't one we set) starts a new back-stack.
                             if fuzzy.query != lastDrillSetQuery {
                                 queryDrillStack.removeAll()

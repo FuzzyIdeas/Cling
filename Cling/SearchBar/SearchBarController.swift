@@ -619,16 +619,21 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         updateCompletion()
     }
 
-    /// → in the list as in the window's table, or its hint: search inside the selected folder. → keeps the keyboard in
-    /// the list to go on into a subfolder, the hint leaves it in the field to type more.
+    /// → in the list as in the window's table, or its hint: search inside the selected folder, or the folder holding the
+    /// selected file, which stays selected there. → keeps the keyboard in the list to go on into a subfolder, the hint
+    /// leaves it in the field to type more.
     @discardableResult
     func drillIn(keepingListFocus: Bool = false) -> Bool {
-        guard selection.count == 1, let folder = selection.first, isDirectory(folder) else { return false }
+        guard selection.count == 1, let selected = selection.first else { return false }
+        let isFile = !isDirectory(selected)
+        let drilled = Self.drillQuery(isFile ? selected.removingLastComponent() : selected) + " "
+        // Already searching in the file's folder.
+        guard drilled != FUZZY.query else { return false }
         if FUZZY.query != lastDrillQuery {
             drillStack.removeAll()
         }
         drillStack.append(FUZZY.query)
-        let drilled = Self.drillQuery(folder) + " "
+        drilledFile = isFile ? (drilled, selected) : nil
         lastDrillQuery = drilled
         setQuery(drilled)
         if !keepingListFocus {
@@ -673,7 +678,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             hints.append(.init(id: .showInFinder, key: keys.showInFinder, title: "Show in Finder"))
             hints.append(.init(id: .quickLook, key: listFocused ? "␣" : keys.quickLook, title: "QuickLook"))
             // From the field, → moves the caret and ⇥ goes to the results.
-            if sel.count == 1, listFocused, let path = sel.first, FilePathBackgroundTasks.shared.knownIsDir(path) == true {
+            if sel.count == 1, listFocused, let path = sel.first, FilePathBackgroundTasks.shared.knownIsDir(path) != nil {
                 hints.append(.init(id: .drill, key: "→", title: "Search in folder"))
             }
             hints.append(.init(id: .copy, key: keys.copy, title: "Copy"))
@@ -771,6 +776,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     private var lastInputs: Inputs?
     private var appliedQueryKey: String?
     private var userNavigated = false
+    /// The file → was pressed on, kept selected in its folder's results until the person moves the selection.
+    private var drilledFile: (query: String, path: FilePath)?
 
     private var drillStack: [String] = []
     private var lastDrillQuery: String?
@@ -1192,10 +1199,15 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         }
         // Nothing preselected over recents, as in the window: a row picked on open is one the
         // person never chose. Otherwise the first result, until the person moves the selection.
-        let firstRow = inputs.defaultList ? -1 : (displayed.count > inputs.stash.count ? inputs.stash.count : 0)
+        var firstRow = inputs.defaultList ? -1 : (displayed.count > inputs.stash.count ? inputs.stash.count : 0)
+        var keepsFile = false
+        if let drilledFile, drilledFile.query == inputs.query, let row = displayed.firstIndex(of: drilledFile.path) {
+            firstRow = row
+            keepsFile = true
+        }
 
         if displayed != results.items {
-            results.setItems(displayed, select: userNavigated ? nil : firstRow, scrollToTop: !userNavigated)
+            results.setItems(displayed, select: userNavigated ? nil : firstRow, scrollToTop: !userNavigated && !keepsFile)
         } else if newQuery, !userNavigated {
             if firstRow < 0 {
                 results.tableView.deselectAll(nil)

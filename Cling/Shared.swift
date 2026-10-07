@@ -20,19 +20,27 @@ func revealInFinder(_ urls: [URL]) {
 /// reach into the underlying NSTableView and explicitly scroll its first row
 /// into view. Used after actions that prepend a new file to the results.
 func scrollResultsTableToTop() {
+    scrollResultsTable(toRow: 0)
+}
+
+func scrollResultsTable(toRow row: Int) {
     guard let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }),
           let table = findTableView(in: window.contentView)
     else { return }
-    if table.numberOfRows > 0 {
-        table.scrollRowToVisible(0)
+    if row < table.numberOfRows {
+        table.scrollRowToVisible(row)
     }
 }
 
 private func findTableView(in view: NSView?) -> NSTableView? {
     guard let view else { return nil }
-    if let table = view as? NSTableView { return table }
+    if let table = view as? NSTableView {
+        return table
+    }
     for sub in view.subviews {
-        if let found = findTableView(in: sub) { return found }
+        if let found = findTableView(in: sub) {
+            return found
+        }
     }
     return nil
 }
