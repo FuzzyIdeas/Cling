@@ -299,7 +299,8 @@ final class SearchBarHintBar: NSView {
             width: gear.size.width, height: gear.size.height
         )
         context.setAlpha(textAlpha)
-        gear.draw(in: gearRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        // An image draws at its own fraction, whatever the context's alpha: faded like the keycaps when dimmed.
+        gear.draw(in: gearRect, from: .zero, operation: .sourceOver, fraction: capAlpha, respectFlipped: true, hints: nil)
 
         let statusText = flashText ?? status
         let statusStyle: SearchBarTextCache.Style = flashText == nil ? .status : .flash
