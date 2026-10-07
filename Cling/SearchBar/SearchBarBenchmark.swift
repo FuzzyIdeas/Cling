@@ -678,6 +678,17 @@
                 FUZZY.showIndexBrowser = true
                 return
             }
+            // Settings > File server's Remote access sheet, in a window of its own: the pane only offers it while the
+            // server runs, which needs Pro.
+            if CommandLine.arguments.contains("-searchBarShowcaseRemoteAccess") {
+                let window = NSWindow(contentViewController: NSHostingController(rootView: RemoteAccessSheet()))
+                window.title = "Remote access"
+                window.center()
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+                showcaseWindow = window
+                return
+            }
             if CommandLine.arguments.contains("-searchBarShowcaseCheatsheet") {
                 let window = NSWindow(contentViewController: NSHostingController(rootView: QuerySyntaxCheatsheet().frame(height: 560)))
                 window.title = "Search syntax"

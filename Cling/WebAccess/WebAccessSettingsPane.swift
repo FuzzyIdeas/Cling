@@ -2,7 +2,8 @@
 //  WebAccessSettingsPane.swift
 //  Cling
 //
-//  Settings > File server: the switch, the port, and the link (with its QR code) that signs a browser in.
+//  Settings > File server: the switch, the port, the link (with its QR code) that signs a browser in, and the
+//  Tailscale steps for reaching it away from home.
 //
 
 import AppKit
@@ -77,6 +78,9 @@ struct WebAccessSettingsPane: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+        .sheet(isPresented: $showRemoteAccess) {
+            RemoteAccessSheet()
+        }
         // A VPN's DNS can come up after its address does.
         .onAppear {
             if serving {
@@ -84,6 +88,8 @@ struct WebAccessSettingsPane: View {
             }
         }
     }
+
+    @State private var showRemoteAccess = false
 
     @Default(.webAccessEnabled) private var enabled
     @Default(.webAccessPort) private var port
@@ -100,9 +106,10 @@ struct WebAccessSettingsPane: View {
         WebAccess.shared
     }
 
-    /// The picked host, or the first one while it's away (a DNS name before its lookup lands, a VPN that's off).
+    /// The picked host, or while it's away (a DNS name before its lookup lands, a VPN that's off) Tailscale's, which
+    /// works away from home too, or the first one.
     private var current: WebLink? {
-        web.links.first { $0.id == linkHost } ?? web.links.first
+        web.links.first { $0.id == linkHost } ?? web.links.first(where: \.tailscale) ?? web.links.first
     }
 
     private var hostBinding: Binding<String> {
@@ -141,6 +148,11 @@ struct WebAccessSettingsPane: View {
             } label: {
                 Label("Sign out all devices", systemImage: "rectangle.portrait.and.arrow.right")
             }
+            Button {
+                showRemoteAccess = true
+            } label: {
+                Label("Remote access", systemImage: "globe")
+            }
         }
         .buttonStyle(.bordered)
         .buttonBorderShape(.capsule)
@@ -164,6 +176,164 @@ struct WebAccessSettingsPane: View {
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
     }
+}
+
+// MARK: - RemoteAccessSheet
+
+/// Tailscale, for reaching the file server away from home: its app on this Mac and on the phone, signed in to the
+/// same account. Its address turns up by itself once it connects (`WebAccess.networkChanged`), and the pairing link
+/// moves to it, since a Tailscale link works at home too.
+struct RemoteAccessSheet: View {
+    enum Phone: String, CaseIterable, Identifiable {
+        case iPhone
+        case android = "Android"
+
+        var id: Self {
+            self
+        }
+
+        var store: String {
+            switch self {
+            case .iPhone: "https://apps.apple.com/app/tailscale/id1470499037"
+            case .android: "https://play.google.com/store/apps/details?id=com.tailscale.ipn"
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 18) {
+            VStack(spacing: 6) {
+                TailscaleIcon(app: app)
+                    .frame(width: 72, height: 72)
+                Text("Tailscale").font(.title2.weight(.semibold))
+                Text("An easy way to create a private link between your devices")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            Button(app == nil ? "Get Tailscale for Mac" : "Open Tailscale") {
+                if let app {
+                    NSWorkspace.shared.open(app)
+                } else if let store = URL(string: "macappstore://apps.apple.com/app/tailscale/id1475387142") {
+                    NSWorkspace.shared.open(store)
+                }
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .controlSize(.large)
+
+            VStack(spacing: 10) {
+                QRCodeView(text: phone.store)
+                    .frame(width: 150, height: 150)
+                Picker("Phone", selection: $phone) {
+                    ForEach(Phone.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+
+            Text("Sign in with the same account on all devices")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            Divider()
+
+            HStack {
+                status
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 400)
+        // Set up for using it away from home: the link people pair with is Tailscale's from here on.
+        .onChange(of: tailscaleLink?.id) { _, id in
+            if let id {
+                linkHost = id
+            }
+        }
+        .onDisappear {
+            if let tailscaleLink {
+                linkHost = tailscaleLink.id
+            }
+        }
+    }
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var phone: Phone = .iPhone
+
+    @Default(.webAccessLinkHost) private var linkHost
+
+    /// Tailscale's app on this Mac: the App Store's, or the one from Tailscale's site.
+    private var app: URL? {
+        ["io.tailscale.ipn.macos", "io.tailscale.ipn.macsys"].lazy.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first
+    }
+
+    /// Its name for this Mac where it has one, otherwise its address.
+    private var tailscaleLink: WebLink? {
+        WebAccess.shared.links.first(where: \.tailscale)
+    }
+
+    @ViewBuilder private var status: some View {
+        if let tailscaleLink {
+            Label {
+                Text("Connected · \(tailscaleLink.host)")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            } icon: {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            }
+            .foregroundStyle(.secondary)
+        } else {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Waiting for Tailscale on this Mac")
+            }
+            .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - TailscaleIcon
+
+/// The installed app's icon, or Tailscale's mark (nine dots, a T lit in them) drawn the way that icon shows it.
+struct TailscaleIcon: View {
+    let app: URL?
+
+    var body: some View {
+        if let app {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: app.path))
+                .resizable()
+                .aspectRatio(1, contentMode: .fit)
+        } else {
+            GeometryReader { geometry in
+                let side = geometry.size.width
+                let dot = side * 0.14
+                ZStack {
+                    RoundedRectangle(cornerRadius: side * 0.22, style: .continuous)
+                        .fill(Color(white: 0.12))
+                    VStack(spacing: dot * 0.55) {
+                        ForEach(Self.lit.indices, id: \.self) { row in
+                            HStack(spacing: dot * 0.55) {
+                                ForEach(Self.lit[row].indices, id: \.self) { column in
+                                    Circle()
+                                        .fill(Self.lit[row][column] ? Color.white : Color(white: 0.4))
+                                        .frame(width: dot, height: dot)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .aspectRatio(1, contentMode: .fit)
+            // The size an app icon's artwork takes inside its frame.
+            .padding(.all, 7)
+        }
+    }
+
+    private static let lit: [[Bool]] = [[false, false, false], [true, true, true], [false, true, false]]
 }
 
 // MARK: - QRCodeView

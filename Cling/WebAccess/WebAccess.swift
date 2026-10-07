@@ -65,6 +65,8 @@ struct WebLink: Hashable, Identifiable {
     let host: String
     /// Served over HTTPS, with Tailscale's certificate for the name.
     var secure = false
+    /// One of Tailscale's, which reaches this Mac from anywhere its devices are, not only from the same network.
+    var tailscale = false
     /// Tailscale · mac.example.ts.net
     let title: String
 
@@ -109,14 +111,14 @@ final class WebAccess {
         for address in addresses where !address.isLoopback {
             if address.isTailscale, let secureHost {
                 if !links.contains(where: { $0.host == secureHost }) {
-                    links.append(WebLink(host: secureHost, secure: true, title: "\(address.label) · \(secureHost)"))
+                    links.append(WebLink(host: secureHost, secure: true, tailscale: true, title: "\(address.label) · \(secureHost)"))
                 }
                 continue
             }
             if let name = hostnames[address.address], !links.contains(where: { $0.host == name }) {
-                links.append(WebLink(host: name, title: "\(address.label) · \(name)"))
+                links.append(WebLink(host: name, tailscale: address.isTailscale, title: "\(address.label) · \(name)"))
             }
-            links.append(WebLink(host: address.host, title: "\(address.label) · \(address.address)"))
+            links.append(WebLink(host: address.host, tailscale: address.isTailscale, title: "\(address.label) · \(address.address)"))
         }
         return links
     }
