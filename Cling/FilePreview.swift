@@ -16,6 +16,7 @@ import Defaults
 import ImageIO
 import KeyboardShortcuts
 import Lowtech
+import os
 import PDFKit
 import QuickLookUI
 import SwiftUI
@@ -34,8 +35,8 @@ enum PreviewKind {
     case text
     case quicklook
 
-    @MainActor
-    init(for url: URL) {
+    /// Stats the file and can read its first bytes, so it runs off the main thread: see `PreviewKinds`.
+    init(for url: URL, quickLook: QuickLookTypes) {
         let vals = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
         if vals?.isDirectory == true, vals?.isPackage != true {
             self = .folder
@@ -66,7 +67,7 @@ enum PreviewKind {
 
         // Containers QuickLook has no real preview for (disk images, archives):
         // list their entries with 7-Zip instead of showing a bare icon.
-        if SevenZip.canList(url), !QuickLookSupport.shared.canPreview(url) {
+        if SevenZip.canList(url), !quickLook.canPreview(url) {
             self = .archive
             return
         }
@@ -92,7 +93,6 @@ enum PreviewKind {
 
     /// What an online-only file will preview as once it is downloaded, from its extension alone. Anything more (the
     /// text sniff, Quick Look's support check) reads the file, and reading it downloads it.
-    @MainActor
     init(onlineOnly url: URL) {
         guard let type = UTType(filenameExtension: url.pathExtension.lowercased()) else {
             self = .quicklook
@@ -129,31 +129,36 @@ extension URL {
 /// Decides whether a file the system didn't type as text is actually readable
 /// text, so `public.data` files (extensionless configs like Caddyfile, logs,
 /// source without a known extension) can take the inset code preview instead of
-/// QuickLook. Results are cached by path since `PreviewKind` is recomputed on
-/// every panel re-render.
+/// QuickLook. Results are cached by path, so looking at a file again doesn't read
+/// it again.
 enum TextSniffer {
-    @MainActor
     static func isProbablyText(_ url: URL) -> Bool {
         // Keyed by path alone. The old path+mtime key had to stat the file to build the key, so every
         // re-render of the preview panel paid a synchronous filesystem hit even on a cache hit, and on a
         // stalled network mount that stat is what hung the main thread. Whether a path holds text rather
         // than binary is stable in practice, so trading mtime precision for zero I/O on a hit is worth it.
         let key = url.path
-        if let cached = cache[key] {
+        if let cached = cache.withLock({ $0.results[key] }) {
             return cached
         }
 
         let result = sniff(url)
-        cache[key] = result
-        cacheOrder.append(key)
-        if cacheOrder.count > 64 {
-            cache.removeValue(forKey: cacheOrder.removeFirst())
+        cache.withLock { cache in
+            cache.results[key] = result
+            cache.order.append(key)
+            if cache.order.count > 64 {
+                cache.results.removeValue(forKey: cache.order.removeFirst())
+            }
         }
         return result
     }
 
-    @MainActor private static var cache: [String: Bool] = [:]
-    @MainActor private static var cacheOrder: [String] = []
+    private struct Cache {
+        var results: [String: Bool] = [:]
+        var order: [String] = []
+    }
+
+    private static let cache = OSAllocatedUnfairLock(initialState: Cache())
 
     /// Reads a bounded prefix and applies the classic heuristic: a NUL byte in
     /// the head means binary (git/`file(1)` use the same tell). Otherwise it has
@@ -181,6 +186,119 @@ enum TextSniffer {
 
 }
 
+// MARK: - PreviewKinds
+
+/// What each previewed file shows as, worked out off the main thread. The checks stat the file and some read it, and on
+/// a share that stopped answering, or in a cloud folder waiting on its provider, they block until it answers: worked
+/// out while the panel drew, that froze the app.
+@MainActor
+final class PreviewKinds: ObservableObject {
+    struct Resolved: Sendable {
+        let kind: PreviewKind
+        let onlineOnly: Bool
+    }
+
+    static let shared = PreviewKinds()
+
+    /// The answer for `path`, waiting briefly for one so a file that answers at once shows without a spinner first.
+    /// Nil while a slow file is still being looked at: observers redraw once it has answered.
+    func resolved(_ path: FilePath) -> Resolved? {
+        let key = path.string
+        if let entry = known[key], ProcessInfo.processInfo.systemUptime - entry.at < Self.freshFor {
+            return entry.resolved
+        }
+        if pending.contains(key) {
+            return known[key]?.resolved
+        }
+
+        // In memory, unlike everything the probe does.
+        let volume = path.memoz.volume
+        let quickLook = QuickLookSupport.shared.types
+        let probe = Probe()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let resolved = Self.probe(path, volume: volume, quickLook: quickLook)
+            if probe.finish(resolved) {
+                Task { @MainActor in PreviewKinds.shared.landed(key, resolved) }
+            }
+        }
+        if let resolved = probe.wait(upTo: .milliseconds(50)) {
+            store(key, resolved)
+            return resolved
+        }
+        pending.insert(key)
+        return known[key]?.resolved
+    }
+
+    /// Looks at the file again on the next draw, after something changed what it previews as, like a download.
+    func forget(_ path: FilePath) {
+        known.removeValue(forKey: path.string)
+        order.removeAll { $0 == path.string }
+        objectWillChange.send()
+    }
+
+    /// Long enough to cover the redraws of one look at a file, short enough to notice it was downloaded or evicted
+    /// meanwhile.
+    private static let freshFor: TimeInterval = 10
+
+    private var known: [String: (resolved: Resolved, at: TimeInterval)] = [:]
+    private var order: [String] = []
+    private var pending: Set<String> = []
+
+    /// Online-only files are looked for only on this Mac's own disks: a network share can't keep files online only.
+    private nonisolated static func probe(_ path: FilePath, volume: FilePath?, quickLook: QuickLookTypes) -> Resolved {
+        let ownDisk = volume.map(\.url.isLocalVolume) ?? !path.string.hasPrefix("/Volumes/")
+        let onlineOnly = ownDisk && path.isOnlineOnly
+        let kind = onlineOnly ? PreviewKind(onlineOnly: path.url) : PreviewKind(for: path.url, quickLook: quickLook)
+        return Resolved(kind: kind, onlineOnly: onlineOnly)
+    }
+
+    private func landed(_ key: String, _ resolved: Resolved) {
+        pending.remove(key)
+        store(key, resolved)
+        objectWillChange.send()
+    }
+
+    private func store(_ key: String, _ resolved: Resolved) {
+        if known.updateValue((resolved, ProcessInfo.processInfo.systemUptime), forKey: key) == nil {
+            order.append(key)
+        }
+        if order.count > 64 {
+            known.removeValue(forKey: order.removeFirst())
+        }
+    }
+}
+
+// MARK: - Probe
+
+/// One background look at a file, which the main thread waits on for a moment, then leaves to deliver its answer later.
+private final class Probe: @unchecked Sendable {
+    /// From the background: true when the main thread stopped waiting, so the answer has to be delivered.
+    func finish(_ resolved: PreviewKinds.Resolved) -> Bool {
+        let late = state.withLock { state -> Bool in
+            state.resolved = resolved
+            return !state.waiting
+        }
+        done.signal()
+        return late
+    }
+
+    func wait(upTo timeout: DispatchTimeInterval) -> PreviewKinds.Resolved? {
+        _ = done.wait(timeout: .now() + timeout)
+        return state.withLock { state in
+            state.waiting = false
+            return state.resolved
+        }
+    }
+
+    private struct State {
+        var resolved: PreviewKinds.Resolved?
+        var waiting = true
+    }
+
+    private let done = DispatchSemaphore(value: 0)
+    private let state = OSAllocatedUnfairLock(initialState: State())
+}
+
 // MARK: - FilePreviewPanel
 
 struct FilePreviewPanel: View {
@@ -192,23 +310,35 @@ struct FilePreviewPanel: View {
     var body: some View {
         ZStack(alignment: .top) {
             if plain, let path = current {
-                let onlineOnly = isOnlineOnly(path)
-                let kind = onlineOnly ? PreviewKind(onlineOnly: path.url) : PreviewKind(for: path.url)
+                let preview = previewKinds.resolved(path)
                 VStack(spacing: 0) {
                     header(for: path)
-                    content(for: path, kind: kind, onlineOnly: onlineOnly, topInset: 0, bottomInset: 0)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .padding(.horizontal, 8)
-                    FileInfoBar(path: path, kind: kind, onlineOnly: onlineOnly)
+                    Group {
+                        if let preview {
+                            content(for: path, kind: preview.kind, onlineOnly: preview.onlineOnly, topInset: 0, bottomInset: 0)
+                        } else {
+                            resolving
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(.horizontal, 8)
+                    if let preview {
+                        FileInfoBar(path: path, kind: preview.kind, onlineOnly: preview.onlineOnly)
+                    }
                 }
             } else if plain {
                 emptyState
             } else if let path = current {
-                let onlineOnly = isOnlineOnly(path)
-                let kind = onlineOnly ? PreviewKind(onlineOnly: path.url) : PreviewKind(for: path.url)
-                content(for: path, kind: kind, onlineOnly: onlineOnly, topInset: headerHeight, bottomInset: footerHeight)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                let preview = previewKinds.resolved(path)
+                Group {
+                    if let preview {
+                        content(for: path, kind: preview.kind, onlineOnly: preview.onlineOnly, topInset: headerHeight, bottomInset: footerHeight)
+                    } else {
+                        resolving
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 VStack(spacing: 0) {
                     header(for: path)
                         .glassBar()
@@ -216,7 +346,9 @@ struct FilePreviewPanel: View {
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
                     Spacer(minLength: 0)
                     VStack(spacing: 0) {
-                        FileInfoBar(path: path, kind: kind, onlineOnly: onlineOnly)
+                        if let preview {
+                            FileInfoBar(path: path, kind: preview.kind, onlineOnly: preview.onlineOnly)
+                        }
                         if showHideHint {
                             hideHint
                         }
@@ -268,8 +400,7 @@ struct FilePreviewPanel: View {
 
     @State private var index = 0
     @State private var hintHovering = false
-    /// Bumped when an online-only file finishes downloading, so the panel draws its real preview.
-    @State private var downloads = 0
+    @ObservedObject private var previewKinds = PreviewKinds.shared
     // Live heights of the floating glass bars, reserved as content insets on the
     // scrollable previews so a text file's (or list's) first and last lines rest
     // clear of the header/footer instead of being hidden beneath them.
@@ -350,6 +481,13 @@ struct FilePreviewPanel: View {
         .help("Hide the preview panel")
     }
 
+    /// While `PreviewKinds` waits on a file that's slow to answer.
+    private var resolving: some View {
+        ProgressView()
+            .controlSize(.small)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "sidebar.right")
@@ -390,7 +528,8 @@ struct FilePreviewPanel: View {
     @ViewBuilder
     private func content(for path: FilePath, kind: PreviewKind, onlineOnly: Bool, topInset: CGFloat, bottomInset: CGFloat) -> some View {
         if onlineOnly {
-            CloudFilePreview(path: path) { downloads &+= 1 }
+            // Downloaded: look at it again, so the panel draws its real preview.
+            CloudFilePreview(path: path) { previewKinds.forget(path) }
                 .padding(.top, topInset)
                 .padding(.bottom, bottomInset)
         } else {
@@ -419,16 +558,6 @@ struct FilePreviewPanel: View {
             CodePreviewView(url: path.url, topInset: topInset, bottomInset: bottomInset)
         case .quicklook:
             QuickLookPreview(url: path.url)
-        }
-    }
-
-    /// Only files on this Mac's own disks are checked: a network share can't keep files online only, and a stalled
-    /// one could hang the check.
-    private func isOnlineOnly(_ path: FilePath) -> Bool {
-        _ = downloads
-        switch FileInfo.classify(path) {
-        case .internalDisk, .externalLocal: return path.isOnlineOnly
-        case .network, .offline: return false
         }
     }
 
@@ -1132,20 +1261,14 @@ final class QuickLookSupport {
 
     private(set) var supportedUTIs: Set<String> = []
 
+    /// What detection found so far, for the preview kind worked out off the main thread.
+    var types: QuickLookTypes {
+        QuickLookTypes(ready: ready, supportedUTIs: supportedUTIs)
+    }
+
     func warmUp() {
         guard !ready else { return }
         detect(attemptsLeft: 3)
-    }
-
-    /// Until detection finishes, assume QuickLook can handle a file so we don't
-    /// wrongly fall back to a listing for something it previews well.
-    func canPreview(_ url: URL) -> Bool {
-        guard ready else { return true }
-        guard let type = url.fileType else { return false }
-        if supportedUTIs.contains(type.identifier) {
-            return true
-        }
-        return type.supertypes.contains { supportedUTIs.contains($0.identifier) }
     }
 
     /// Modern QuickLook provider extensions don't show up in `qlmanage -m`; keep
@@ -1204,4 +1327,22 @@ final class QuickLookSupport {
         }
     }
 
+}
+
+// MARK: - QuickLookTypes
+
+struct QuickLookTypes: Sendable {
+    let ready: Bool
+    let supportedUTIs: Set<String>
+
+    /// Until detection finishes, assume QuickLook can handle a file so we don't
+    /// wrongly fall back to a listing for something it previews well.
+    func canPreview(_ url: URL) -> Bool {
+        guard ready else { return true }
+        guard let type = url.fileType else { return false }
+        if supportedUTIs.contains(type.identifier) {
+            return true
+        }
+        return type.supertypes.contains { supportedUTIs.contains($0.identifier) }
+    }
 }
