@@ -15,134 +15,25 @@ enum WindowMode: String, CaseIterable {
 struct OnboardingView: View {
     var body: some View {
         VStack(spacing: 0) {
-            Text("Welcome to Cling")
-                .heavy(28)
-                .padding(.top, 2)
-            Text("Fast file search for your Mac")
-                .round(14, weight: .regular)
-                .foregroundStyle(.secondary)
-                .padding(.top, 4)
-
-            VStack(alignment: .leading, spacing: 20) {
-                // The window or the bar: what the hotkey brings up from now on.
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Interface")
-                        .heavy(14)
-                    // A height to fill: this window sizes itself to its content, so the tiles would otherwise shrink
-                    // to their smallest.
-                    InterfacePicker()
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 180)
-                }
-
-                // Window Mode: how the window behaves, which the bar has no use for.
-                if hotkeyTarget == .window {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Window Mode")
-                            .heavy(14)
-                        HStack(spacing: 12) {
-                            windowModeButton(
-                                mode: .utility,
-                                icon: "rectangle.on.rectangle.angled",
-                                description: [
-                                    "Summon on hotkey, hide on defocus",
-                                    "No Dock icon, stays out of the way",
-                                    "Best for quick find and act",
-                                ]
-                            )
-                            windowModeButton(
-                                mode: .desktopApp,
-                                icon: "macwindow",
-                                description: [
-                                    "Stays open like a regular app",
-                                    "Appears in the Dock and Cmd+Tab",
-                                    "Best for browsing and organizing",
-                                ]
-                            )
-                        }
-                    }
-                }
-
-                // UI Style
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Window Style")
-                        .heavy(14)
-                    Picker("Window style", selection: $windowAppearance) {
-                        ForEach(WindowAppearance.allCases.filter(\.available), id: \.self) { appearance in
-                            Text(appearance.rawValue).tag(appearance)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                }
-
-                // Global Hotkey
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Global Hotkey")
-                            .heavy(14)
-                        Spacer()
-                        Toggle("Global Hotkey", isOn: $enableGlobalHotkey)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                    }
-                    HStack {
-                        DirectionalModifierView(triggerKeys: $triggerKeys, showFnCaps: false)
-                        Text("+").heavy(12)
-                        DynamicKey(key: $showAppKey, recording: $env.recording, allowedKeys: .showAppKeyChoices)
-                    }
-                    .disabled(!enableGlobalHotkey)
-                    .opacity(enableGlobalHotkey ? 1 : 0.5)
-                }
-
-                // Full Disk Access
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Full Disk Access")
-                        .heavy(14)
-                    HStack(spacing: 12) {
-                        Button(action: {
-                            FullDiskAccess.openSystemSettings()
-                        }) {
-                            Label(
-                                fdaGranted ? "Granted" : "Grant in System Settings",
-                                systemImage: fdaGranted ? "checkmark.circle.fill" : "lock.shield"
-                            )
-                        }
-                        .disabled(fdaGranted)
-
-                        Text("Required to search files across your entire disk")
-                            .round(11, weight: .regular)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                // External Volumes
-                if !availableVolumes.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("External Volumes")
-                            .heavy(14)
-                        Text("Select volumes to index automatically")
-                            .round(11, weight: .regular)
-                            .foregroundStyle(.secondary)
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(availableVolumes, id: \.string) { volume in
-                                Toggle(isOn: volumeBinding(volume)) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "externaldrive")
-                                            .foregroundStyle(.secondary)
-                                        Text(volume.name.string)
-                                        Text(volume.shellString)
-                                            .font(.system(size: 11, design: .monospaced))
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            VStack(spacing: 0) {
+                Text("Welcome to Cling")
+                    .heavy(28)
+                    .padding(.top, 2)
+                Text("Fast file search for your Mac")
+                    .round(14, weight: .regular)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
             }
-            .padding(.horizontal, 36)
-            .padding(.top, 28)
-            .animation(.easeOut(duration: 0.2), value: hotkeyTarget)
+            .onGeometryChange(for: CGFloat.self, of: \.size.height) { headerHeight = $0 }
+
+            // Scrolls only on a screen too short for every section (larger text on a 13" laptop, a few external
+            // drives), so Get Started stays on screen. Otherwise it is exactly as tall as the sections.
+            ScrollView {
+                sections
+                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { sectionsHeight = $0 }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: sectionsHeight.map { min($0, sectionsRoom) })
 
             Button(action: getStarted) {
                 Text("Get Started")
@@ -155,18 +46,20 @@ struct OnboardingView: View {
             .padding(.horizontal, 36)
             .padding(.top, 32)
             .padding(.bottom, 24)
+            .onGeometryChange(for: CGFloat.self, of: \.size.height) { buttonHeight = $0 }
         }
         // Its own height, so the window shrinks when the bar's choice drops Window Mode.
         .frame(width: 560)
         .fixedSize(horizontal: false, vertical: true)
         .onAppear {
-            if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "onboarding" }) {
+            if let window = onboardingWindow {
                 window.level = .floating
                 window.titlebarAppearsTransparent = true
                 window.backgroundColor = .clear
                 window.styleMask.insert(.fullSizeContentView)
                 window.isMovableByWindowBackground = true
             }
+            measureScreen()
             fdaGranted = FullDiskAccess.isGranted
             fdaChecker = Repeater(every: 2) {
                 guard FullDiskAccess.isGranted else { return }
@@ -179,6 +72,13 @@ struct OnboardingView: View {
         .onDisappear {
             fdaChecker = nil
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
+            measureScreen()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification)) { notification in
+            guard (notification.object as? NSWindow)?.identifier?.rawValue == "onboarding" else { return }
+            measureScreen()
+        }
     }
 
     @EnvironmentObject private var env: EnvState
@@ -188,6 +88,12 @@ struct OnboardingView: View {
     @State private var availableVolumes: [FilePath] = FuzzyClient.getVolumes()
     @State private var selectedVolumes: Set<FilePath> = Set(FuzzyClient.getVolumes())
 
+    @State private var headerHeight: CGFloat = 0
+    @State private var buttonHeight: CGFloat = 0
+    @State private var sectionsHeight: CGFloat?
+    @State private var titleBarHeight: CGFloat = 28
+    @State private var screenHeight: CGFloat = NSScreen.main?.visibleFrame.height ?? 800
+
     @Default(.windowAppearance) private var windowAppearance
     @Default(.hotkeyTarget) private var hotkeyTarget
     @Default(.enableGlobalHotkey) private var enableGlobalHotkey
@@ -195,6 +101,139 @@ struct OnboardingView: View {
     @Default(.triggerKeys) private var triggerKeys
     @Default(.showDockIcon) private var showDockIcon
     @Default(.keepWindowOpenWhenDefocused) private var keepWindowOpenWhenDefocused
+
+    private var onboardingWindow: NSWindow? {
+        NSApp.windows.first(where: { $0.identifier?.rawValue == "onboarding" })
+    }
+
+    /// What the visible screen leaves for the sections once the title bar, header and button are in, with a margin
+    /// so the window doesn't touch the menu bar or the Dock.
+    private var sectionsRoom: CGFloat {
+        max(160, screenHeight - titleBarHeight - headerHeight - buttonHeight - 40)
+    }
+
+    private var sections: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // The window or the bar: what the hotkey brings up from now on.
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Interface")
+                    .heavy(14)
+                // A height to fill: this window sizes itself to its content, so the tiles would otherwise shrink
+                // to their smallest.
+                InterfacePicker()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 180)
+            }
+
+            // Window Mode: how the window behaves, which the bar has no use for.
+            if hotkeyTarget == .window {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Window Mode")
+                        .heavy(14)
+                    HStack(spacing: 12) {
+                        windowModeButton(
+                            mode: .utility,
+                            icon: "rectangle.on.rectangle.angled",
+                            description: [
+                                "Summon on hotkey, hide on defocus",
+                                "No Dock icon, stays out of the way",
+                                "Best for quick find and act",
+                            ]
+                        )
+                        windowModeButton(
+                            mode: .desktopApp,
+                            icon: "macwindow",
+                            description: [
+                                "Stays open like a regular app",
+                                "Appears in the Dock and Cmd+Tab",
+                                "Best for browsing and organizing",
+                            ]
+                        )
+                    }
+                }
+            }
+
+            // UI Style
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Window Style")
+                    .heavy(14)
+                Picker("Window style", selection: $windowAppearance) {
+                    ForEach(WindowAppearance.allCases.filter(\.available), id: \.self) { appearance in
+                        Text(appearance.rawValue).tag(appearance)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+
+            // Global Hotkey
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Global Hotkey")
+                        .heavy(14)
+                    Spacer()
+                    Toggle("Global Hotkey", isOn: $enableGlobalHotkey)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+                HStack {
+                    DirectionalModifierView(triggerKeys: $triggerKeys, showFnCaps: false)
+                    Text("+").heavy(12)
+                    DynamicKey(key: $showAppKey, recording: $env.recording, allowedKeys: .showAppKeyChoices)
+                }
+                .disabled(!enableGlobalHotkey)
+                .opacity(enableGlobalHotkey ? 1 : 0.5)
+            }
+
+            // Full Disk Access
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Full Disk Access")
+                    .heavy(14)
+                HStack(spacing: 12) {
+                    Button(action: {
+                        FullDiskAccess.openSystemSettings()
+                    }) {
+                        Label(
+                            fdaGranted ? "Granted" : "Grant in System Settings",
+                            systemImage: fdaGranted ? "checkmark.circle.fill" : "lock.shield"
+                        )
+                    }
+                    .disabled(fdaGranted)
+
+                    Text("Required to search files across your entire disk")
+                        .round(11, weight: .regular)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            // External Volumes
+            if !availableVolumes.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("External Volumes")
+                        .heavy(14)
+                    Text("Select volumes to index automatically")
+                        .round(11, weight: .regular)
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(availableVolumes, id: \.string) { volume in
+                            Toggle(isOn: volumeBinding(volume)) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "externaldrive")
+                                        .foregroundStyle(.secondary)
+                                    Text(volume.name.string)
+                                    Text(volume.shellString)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 36)
+        .padding(.top, 28)
+        .animation(.easeOut(duration: 0.2), value: hotkeyTarget)
+    }
 
     @ViewBuilder
     private func windowModeButton(mode: WindowMode, icon: String, description: [String]) -> some View {
@@ -244,6 +283,16 @@ struct OnboardingView: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
+    private func measureScreen() {
+        let window = onboardingWindow
+        if let window {
+            titleBarHeight = window.frame.height - window.contentLayoutRect.height
+        }
+        if let screen = window?.screen ?? NSScreen.main {
+            screenHeight = screen.visibleFrame.height
+        }
+    }
+
     private func volumeBinding(_ volume: FilePath) -> Binding<Bool> {
         Binding(
             get: { selectedVolumes.contains(volume) },
@@ -283,9 +332,7 @@ struct OnboardingView: View {
 
         Defaults[.onboardingCompleted] = true
 
-        if let onboardingWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "onboarding" }) {
-            onboardingWindow.close()
-        }
+        onboardingWindow?.close()
         // Straight into whichever was picked above.
         if Defaults[.hotkeyTarget] == .searchBar {
             SB.expand()
