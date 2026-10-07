@@ -32,6 +32,28 @@ func scrollResultsTable(toRow row: Int) {
     }
 }
 
+/// macOS 27's SwiftUI tables crash on a right-click below their last row: the context menu asks for the row view at
+/// row -1 and AppKit throws. With no row under the pointer the menu has nothing of its own to act on, so the click is
+/// dropped before it reaches the table.
+@MainActor
+func guardEmptyTableAreaRightClicks() {
+    guard #available(macOS 27, *), emptyTableAreaMonitor == nil else { return }
+    emptyTableAreaMonitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { event in
+        guard event.type == .rightMouseDown || event.modifierFlags.contains(.control),
+              var view = event.window?.contentView?.hitTest(event.locationInWindow)
+        else { return event }
+        while !(view is NSTableView), let superview = view.superview {
+            view = superview
+        }
+        guard let table = view as? NSTableView,
+              table.row(at: table.convert(event.locationInWindow, from: nil)) == -1
+        else { return event }
+        return nil
+    }
+}
+
+@MainActor private var emptyTableAreaMonitor: Any?
+
 private func findTableView(in view: NSView?) -> NSTableView? {
     guard let view else { return nil }
     if let table = view as? NSTableView {

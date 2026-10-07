@@ -118,6 +118,7 @@ class AppDelegate: LowtechProAppDelegate {
     override func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
         swizzleDraggableToRealPath()
+        guardEmptyTableAreaRightClicks()
         NSApp.disableRelaunchOnLogin()
         if !SWIFTUI_PREVIEW,
            let app = NSWorkspace.shared.runningApplications.first(where: {
