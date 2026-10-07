@@ -261,6 +261,13 @@ struct RemoteAccessSheet: View {
         }
     }
 
+    #if SEARCHBAR_BENCH
+        /// Screenshots show an invented Tailscale name instead of the Mac's: `-searchBarShowcaseTailscaleHost mac.example.ts.net`.
+        private static let shownHost = UserDefaults.standard.string(forKey: "searchBarShowcaseTailscaleHost")
+    #else
+        private static let shownHost: String? = nil
+    #endif
+
     @Environment(\.dismiss) private var dismiss
     @State private var phone: Phone = .iPhone
 
@@ -277,9 +284,9 @@ struct RemoteAccessSheet: View {
     }
 
     @ViewBuilder private var status: some View {
-        if let tailscaleLink {
+        if let host = Self.shownHost ?? tailscaleLink?.host {
             Label {
-                Text("Connected · \(tailscaleLink.host)")
+                Text("Connected · \(host)")
                     .lineLimit(1)
                     .truncationMode(.middle)
             } icon: {
