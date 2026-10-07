@@ -86,27 +86,30 @@ class AppManager {
             requestAccessibilityPermissions()
             return
         }
-        guard let app = lastFrontmostApp, let target = axDropTarget(for: app) else {
-            let appName = lastFrontmostApp?.name ?? "nil"
-            log.warning("[DropFocused] no resolvable AX target for \(appName)")
+        guard let app = lastFrontmostApp else {
+            log.warning("[DropFocused] no frontmost app")
             return
         }
         let urls = paths.map(\.url)
 
-        // If the cursor is already inside the resolved element, respect that precise spot —
-        // useful for dropping at a specific location inside an editor / canvas.
-        let nsCursor = NSEvent.mouseLocation
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let cursorCG = CGPoint(x: nsCursor.x, y: primaryHeight - nsCursor.y)
-        let point = target.frame.contains(cursorCG) ? cursorCG : target.point
-
-        Task { @MainActor in
-            if let win = AppDelegate.shared.mainWindow {
-                AppDelegate.shared.hideOrCloseMainWindow(win)
+        // An Open or Save panel is pointed at the files through its own controls, which leaves the cursor alone.
+        // The drop stays for everything else and for what the panel can't reach that way. Finding the panel already
+        // talks to the app, which can be slow to answer, so it happens off the main thread too.
+        FilePanel.queue.async { [self] in
+            guard let panel = FilePanel.find(in: app) else {
+                log.debug("[DropFocused] no Open or Save panel in \(app.name ?? "nil"), dropping")
+                mainAsync { self.drop(urls, into: app) }
+                return
             }
-            app.activate()
-            mainAsyncAfter(ms: 60) {
-                DragDropSimulator.shared.performDrop(fileURLs: urls, to: point, activating: app)
+            Task { @MainActor in
+                if let win = AppDelegate.shared.mainWindow {
+                    AppDelegate.shared.hideOrCloseMainWindow(win)
+                }
+                // The panel takes the files from the background too, but it's where the user confirms next.
+                app.activate()
+            }
+            if !panel.reveal(urls) {
+                mainAsync { self.drop(urls, into: app) }
             }
         }
     }
@@ -137,6 +140,30 @@ class AppManager {
     }
 
     private var cancellable: AnyCancellable?
+
+    private func drop(_ urls: [URL], into app: NSRunningApplication) {
+        guard let target = axDropTarget(for: app) else {
+            log.warning("[DropFocused] no resolvable AX target for \(app.name ?? "nil")")
+            return
+        }
+
+        // If the cursor is already inside the resolved element, respect that precise spot —
+        // useful for dropping at a specific location inside an editor / canvas.
+        let nsCursor = NSEvent.mouseLocation
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let cursorCG = CGPoint(x: nsCursor.x, y: primaryHeight - nsCursor.y)
+        let point = target.frame.contains(cursorCG) ? cursorCG : target.point
+
+        Task { @MainActor in
+            if let win = AppDelegate.shared.mainWindow {
+                AppDelegate.shared.hideOrCloseMainWindow(win)
+            }
+            app.activate()
+            mainAsyncAfter(ms: 60) {
+                DragDropSimulator.shared.performDrop(fileURLs: urls, to: point, activating: app)
+            }
+        }
+    }
 
     private func truncated(_ s: String, max: Int = 32) -> String {
         s.count <= max ? s : s.prefix(max - 1) + "…"
@@ -222,7 +249,9 @@ func isActiveSpaceFullscreen() -> Bool {
     for info in infoList {
         // Only ordinary app windows (layer 0); skip our own and system/menu-bar layers.
         guard (info[kCGWindowLayer as String] as? Int ?? 0) == 0 else { continue }
-        if (info[kCGWindowOwnerPID as String] as? pid_t ?? 0) == myPID { continue }
+        if (info[kCGWindowOwnerPID as String] as? pid_t ?? 0) == myPID {
+            continue
+        }
         guard let bounds = info[kCGWindowBounds as String] as? [String: CGFloat] else { continue }
         let rect = CGRect(
             x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0,
@@ -245,7 +274,9 @@ func appAtCGPoint(_ point: CGPoint) -> NSRunningApplication? {
     let myPID = ProcessInfo.processInfo.processIdentifier
     for info in infoList {
         let pid = info[kCGWindowOwnerPID as String] as? pid_t ?? 0
-        if pid == myPID { continue }
+        if pid == myPID {
+            continue
+        }
         guard let bounds = info[kCGWindowBounds as String] as? [String: CGFloat] else { continue }
         let x = bounds["X"] ?? 0
         let y = bounds["Y"] ?? 0
