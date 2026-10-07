@@ -249,8 +249,10 @@ nonisolated func explainPathExclusion(_ rawPath: String, coord: SearchCoordinato
     }
     let home = HOME.string
     let library = home + "/Library"
+    // A path can come in through its firmlink (/tmp) while the scope roots name the real folder (/private).
+    let scoped = variants.lazy.compactMap { path in ScopeIgnore.scopeAndRoot(forPath: path).map { (path, $0.0, $0.1) } }.first
     let (scope, scopeNote): (SearchScope?, String) = {
-        if let (s, root) = ScopeIgnore.scopeAndRoot(forPath: rawPath) {
+        if let (_, s, root) = scoped {
             return (s, " (root \(root))")
         }
         if let cloudRoot {
@@ -285,8 +287,8 @@ nonisolated func explainPathExclusion(_ rawPath: String, coord: SearchCoordinato
     // 5. Gitignore-style ignore files. The matcher anchors patterns to the ignore file's root, so only query
     // it for strict descendants (querying the root itself or a non-descendant trips a precondition).
     var ignoreReason: String?
-    if let (s, root) = ScopeIgnore.scopeAndRoot(forPath: rawPath), rawPath.hasPrefix(root + "/"),
-       let f = ScopeIgnore.activeFile(for: s), rawPath.isIgnored(in: f, root: root)
+    if let (path, s, root) = scoped, path.hasPrefix(root + "/"),
+       let f = ScopeIgnore.activeFile(for: s), path.isIgnored(in: f, root: root)
     {
         ignoreReason = "ignored by \((f as NSString).lastPathComponent) (scope \(s.rawValue), root \(root))"
     } else if rawPath.hasPrefix(home + "/"), fsignore.exists, rawPath.isIgnored(in: fsignoreString) {
