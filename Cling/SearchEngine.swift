@@ -1385,8 +1385,10 @@ final class SearchEngine: @unchecked Sendable {
         }
     }
 
+    /// Never waits on `lock`: the main thread reads it, and a live update that builds the path table first holds the
+    /// lock for as long as that takes.
     var count: Int {
-        lock.withLock { liveCount }
+        publishedCount.withLock { $0 }
     }
 
     /// Whether anything was added or removed since the last save (or load).
@@ -2821,14 +2823,12 @@ final class SearchEngine: @unchecked Sendable {
     private static var globalNextExtID: UInt16 = 1
     private static let extLock = NSLock()
 
-    /// Entries that hold a path. Removed ones stay behind as holes until the next save.
-    private var liveCount = 0
+    private let publishedCount = OSAllocatedUnfairLock(initialState: 0)
     /// Entries below this id sit in pages mapped from the index file: a removal there only zeroes the two values search
     /// checks, and the slot isn't reused, so the fewest pages get copied.
     private var mappedCount = 0
     private var changes = 0
     private var savedChanges = 0
-
     private let entries = Column<Entry>()
 
     private let bnBoundaries = Column<UInt64>() // bit N = 1 means basename byte N is a word boundary (camelCase, delimiter, etc.)
@@ -2854,6 +2854,11 @@ final class SearchEngine: @unchecked Sendable {
 
     /// Lock for thread-safe mutations during parallel walks
     private let lock = NSLock()
+
+    /// Entries that hold a path. Removed ones stay behind as holes until the next save.
+    private var liveCount = 0 {
+        didSet { publishedCount.withLock { $0 = liveCount } }
+    }
 
     /// Per-engine accessors that delegate to global state
     private var extToID: [String: UInt16] {
