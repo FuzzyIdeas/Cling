@@ -669,6 +669,70 @@ extension CLIConfig {
         let lastIndexedAt: Double?
         let local: Bool?
         let readOnly: Bool
+        /// "following" while the drive's changes are followed into its index, "catching up" while it replays what
+        /// changed since its index was saved.
+        let following: String?
+        /// Whether the drive's live updates are on; nil for a network share, which has none.
+        let liveUpdates: Bool?
+        let health: VolumeHealthInfo?
+    }
+
+    /// What following a drive has cost over the last 10 minutes.
+    private struct VolumeHealthInfo: Encodable {
+        init(_ health: DriveHealth.Snapshot) {
+            verdict = health.level.verdict
+            eventsPerMinute = Int(health.changesPerMinute.rounded())
+            shownEventsPerMinute = DriveLiveUpdatesView.perMinute(health.changesPerMinute)
+            perFileLatencyMs = health.msPerFile.map { ($0 * 100).rounded() / 100 }
+            slowestEventSeconds = health.lag.map { ($0 * 10).rounded() / 10 }
+            perFileLatencyWhileWritten = health.fileWhileWritten
+            slowestEventWhileWritten = health.lagWhileWritten
+            busyTimePercent = (health.busy * 1000).rounded() / 10
+            minutesBehind = (health.behind * DriveHealth.window / 6).rounded() / 10
+            ejectLatencySeconds = health.lastEject.map { ($0 * 10).rounded() / 10 }
+            eventsSinceFollowed = health.changes
+            drops = health.drops
+            followedSince = health.since.timeIntervalSince1970
+        }
+
+        let verdict: String
+        let eventsPerMinute: Int
+        let perFileLatencyMs: Double?
+        let slowestEventSeconds: Double?
+        /// perFileLatencyMs or slowestEventSeconds were only measured while the drive was being written to, when macOS
+        /// holds back Cling's reads, and don't count toward the verdict.
+        let perFileLatencyWhileWritten: Bool
+        let slowestEventWhileWritten: Bool
+        let busyTimePercent: Double
+        /// Minutes of the last 10 when a change had waited over 30 seconds to reach the index.
+        let minutesBehind: Double
+        let ejectLatencySeconds: Double?
+        let eventsSinceFollowed: Int
+        let drops: Int
+        let followedSince: Double
+
+        var line: String {
+            let written = " while it was being written to"
+            let parts = [
+                shownEventsPerMinute.replacingOccurrences(of: "/min", with: " events/min"),
+                perFileLatencyMs.map { "\(DriveLiveUpdatesView.milliseconds($0)) per-file latency" + (perFileLatencyWhileWritten ? written : "") },
+                slowestEventSeconds.map { "\(DriveLiveUpdatesView.seconds($0)) slowest event" + (slowestEventWhileWritten ? written : "") },
+                minutesBehind >= 0.5 ? "over 30 s behind for \(Int(minutesBehind.rounded())) of the last 10 minutes" : nil,
+                "\(DriveLiveUpdatesView.percent(busyTimePercent / 100)) busy time",
+                ejectLatencySeconds.map { "\(DriveLiveUpdatesView.seconds($0)) eject latency" },
+            ]
+            return "\(verdict): " + parts.compactMap(\.self).joined(separator: ", ")
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case verdict, eventsPerMinute, perFileLatencyMs, slowestEventSeconds, perFileLatencyWhileWritten
+            case slowestEventWhileWritten, busyTimePercent, minutesBehind, ejectLatencySeconds, eventsSinceFollowed, drops
+            case followedSince
+        }
+
+        /// For the text line only.
+        private let shownEventsPerMinute: String
+
     }
 
     private struct VolumeList: Encodable {
@@ -686,14 +750,18 @@ extension CLIConfig {
         let volumes = all.map { v in
             let interval = Defaults[.reindexTimeIntervalPerVolume][v] ?? DEFAULT_VOLUME_REINDEX_INTERVAL
             let file = volumeIndexFile(v)
+            let local = mounted.contains(v) ? !FUZZY.networkVolumes.contains(v) : nil
             return VolumeInfo(
                 name: v.name.string, path: v.string, mounted: mounted.contains(v),
                 enabled: FUZZY.enabledVolumes.contains(v), indexed: FUZZY.volumeEngines[v] != nil,
                 indexing: FUZZY.volumesIndexing.contains(v), count: FUZZY.volumeEngines[v]?.count ?? 0,
                 reindexIntervalSeconds: Int(interval), reindexInterval: interval.humanizedInterval,
                 lastIndexedAt: file.exists ? file.timestamp : nil,
-                local: mounted.contains(v) ? v.url.isLocalVolume : nil,
-                readOnly: FUZZY.readOnlyVolumes.contains(v)
+                local: local,
+                readOnly: FUZZY.readOnlyVolumes.contains(v),
+                following: FUZZY.followingStatus(v),
+                liveUpdates: local == false ? nil : !FUZZY.unfollowedVolumes.contains(v),
+                health: FUZZY.followedDriveHealth(v).map(VolumeHealthInfo.init)
             )
         }
         let list = VolumeList(pro: proactive, automaticIndexing: !Defaults[.disableAutomaticVolumeIndexing], volumes: volumes)
@@ -701,7 +769,9 @@ extension CLIConfig {
             ? ["No external volumes."]
             : volumes.map { v in
                 let state = !v.enabled ? "disabled" : v.indexing ? "indexing" : v.indexed ? "\(v.count.formatted()) entries" : "not indexed"
-                return "\(v.name) (\(v.path))\(v.mounted ? "" : " [disconnected]"): \(state), reindexed every \(v.reindexInterval)"
+                let live = v.following.map { ", \($0)" } ?? (v.enabled && v.mounted && v.liveUpdates == false ? ", live updates off" : "")
+                let line = "\(v.name) (\(v.path))\(v.mounted ? "" : " [disconnected]"): \(state)\(live), reindexed every \(v.reindexInterval)"
+                return v.health.map { line + "\n  " + $0.line } ?? line
             }
         if !proactive {
             lines.append("Indexing external volumes needs Cling Pro.")
@@ -737,6 +807,16 @@ extension CLIConfig {
                 Defaults[.disabledVolumes].removeAll { $0 == volume }
             } else if !Defaults[.disabledVolumes].contains(volume) {
                 Defaults[.disabledVolumes].append(volume)
+            }
+        case "follow", "unfollow":
+            guard !FUZZY.networkVolumes.contains(volume) else {
+                return ClingResponse(error: "\(volume.name.string) is a network share, which macOS doesn't report changes on. Its reindex interval keeps it current.")
+            }
+            // What the drive's toggle under Live Updates in Settings writes.
+            if action == "follow" {
+                Defaults[.unfollowedVolumes].removeAll { $0 == volume }
+            } else if !Defaults[.unfollowedVolumes].contains(volume) {
+                Defaults[.unfollowedVolumes].append(volume)
             }
         case "interval":
             guard let seconds = req.key.flatMap(TimeInterval.init), volumeIntervalRange.contains(seconds) else {

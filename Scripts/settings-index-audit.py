@@ -43,6 +43,7 @@ HANDLED_ELSEWHERE = {
     "disabledVolumes": "cling_volumes",
     "disabledCloudLocations": "cling_cloud",
     "reindexTimeIntervalPerVolume": "cling_volumes interval",
+    "unfollowedVolumes": "cling_volumes follow and unfollow",
     "blockedPrefixes": "cling_ignore, target blocklist-prefix",
     "blockedContains": "cling_ignore, target blocklist-contains",
     "quickFilters": "cling_filter_write and cling_filter_delete",

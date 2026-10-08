@@ -219,6 +219,13 @@ class AppDelegate: LowtechProAppDelegate {
             .debounce(for: .seconds(1), scheduler: RunLoop.main)
             .sink { _ in MCPInstaller.writeServerCard() }
             .store(in: &observers)
+        // Following drives is Pro, as searching them is. No `dropFirst`: drives were found at launch before the licence was known.
+        pro.$productActivated.combineLatest(pro.$onTrial)
+            .map { $0 || $1 }
+            .removeDuplicates()
+            .debounce(for: .seconds(1), scheduler: RunLoop.main)
+            .sink { _ in FUZZY.syncVolumeFollowing() }
+            .store(in: &observers)
         // The file server is Pro. No `dropFirst`: it was set up at launch before the licence was known.
         pro.$productActivated.combineLatest(pro.$onTrial)
             .map { $0 || $1 }

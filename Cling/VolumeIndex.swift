@@ -143,7 +143,8 @@ extension FuzzyClient {
     /// mid-unmount volume can block for tens of seconds, so callers stat off-main
     /// first (CLING-14).
     func staleExternalVolumes(amongMounted volumes: [FilePath]) -> [FilePath] {
-        volumes.filter { volume in
+        let walks = IndexWalks.read().walks
+        return volumes.filter { volume in
             let index = volumeIndexFile(volume)
             let cpFile = index.url.deletingPathExtension().appendingPathExtension("checkpoint")
             if FileManager.default.fileExists(atPath: cpFile.path) {
@@ -158,7 +159,10 @@ extension FuzzyClient {
                 return true
             } // loaded but empty
             let interval = Defaults[.reindexTimeIntervalPerVolume][volume] ?? DEFAULT_VOLUME_REINDEX_INTERVAL
-            return (index.timestamp ?? 0) < Date().addingTimeInterval(-interval).timeIntervalSince1970
+            // From the last walk: a followed drive's index is written whenever it changes, and the walk is what finds
+            // the changes made while the drive was on another computer.
+            let walked = walks[IndexWalks.Key.volume(volume).string]?.finished.timeIntervalSince1970 ?? index.timestamp ?? 0
+            return walked < Date().addingTimeInterval(-interval).timeIntervalSince1970
         }
     }
 
@@ -226,7 +230,8 @@ extension FuzzyClient {
             mainActor {
                 let stale = self.staleExternalVolumes(amongMounted: mounted)
                 guard !stale.isEmpty else { return }
-                self.indexVolumes(stale)
+                // Nobody asked for these: the reads give way to everything else on the drive.
+                self.indexVolumes(stale, priority: .background)
             }
         }
     }
@@ -301,29 +306,47 @@ extension FuzzyClient {
         enabledVolumes.filter { !disconnectedVolumes.contains($0) }
     }
 
-    private func startVolumeIndexTask(_ volume: FilePath, batchTracker: VolumeIndexBatchTracker? = nil) {
-        guard volume.exists, !volumesIndexing.contains(volume) else { return }
+    private func startVolumeIndexTask(_ volume: FilePath, priority: TaskPriority = .utility, batchTracker: VolumeIndexBatchTracker? = nil) {
+        guard !volumesIndexing.contains(volume) else { return }
 
         backgroundIndexing = true
         volumesIndexing.insert(volume)
-
-        let volumeFsignore = volume / ".fsignore"
-        if let content = try? String(contentsOf: volumeFsignore.url, encoding: .utf8),
-           content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            try? FileManager.default.removeItem(at: volumeFsignore.url)
-        }
-        let ignoreChecker: String? = volumeFsignore.exists ? volumeFsignore.string : nil
+        // The walk replaces the engine being followed, which is followed again from where the walk started.
+        stopFollowing(volume)
         let checkpointFile = volumeCheckpointFile(volume)
-        try? FileManager.default.removeItem(at: checkpointFile)
 
-        let task = Task.detached(priority: .utility) {
+        let task = Task.detached(priority: priority) {
             let started = Date()
             let volumeName = volume.name.string
             let opKey = "volume:\(volume.string)"
+            // Read here, off the main thread: a stalled or half-unmounted drive can take tens of seconds to answer
+            // (CLING-14).
+            guard volume.exists else {
+                let shouldRunCompletion = batchTracker?.finishOne() ?? false
+                await MainActor.run {
+                    self.finishVolumeIndexTask(volume)
+                    batchTracker?.runCompletionIfNeeded(shouldRunCompletion)
+                }
+                return
+            }
+            let volumeFsignore = volume / ".fsignore"
+            if let content = try? String(contentsOf: volumeFsignore.url, encoding: .utf8),
+               content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                try? FileManager.default.removeItem(at: volumeFsignore.url)
+            }
+            let ignoreChecker: String? = volumeFsignore.exists ? volumeFsignore.string : nil
+            try? FileManager.default.removeItem(at: checkpointFile)
+            // Changes made from here on are replayed onto the walked index once it is followed.
+            let walkStart = FSEventsGetCurrentEventId()
+            let mounted = MountedVolume.read(volume)
+            // A drive whose history lives only in memory notes what changes during the walk as it changes.
+            let walkWatch = mounted.flatMap { $0.isLocal && !$0.keepsHistory ? WalkWatch(volume: volume, device: $0.device, since: walkStart) : nil }
+
             await MainActor.run { self.logActivity("Indexing volume: \(volumeName)", ongoing: true, operationKey: opKey) }
 
             let volumeEngine = SearchEngine()
+            DriveRelease.shared.startReading(volume.string)
             let result = await indexVolumeEngine(
                 volume: volume, engine: volumeEngine, ignoreChecker: ignoreChecker,
                 progress: { count, _ in
@@ -331,20 +354,29 @@ extension FuzzyClient {
                         self.logActivity("Indexing \(volumeName): \(count.formatted()) files", ongoing: true, operationKey: opKey, count: count)
                     }
                 },
-                cancelled: { Task.isCancelled }
+                cancelled: { Task.isCancelled || DriveRelease.shared.isReleasing(volume.string) }
             )
+            DriveRelease.shared.stopReading(volume.string)
+            let walkAgain = walkWatch?.finish() ?? []
 
-            let wasCancelled = Task.isCancelled
+            let wasCancelled = Task.isCancelled || DriveRelease.shared.isReleasing(volume.string)
             let file = volumeIndexFile(volume)
             if wasCancelled {
                 try? FileManager.default.removeItem(at: checkpointFile)
                 log.info("Cancelled volume indexing for \(volume.string)")
             } else {
-                try? FileManager.default.removeItem(at: file.url)
-                if result.added > 0 {
-                    volumeEngine.saveBinaryIndex(to: file.url)
-                    result.metadataCache?.save(to: smbMetadataCacheFile(volume))
-                    log.debug("Indexed volume \(volumeName): \(result.added) entries -> \(file.string)")
+                volumeSaveQueue.sync {
+                    try? FileManager.default.removeItem(at: file.url)
+                    VolumeLiveState.forget(volume)
+                    if result.added > 0 {
+                        volumeEngine.saveBinaryIndex(to: file.url)
+                        result.metadataCache?.save(to: smbMetadataCacheFile(volume))
+                        // A drive that isn't followed after the walk, and whose history ends with the mount, can give
+                        // what changes from here on only until it is unmounted.
+                        let unwatched = !(mounted?.keepsHistory ?? true) && Defaults[.unfollowedVolumes].contains(volume)
+                        mounted.map { $0.state(FollowedPosition(mounted: $0, eventID: walkStart, dirty: unwatched, missed: nil)).save(volume) }
+                        log.debug("Indexed volume \(volumeName): \(result.added) entries -> \(file.string)")
+                    }
                 }
             }
 
@@ -373,16 +405,14 @@ extension FuzzyClient {
                     self.logActivity("Cancelled indexing: \(volumeName)", operationKey: opKey)
                 }
 
-                self.volumesIndexing.remove(volume)
-                self.volumeIndexTasks.removeValue(forKey: volume)
-                if self.volumesIndexing.isEmpty {
-                    self.backgroundIndexing = self.indexing
-                }
+                self.finishVolumeIndexTask(volume)
                 self.invalidateSearch()
                 // The volume engine was replaced; rebuild stale QuickFilter pools first.
                 if !self.refreshPoolsAfterReindex(), !self.emptyQuery || self.volumeFilter != nil {
                     self.performSearch()
                 }
+                // A cancelled walk left the engine as it was, which picks up from its saved position.
+                self.followVolume(volume, walkedFrom: wasCancelled ? nil : walkStart, walkAgain: wasCancelled ? [] : walkAgain)
                 batchTracker?.runCompletionIfNeeded(shouldRunCompletion)
             }
         }
@@ -390,13 +420,22 @@ extension FuzzyClient {
         volumeIndexTasks[volume] = task
     }
 
-    func indexVolumes(_ volumes: [FilePath], onFinish: (@MainActor () -> Void)? = nil) {
-        let volumes = volumes.filter { $0.exists && !volumesIndexing.contains($0) }
+    private func finishVolumeIndexTask(_ volume: FilePath) {
+        volumesIndexing.remove(volume)
+        volumeIndexTasks.removeValue(forKey: volume)
+        if volumesIndexing.isEmpty {
+            backgroundIndexing = indexing
+        }
+    }
+
+    /// Each walk checks its drive is there before going in, off the main thread.
+    func indexVolumes(_ volumes: [FilePath], priority: TaskPriority = .utility, onFinish: (@MainActor () -> Void)? = nil) {
+        let volumes = volumes.filter { !volumesIndexing.contains($0) }
         guard !volumes.isEmpty else { return }
 
         let batchTracker = VolumeIndexBatchTracker(count: volumes.count, onFinish: onFinish)
         for volume in volumes {
-            startVolumeIndexTask(volume, batchTracker: batchTracker)
+            startVolumeIndexTask(volume, priority: priority, batchTracker: batchTracker)
         }
     }
 
@@ -426,11 +465,12 @@ extension FuzzyClient {
         logActivity("All indexing cancelled")
     }
 
-    func indexVolume(_ volume: FilePath) {
-        startVolumeIndexTask(volume)
+    func indexVolume(_ volume: FilePath, priority: TaskPriority = .utility) {
+        startVolumeIndexTask(volume, priority: priority)
     }
 
     func removeVolume(_ volume: FilePath) {
+        stopFollowing(volume, save: false)
         cancelVolumeIndexing(volume: volume)
         volumeIndexTasks[volume] = nil
         releaseInBackground(volumeEngines.removeValue(forKey: volume))
@@ -449,6 +489,7 @@ extension FuzzyClient {
 
         try? FileManager.default.removeItem(at: volumeIndexFile(volume).url)
         try? FileManager.default.removeItem(at: volumeCheckpointFile(volume))
+        VolumeLiveState.forget(volume)
 
         enabledVolumes.removeAll { $0 == volume }
         externalIndexes = getExternalIndexes()

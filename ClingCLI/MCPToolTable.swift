@@ -265,8 +265,8 @@ extension MCPServer {
 
     static func volumes(_ a: [String: Any]) throws -> ToolOutput {
         let action = argument(a["action"] ?? "list")
-        guard ["list", "enable", "disable", "interval", "remove"].contains(action) else {
-            throw ClingMCPError("action must be list, enable, disable, interval or remove")
+        guard ["list", "enable", "disable", "follow", "unfollow", "interval", "remove"].contains(action) else {
+            throw ClingMCPError("action must be list, enable, disable, follow, unfollow, interval or remove")
         }
         let volume = a["volume"].map { argument($0) } ?? ""
         let seconds = a["seconds"].map { argument($0) } ?? ""
@@ -607,14 +607,28 @@ extension MCPServer {
         MCPTool(
             name: "cling_volumes",
             description: "External and network volumes (Cling Pro). list shows each one with whether it is mounted, "
-                + "enabled and indexed, its entry count and how often it is reindexed. enable and disable turn its "
-                + "indexing on or off, as its toggle in Settings does; enabling one with no index walks it. "
-                + "interval sets how often it is walked again, in seconds from 3600 (1 hour) to 2419200 (4 "
-                + "weeks). remove deletes a disconnected volume's saved index; a connected one can only be "
+                + "enabled and indexed, its entry count, whether its changes are followed and how often it is "
+                + "reindexed. A mounted local drive's changes go into its index as they happen (following; catching "
+                + "up while it replays what changed since its index was last saved); network volumes are not "
+                + "followed. enable and disable turn its indexing on or off, as its toggle in Settings does; enabling "
+                + "one with no index walks it. follow and unfollow turn a drive's live updates on or off; an "
+                + "unfollowed drive is kept current by its interval walk only. list gives each followed drive's "
+                + "health over the last 10 minutes: events per minute, per-file latency (milliseconds the drive "
+                + "took to answer for each file checked), the slowest event (longest a change took to reach "
+                + "search), busy time (the share of one core's processor time spent on its changes), eject latency "
+                + "(how long its last eject was held), and a verdict (healthy, slow, struggling) from the worst of "
+                + "them. Per-file latency and slowest event measured only while the drive was being written to are "
+                + "flagged (perFileLatencyWhileWritten, slowestEventWhileWritten) and left out of the verdict: macOS "
+                + "holds Cling's reads back then on purpose. minutesBehind (how long a change had waited over 30 "
+                + "seconds to reach the index) counts either way: a drive written to without end that Cling can't "
+                + "keep up with. Use it to find the drive slowing things down, then unfollow that one. "
+                + "interval sets how often it is walked again, which is what finds "
+                + "changes made while the drive was connected to another computer, in seconds from 3600 (1 hour) to "
+                + "2419200 (4 weeks). remove deletes a disconnected volume's saved index; a connected one can only be "
                 + "disabled. To walk one now, use cling_reindex with its path. Whether new volumes are indexed on "
                 + "their own is the disableAutomaticVolumeIndexing setting. list: open; the rest need Pro and: " + gate,
             inputSchema: ["type": "object", "properties": [
-                "action": ["type": "string", "enum": ["list", "enable", "disable", "interval", "remove"]],
+                "action": ["type": "string", "enum": ["list", "enable", "disable", "follow", "unfollow", "interval", "remove"]],
                 "volume": ["type": "string", "description": "its name or its path under /Volumes"],
                 "seconds": ["type": "integer", "description": "for interval"],
             ]],

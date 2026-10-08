@@ -1287,6 +1287,14 @@ private struct VolumesSettingsPane: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+
+            if !fuzzy.followableVolumes.isEmpty {
+                Section {
+                    DriveLiveUpdatesView().disabled(!proactive)
+                } header: {
+                    Text("Live Updates")
+                }
+            }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
@@ -1991,6 +1999,154 @@ struct VolumeListView: View {
             .help("Delete cached index for \(volume.name.string)")
         }
         .padding(.vertical, 2)
+    }
+
+}
+
+// MARK: - DriveLiveUpdatesView
+
+/// Each followed drive's live updates toggle, with what following it has cost over the last minutes, coloured so the
+/// drive keeping Cling busy or answering slowly stands out from the rest.
+struct DriveLiveUpdatesView: View {
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 2)) { _ in
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                GridRow {
+                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                    header("Events", "Changes per minute over the last 10 minutes")
+                    header("Per-file latency", "How long the drive takes to answer for each file Cling checks")
+                    header("Slowest event", "Longest a change took to reach search over the last 10 minutes")
+                    header("Busy time", "Processor time Cling spent on this drive's changes over the last 10 minutes")
+                    header("Eject latency", "How long Cling held up the drive's last eject")
+                }
+                ForEach(fuzzy.followableVolumes, id: \.string) { volume in
+                    row(volume)
+                }
+            }
+        }
+    }
+
+    static func perMinute(_ rate: Double) -> String {
+        rate > 0 && rate < 0.5 ? "<1/min" : "\(Int(rate.rounded()).formatted())/min"
+    }
+
+    static func milliseconds(_ ms: Double) -> String {
+        ms < 0.1 ? "<0.1 ms" : ms < 1 ? String(format: "%.1f ms", ms) : "\(Int(ms.rounded())) ms"
+    }
+
+    static func seconds(_ seconds: Double) -> String {
+        seconds < 10 ? String(format: "%.1f s", seconds) : "\(Int(seconds.rounded())) s"
+    }
+
+    static func percent(_ share: Double) -> String {
+        share == 0 ? "0%" : share < 0.005 ? "<1%" : "\(Int((share * 100).rounded()))%"
+    }
+
+    private static let writtenHelp = "Measured while the drive was being written to, when macOS slows Cling's reads to keep out of the way"
+
+    @State private var fuzzy = FUZZY
+
+    @Default(.unfollowedVolumes) private var unfollowedVolumes
+
+    private func header(_ title: String, _ help: String) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.secondary)
+            .gridColumnAlignment(.trailing)
+            .help(help)
+    }
+
+    private func row(_ volume: FilePath) -> some View {
+        let on = !unfollowedVolumes.contains(volume)
+        let health = DriveHealth.existing(volume.string)?.snapshot
+        let shown = on && fuzzy.volumeWatchers[volume] != nil ? health : nil
+        let catchingUp = fuzzy.volumeWatchers[volume].map { !$0.updater.replay.caughtUp } ?? false
+        let status: String? = fuzzy.volumesIndexing.contains(volume) ? "indexing" : catchingUp ? "catching up" : nil
+        return GridRow {
+            HStack(spacing: 8) {
+                Toggle(volume.name.string, isOn: followBinding(volume))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                Circle()
+                    .fill(shown.map { Self.color($0.level) } ?? Color.secondary.opacity(0.4))
+                    .frame(width: 8, height: 8)
+                    .accessibilityLabel(!on ? "Live updates off" : shown.map { Self.levelName($0.level) } ?? "")
+                Text(volume.name.string)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let status {
+                    Text(status)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            let live = shown != nil
+            // Taken while something else wrote to the drive, when macOS holds Cling's reads back on purpose.
+            let fileWritten = health?.fileWhileWritten == true
+            let lagWritten = health?.lagWhileWritten == true
+            cell(health.map { Self.perMinute($0.changesPerMinute) }, .primary, live: live)
+                .help(health.map(Self.changesHelp) ?? "")
+            cell(health?.msPerFile.map(Self.milliseconds), fileWritten ? .secondary : health.map { Self.color($0.fileLevel) }, live: live)
+                .help(fileWritten ? Self.writtenHelp : "")
+            // Falling behind counts however the drive was being used.
+            let behind = health.map { $0.behindLevel > .good } ?? false
+            cell(health?.lag.map(Self.seconds), lagWritten && !behind ? .secondary : health.map { Self.color($0.lagLevel) }, live: live)
+                .help(health.flatMap(Self.behindHelp) ?? (lagWritten ? Self.writtenHelp : ""))
+            cell(health.map { Self.percent($0.busy) }, health.map { Self.color($0.busyLevel) }, live: live)
+            cell(health?.lastEject.map(Self.seconds), health.map { Self.color($0.ejectLevel) }, live: true)
+        }
+    }
+
+    /// A value in its colour, dimmed while the drive isn't followed.
+    private func cell(_ text: String?, _ color: Color?, live: Bool) -> some View {
+        Text(text ?? "")
+            .font(.system(size: 12))
+            .monospacedDigit()
+            .foregroundStyle(live ? color ?? .secondary : Color.secondary.opacity(0.6))
+    }
+
+    private static func color(_ level: DriveHealth.Level) -> Color {
+        switch level {
+        case .good: .green
+        case .slow: .orange
+        case .bad: .red
+        }
+    }
+
+    private static func levelName(_ level: DriveHealth.Level) -> String {
+        switch level {
+        case .good: "Healthy"
+        case .slow: "Slow"
+        case .bad: "Struggling"
+        }
+    }
+
+    /// Nil until Cling was behind for half a minute.
+    private static func behindHelp(_ health: DriveHealth.Snapshot) -> String? {
+        let minutes = health.behind * DriveHealth.window / 60
+        guard minutes >= 0.5 else { return nil }
+        return "Over \(Int(DriveHealth.behindAfter)) s behind for \(Int(minutes.rounded())) of the last \(Int(DriveHealth.window / 60)) minutes"
+    }
+
+    private static func changesHelp(_ health: DriveHealth.Snapshot) -> String {
+        let since = "\(health.changes.formatted()) since \(health.since.formatted(date: .omitted, time: .shortened))"
+        return health.drops == 0 ? since : "\(since), \(health.drops.formatted()) \(health.drops == 1 ? "burst" : "bursts") too fast for macOS to report were walked again"
+    }
+
+    private func followBinding(_ volume: FilePath) -> Binding<Bool> {
+        Binding(
+            get: { !unfollowedVolumes.contains(volume) },
+            set: { on in
+                if on {
+                    unfollowedVolumes.removeAll { $0 == volume }
+                } else if !unfollowedVolumes.contains(volume) {
+                    unfollowedVolumes.append(volume)
+                }
+            }
+        )
     }
 
 }

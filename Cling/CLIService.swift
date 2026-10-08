@@ -695,7 +695,10 @@ extension FuzzyClient {
                         let count = FUZZY.volumeEngines[volume]?.count ?? 0
                         let indexed = FUZZY.volumeEngines[volume] != nil
                         let status = !enabled ? "disabled" : indexing ? (volumeOp ?? "indexing...") : !indexed ? "not indexed" : "\(count.formatted()) entries"
-                        lines.append("  \(volume.name.string) (\(volume.shellString)): \(status)")
+                        let following = FUZZY.followingStatus(volume)
+                        let health = FUZZY.followedDriveHealth(volume)?.level.verdict
+                        let unwell = health.flatMap { $0 == DriveHealth.Level.good.verdict ? nil : ", \($0)" } ?? ""
+                        lines.append("  \(volume.name.string) (\(volume.shellString)): \(status)\(following.map { ", \($0)" } ?? "")\(unwell)")
                         let volFile = volumeIndexFile(volume)
                         let lastIndexedAt = volFile.exists ? volFile.timestamp : nil
                         volumeStatuses.append(ClingVolumeStatus(
@@ -707,7 +710,9 @@ extension FuzzyClient {
                             count: count,
                             operation: volumeOp,
                             operationCount: volumeOpCount,
-                            lastIndexedAt: lastIndexedAt
+                            lastIndexedAt: lastIndexedAt,
+                            following: following,
+                            health: health
                         ))
                     }
                 }

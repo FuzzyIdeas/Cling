@@ -764,6 +764,8 @@ extension Defaults.Keys {
     static let minQueryLength = Key<Int>("minQueryLength", default: 3)
     static let externalVolumes = Key<[FilePath]>("externalVolumes", default: [])
     static let disabledVolumes = Key<[FilePath]>("disabledVolumes", default: [])
+    /// Drives whose changes aren't followed as they happen: only their reindex interval keeps their indexes current.
+    static let unfollowedVolumes = Key<[FilePath]>("unfollowedVolumes", default: [])
     /// Cloud folders (iCloud Drive, the ones in ~/Library/CloudStorage) left out of the index, by their root.
     static let disabledCloudLocations = Key<[FilePath]>("disabledCloudLocations", default: [])
     static let indexedVolumePaths = Key<[FilePath]>("indexedVolumePaths", default: [])

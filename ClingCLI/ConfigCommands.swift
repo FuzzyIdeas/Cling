@@ -488,23 +488,26 @@ struct VolumeCommand: ParsableCommand {
         case list
         case enable
         case disable
+        case follow
+        case unfollow
         case interval
         case remove
     }
 
     static let configuration = CommandConfiguration(
         commandName: "volume",
-        abstract: "List external volumes, turn their indexing on or off, and set how often they are reindexed (Pro).",
+        abstract: "List external volumes, turn their indexing or live updates on or off, and set how often they are reindexed (Pro).",
         discussion: """
         cling volume list
         cling volume enable|disable <volume>
+        cling volume follow|unfollow <volume>        live updates on or off; the reindex interval still applies
         cling volume interval <volume> <seconds>     3600 (1 hour) to 2419200 (4 weeks)
         cling volume remove <volume>                 a disconnected volume's index
         Reindex a volume now with: cling reindex --scope /Volumes/<name>
         """
     )
 
-    @Argument(help: "list, enable, disable, interval or remove")
+    @Argument(help: "list, enable, disable, follow, unfollow, interval or remove")
     var action: Action = .list
 
     @Argument(help: "The volume's name or path")

@@ -179,9 +179,10 @@ struct UnwatchedFolders: Codable {
 
 // MARK: - LiveRoute
 
-/// A folder a scope walks, with the engine it fills and the rules it walks by.
+/// A folder a scope walks, or a drive, with the engine it fills and the rules it walks by.
 struct LiveRoute: @unchecked Sendable {
-    let scope: SearchScope
+    /// Nil for a drive.
+    let scope: SearchScope?
     let root: String
     let excludePrefix: String?
     let engine: SearchEngine
@@ -223,8 +224,24 @@ final class FSChangeStream: @unchecked Sendable {
         self.paths = paths
         self.latency = latency
         self.queue = queue
-        self.handler = Handler(handler, lastID: since ?? FSEventsGetCurrentEventId())
-        guard let created = Self.create(paths: paths, since: since, latency: latency, excluding: excluding, queue: queue, handler: self.handler) else {
+        device = nil
+        self.handler = Handler(handler, lastID: since ?? FSEventsGetCurrentEventId(), root: nil)
+        guard let created = Self.create(paths: paths, device: nil, since: since, latency: latency, excluding: excluding, queue: queue, handler: self.handler) else {
+            return nil
+        }
+        stream = created
+    }
+
+    /// One mounted drive's changes, from the history FSEvents keeps for that drive, which lasts past an unmount on APFS
+    /// and HFS+: replaying from a position catches up on what changed while nothing followed it. Paths arrive relative
+    /// to the drive and are handed over under `root`, where it is mounted.
+    init?(device: dev_t, root: String, since: UInt64?, latency: CFTimeInterval, queue: DispatchQueue, handler: @escaping ([FSChange]) -> Void) {
+        paths = [""]
+        self.latency = latency
+        self.queue = queue
+        self.device = device
+        self.handler = Handler(handler, lastID: since ?? FSEventsGetCurrentEventId(), root: root)
+        guard let created = Self.create(paths: paths, device: device, since: since, latency: latency, excluding: [], queue: queue, handler: self.handler) else {
             return nil
         }
         stream = created
@@ -253,36 +270,54 @@ final class FSChangeStream: @unchecked Sendable {
         }
     }
 
+    /// Delivers what is waiting out its latency, before returning. Never on the stream's queue.
+    func flushNow() {
+        guard let stream = queue.sync(execute: { self.stream }) else { return }
+        FSEventStreamFlushSync(stream)
+    }
+
+    /// Stops, and waits up to `timeout` for the stream to be gone.
+    func stop(waiting timeout: TimeInterval) {
+        stop()
+        let done = DispatchSemaphore(value: 0)
+        queue.async { done.signal() }
+        _ = done.wait(timeout: .now() + timeout)
+    }
+
     /// Starts again with changes inside `excluding` left out, from the last change delivered, so nothing is missed or
     /// delivered twice. FSEvents only takes the folders to leave out before a stream starts.
     func restart(excluding: [String]) {
         queue.async { [self] in
             guard let old = stream else { return }
             Self.tearDown(old)
-            stream = Self.create(paths: paths, since: handler.lastID, latency: latency, excluding: excluding, queue: queue, handler: handler)
-                ?? Self.create(paths: paths, since: handler.lastID, latency: latency, excluding: [], queue: queue, handler: handler)
+            stream = Self.create(paths: paths, device: device, since: handler.lastID, latency: latency, excluding: excluding, queue: queue, handler: handler)
+                ?? Self.create(paths: paths, device: device, since: handler.lastID, latency: latency, excluding: [], queue: queue, handler: handler)
         }
     }
 
     private final class Handler {
-        init(_ call: @escaping ([FSChange]) -> Void, lastID: UInt64) {
+        init(_ call: @escaping ([FSChange]) -> Void, lastID: UInt64, root: String?) {
             self.call = call
             self.lastID = lastID
+            self.root = root
         }
 
         let call: ([FSChange]) -> Void
         /// The newest change delivered, where a restart carries on from.
         var lastID: UInt64
+        /// Where a device stream's drive is mounted, which its relative paths are under.
+        let root: String?
     }
 
     private let paths: [String]
+    private let device: dev_t?
     private let latency: CFTimeInterval
     private let queue: DispatchQueue
     private let handler: Handler
     private var stream: FSEventStreamRef?
 
     private static func create(
-        paths: [String], since: UInt64?, latency: CFTimeInterval, excluding: [String], queue: DispatchQueue, handler: Handler
+        paths: [String], device: dev_t?, since: UInt64?, latency: CFTimeInterval, excluding: [String], queue: DispatchQueue, handler: Handler
     ) -> FSEventStreamRef? {
         let box = Unmanaged.passRetained(handler)
         var context = FSEventStreamContext(
@@ -306,16 +341,22 @@ final class FSChangeStream: @unchecked Sendable {
             var batch: [FSChange] = []
             batch.reserveCapacity(count)
             for i in 0 ..< count {
-                batch.append(FSChange(path: String(cString: cPaths[i]), flags: EonilFSEventsEventFlags(rawValue: flags[i]), id: ids[i]))
+                var path = String(cString: cPaths[i])
+                if let root = handler.root {
+                    path = path.isEmpty ? root : root + "/" + path
+                }
+                batch.append(FSChange(path: path, flags: EonilFSEventsEventFlags(rawValue: flags[i]), id: ids[i]))
                 handler.lastID = max(handler.lastID, ids[i])
             }
             handler.call(batch)
         }
-        let created = FSEventStreamCreate(
-            nil, callback, &context, paths as CFArray,
-            since ?? FSEventStreamEventId(kFSEventStreamEventIdSinceNow), latency,
-            FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
-        )
+        let sinceWhen = since ?? FSEventStreamEventId(kFSEventStreamEventIdSinceNow)
+        let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
+        let created = if let device {
+            FSEventStreamCreateRelativeToDevice(nil, callback, &context, device, paths as CFArray, sinceWhen, latency, flags)
+        } else {
+            FSEventStreamCreate(nil, callback, &context, paths as CFArray, sinceWhen, latency, flags)
+        }
         // The stream took its own reference through `retain`.
         box.release()
         guard let created else { return nil }
@@ -387,15 +428,24 @@ struct LiveIndexBatch: Sendable {
 /// Applies file changes to the scope indexes as a walk would have found them, in batches on its own queue, so they
 /// stay current without walking again. Nothing here touches the main thread; it is told when a batch lands.
 final class LiveIndexUpdater: @unchecked Sendable {
+    /// `available` is asked before a batch changes anything, and nothing is applied while it says no: a drive's files
+    /// all fail to stat once it is gone, which would otherwise read as every one of them deleted.
     init(
         routes: [LiveRoute],
         replaying: Bool,
+        label: String = "com.lowtechguys.Cling.liveIndex",
+        qos: DispatchQoS = .utility,
+        available: (@Sendable () -> Bool)? = nil,
+        health: DriveHealth? = nil,
         applied: @escaping @Sendable (LiveIndexBatch) -> Void,
         caughtUp: @escaping @Sendable () -> Void = {},
         historyLost: @escaping @Sendable () -> Void
     ) {
         _routes = routes
         _caughtUp = !replaying
+        queue = DispatchQueue(label: label, qos: qos)
+        self.available = available
+        self.health = health
         self.applied = applied
         self.caughtUp = caughtUp
         self.historyLost = historyLost
@@ -415,6 +465,10 @@ final class LiveIndexUpdater: @unchecked Sendable {
         lock.withLock { (_caughtUp, _replayed, (_caughtUpAt ?? CFAbsoluteTimeGetCurrent()) - started) }
     }
 
+    var isCancelled: Bool {
+        lock.withLock { _cancelled }
+    }
+
     /// Paths changed in the indexes since the counter was last taken.
     func takeChanges() -> Int {
         lock.withLock {
@@ -425,6 +479,28 @@ final class LiveIndexUpdater: @unchecked Sendable {
 
     func setRoutes(_ routes: [LiveRoute]) {
         lock.withLock { _routes = routes }
+    }
+
+    /// Applies nothing more, and ends a walk in progress at its next folder: a drive being ejected must not be held
+    /// open by one.
+    func cancel() {
+        lock.withLock { _cancelled = true }
+    }
+
+    /// Waits for the batch being applied, if any, up to `timeout`. Someone is waiting: the batch runs at the waiter's
+    /// priority, a drive's being one that gives way to everything else.
+    func drain(timeout: TimeInterval) {
+        let done = DispatchSemaphore(value: 0)
+        queue.async(qos: .userInitiated, flags: .enforceQoS) { done.signal() }
+        _ = done.wait(timeout: .now() + timeout)
+    }
+
+    /// Applies what has arrived without waiting for the rest of its batch, for someone waiting on it.
+    func applyPendingNow() {
+        queue.async(qos: .userInitiated, flags: .enforceQoS) { [self] in
+            guard !pending.isEmpty else { return }
+            applyPending()
+        }
     }
 
     /// Changes counted in each folder a walk skips, since they were last taken.
@@ -465,15 +541,15 @@ final class LiveIndexUpdater: @unchecked Sendable {
 
     /// Takes a delivery from the stream; changes are applied half a second after the first of a batch arrives.
     func enqueue(_ events: [FSChange]) {
+        let arrived = CFAbsoluteTimeGetCurrent()
         queue.async { [self] in
             pending.append(contentsOf: events)
+            pendingSince = min(pendingSince ?? arrived, arrived)
             guard !flushScheduled else { return }
             flushScheduled = true
             queue.asyncAfter(deadline: .now() + 0.5) { [self] in
                 flushScheduled = false
-                let batch = pending
-                pending.removeAll(keepingCapacity: true)
-                apply(batch)
+                applyPending()
             }
         }
     }
@@ -498,8 +574,13 @@ final class LiveIndexUpdater: @unchecked Sendable {
     private let applied: @Sendable (LiveIndexBatch) -> Void
     private let caughtUp: @Sendable () -> Void
     private let historyLost: @Sendable () -> Void
-    private let queue = DispatchQueue(label: "com.lowtechguys.Cling.liveIndex", qos: .utility)
+    private let available: (@Sendable () -> Bool)?
+    private let health: DriveHealth?
+    private var _cancelled = false
+    private let queue: DispatchQueue
     private var pending: [FSChange] = []
+    /// When the oldest of the pending changes arrived. Only touched on `queue`.
+    private var pendingSince: CFAbsoluteTime?
     private var flushScheduled = false
     /// Changes were dropped since this updater started. Only touched on `queue`.
     private var lost = false
@@ -612,11 +693,26 @@ final class LiveIndexUpdater: @unchecked Sendable {
         historyLost()
     }
 
+    /// On `queue`.
+    private func applyPending() {
+        let batch = pending
+        let arrived = pendingSince
+        pending.removeAll(keepingCapacity: true)
+        pendingSince = nil
+        apply(batch, arrived: arrived)
+    }
+
     /// What went away is removed through each engine's path index, so only an indexed folder costs a pass over the
     /// entries, then whatever a walk would index is added, skipping what is already there. A file only modified is
     /// already in the index.
-    private func apply(_ events: [FSChange]) {
+    private func apply(_ events: [FSChange], arrived: CFAbsoluteTime? = nil) {
+        guard !isCancelled, available?() ?? true else { return }
         let t0 = CFAbsoluteTimeGetCurrent()
+        let cpu0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        health?.startedApplying(arrived: lock.withLock { _caughtUp } ? arrived : nil)
+        // How long the files checked on the disk took to answer, for a drive's health.
+        var files = 0
+        var fileSeconds = 0.0
         var flagsByPath: [String: EonilFSEventsEventFlags] = [:]
         var maxEventID: UInt64 = 0
         var replayDone = false
@@ -667,13 +763,30 @@ final class LiveIndexUpdater: @unchecked Sendable {
         var batch = LiveIndexBatch()
         var changed = 0
 
-        for (path, flags) in flagsByPath {
+        // Folders walked again in this batch. What changed inside one is left to its walk: the folder comes out of the
+        // index and goes back in as the walk finds it. Checking each file in it as well reads the disk twice, a file at a
+        // time for the checks and a folder at a time for the walk, and a burst of new folders on a slow drive spent
+        // minutes on the checks alone.
+        var rescanned = Set<String>()
+        func underRescanned(_ path: String) -> Bool {
+            guard !rescanned.isEmpty else { return false }
+            var dir = path.parentPath
+            while dir.utf8.count > 1 {
+                if rescanned.contains(dir) {
+                    return true
+                }
+                dir = dir.parentPath
+            }
+            return false
+        }
+
+        func process(_ path: String, _ flags: EonilFSEventsEventFlags) {
             guard let route = routes.filter({ $0.contains(path) }).max(by: { $0.root.utf8.count < $1.root.utf8.count }) else {
                 if flags.contains(.mustScanSubDirs), routes.contains(where: { $0.root == path }) {
                     // A whole scope folder needs rescanning.
                     reportLoss()
                 }
-                continue
+                return
             }
             let key = ObjectIdentifier(route.engine)
             engines[key] = route.engine
@@ -687,6 +800,7 @@ final class LiveIndexUpdater: @unchecked Sendable {
                     gone[key, default: []].append(dir)
                     added[key, default: []].append((dir, true))
                     rescans[key, default: []].append((route, dir))
+                    rescanned.insert(dir)
                     changed += 1
                 }
             }
@@ -701,27 +815,32 @@ final class LiveIndexUpdater: @unchecked Sendable {
                 if let dir = Self.skippedFolder(path, isDir: reportedDir, rules: route.rules, folders: &folders[route.root, default: [:]]) {
                     skipped[dir, default: 0] += 1
                 }
-                continue
+                return
             }
 
             var st = stat()
-            guard lstat(path, &st) == 0 else {
-                if FSEventsHistory.isGone(errno) {
+            let statStart = CFAbsoluteTimeGetCurrent()
+            let statResult = lstat(path, &st)
+            let statError = errno
+            fileSeconds += CFAbsoluteTimeGetCurrent() - statStart
+            files += 1
+            guard statResult == 0 else {
+                if FSEventsHistory.isGone(statError) {
                     gone[key, default: []].append(path)
                     changed += 1
                 }
-                continue
+                return
             }
             guard !flags.isDisjoint(with: structural) else {
                 if kindKnown, listing {
                     modified.append(path)
                 }
-                continue
+                return
             }
             if flags.contains(.itemRenamed), FSEventsHistory.isStaleCase(path, mode: st.st_mode) {
                 gone[key, default: []].append(path)
                 changed += 1
-                continue
+                return
             }
             let isDir = (st.st_mode & S_IFMT) == S_IFDIR
             if !kindKnown || isDir != reportedDir,
@@ -731,7 +850,7 @@ final class LiveIndexUpdater: @unchecked Sendable {
                 if let dir = Self.skippedFolder(path, isDir: isDir, rules: route.rules, folders: &folders[route.root, default: [:]]) {
                     skipped[dir, default: 0] += 1
                 }
-                continue
+                return
             }
             changed += 1
             added[key, default: []].append((path, isDir))
@@ -740,9 +859,25 @@ final class LiveIndexUpdater: @unchecked Sendable {
                 // indexed folder of the same name leaves that folder's old contents behind.
                 gone[key, default: []].append(path)
                 rescans[key, default: []].append((route, path))
+                rescanned.insert(path)
             }
         }
 
+        // Folders first, the outermost first, so a folder's walk is known before what changed inside it.
+        let folderLike: EonilFSEventsEventFlags = [.itemIsDir, .mustScanSubDirs]
+        let changedFolders = flagsByPath.filter { !$0.value.isDisjoint(with: folderLike) }.sorted { $0.key.utf8.count < $1.key.utf8.count }
+        for (path, flags) in changedFolders where !underRescanned(path) {
+            process(path, flags)
+        }
+        for (path, flags) in flagsByPath where flags.isDisjoint(with: folderLike) && !underRescanned(path) {
+            process(path, flags)
+        }
+
+        // Checked again before anything changes: the files of a drive unmounted meanwhile were just found missing.
+        guard engines.isEmpty || !isCancelled && available?() ?? true else {
+            health?.stoppedApplying()
+            return
+        }
         for (key, engine) in engines {
             var engineAdded = added[key] ?? []
             var engineRescans = rescans[key] ?? []
@@ -768,11 +903,16 @@ final class LiveIndexUpdater: @unchecked Sendable {
             }
             for (route, dir) in engineRescans {
                 let folder = route.rules.folder(dir, cache: &folders[route.root, default: [:]])
-                engine.walkDirectory(
+                let walkStart = CFAbsoluteTimeGetCurrent()
+                let walked = engine.walkDirectory(
                     dir, ignoreFile: route.rules.ignoreFile, ignoreRoot: route.rules.ignoreRoot, skipDir: route.rules.skipDir,
                     applyBlocklist: route.rules.applyBlocklist, discoverGitignore: route.rules.discoverGitignore,
-                    inheritedGitignores: folder.gitignores
+                    inheritedGitignores: folder.gitignores, skipAppleDouble: route.rules.skipAppleDouble,
+                    cancelled: { [self] in isCancelled }
                 )
+                fileSeconds += CFAbsoluteTimeGetCurrent() - walkStart
+                files += max(1, walked)
+                changed += walked
             }
             if listing {
                 batch.paths += removed.map { ($0, .removed) }
@@ -786,8 +926,8 @@ final class LiveIndexUpdater: @unchecked Sendable {
 
         lock.withLock {
             // Past a loss the engines no longer hold every change up to here, so their saved positions stay before it
-            // and a relaunch replays what was dropped.
-            if !lost {
+            // and a relaunch replays what was dropped. A cancel may have cut a walk of a new folder short.
+            if !lost, !_cancelled {
                 _lastAppliedEventID = max(_lastAppliedEventID, maxEventID)
             }
             _changes += changed
@@ -795,8 +935,19 @@ final class LiveIndexUpdater: @unchecked Sendable {
                 _skipped[dir, default: 0] += count
             }
         }
+        let done = CFAbsoluteTimeGetCurrent()
         if changed > 0 {
-            log.debug("Live index: \(changed) changed paths applied in \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 3))s")
+            log.debug("Live index: \(changed) changed paths applied in \(done - t0, format: .fixed(precision: 3))s")
+        }
+        if let health {
+            if sawLoss {
+                health.noteDrop()
+            }
+            // A replay brings changes made a while ago, and how long they wait says nothing about the drive.
+            health.noteBatch(
+                taken: t0, arrived: arrived, cpu: Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - cpu0) / 1e9,
+                files: files, fileSeconds: fileSeconds, lag: listing ? arrived.map { done - $0 } : nil
+            )
         }
         if changed > 0 || batch.countDelta != 0 || !batch.paths.isEmpty {
             applied(batch)

@@ -1140,13 +1140,17 @@ struct IgnoreNegations: Sendable {
 
 /// The rules a walk applies below its root, set up once so a walk and a single-path check after it agree.
 struct WalkRules: @unchecked Sendable {
-    init(walkRoot: String, ignoreFile: String?, ignoreRoot: String?, skipDir: ((String) -> Bool)?, applyBlocklist: Bool, discoverGitignore: Bool) {
+    init(
+        walkRoot: String, ignoreFile: String?, ignoreRoot: String?, skipDir: ((String) -> Bool)?, applyBlocklist: Bool, discoverGitignore: Bool,
+        skipAppleDouble: Bool = false
+    ) {
         self.walkRoot = walkRoot
         self.ignoreFile = ignoreFile
         self.ignoreRoot = ignoreRoot
         self.skipDir = skipDir
         self.applyBlocklist = applyBlocklist
         self.discoverGitignore = discoverGitignore
+        self.skipAppleDouble = skipAppleDouble
 
         // Pre-extract extension patterns from ignore file content for fast file-level filtering
         let ignoreContent: String? = ignoreFile.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
@@ -1194,6 +1198,8 @@ struct WalkRules: @unchecked Sendable {
     let skipDir: ((String) -> Bool)?
     let applyBlocklist: Bool
     let discoverGitignore: Bool
+    /// Leaves out the `._` files macOS writes beside each file on a drive that can't hold its metadata, as a drive's walk does.
+    let skipAppleDouble: Bool
     let ignoredExtensions: Set<String>
     let negations: IgnoreNegations
     let blocklistAllows: Bool
@@ -1207,7 +1213,7 @@ struct WalkRules: @unchecked Sendable {
     var withoutGitignore: WalkRules {
         WalkRules(
             walkRoot: walkRoot, ignoreFile: ignoreFile, ignoreRoot: ignoreRoot, skipDir: skipDir,
-            applyBlocklist: applyBlocklist, discoverGitignore: false
+            applyBlocklist: applyBlocklist, discoverGitignore: false, skipAppleDouble: skipAppleDouble
         )
     }
 
@@ -1447,6 +1453,9 @@ final class SearchEngine: @unchecked Sendable {
 
         let name = path.lastPathComponentNative
         if name == ".DS_Store" || name == ".localized" || name == "Icon\r" {
+            return false
+        }
+        if rules.skipAppleDouble, name.hasPrefix("._"), name.utf8.count > 2 {
             return false
         }
         if !rules.ignoredExtensions.isEmpty, let dot = name.lastIndex(of: "."), name.distance(from: dot, to: name.endIndex) <= 20,

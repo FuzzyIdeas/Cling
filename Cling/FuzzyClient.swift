@@ -538,6 +538,11 @@ class FuzzyClient {
         return Set(Defaults[.indexedVolumePaths].filter { !mounted.contains($0) && !Defaults[.disabledVolumes].contains($0) })
     }()
     var readOnlyVolumes: [FilePath] = initialVolumes.filter(\.url.volumeIsReadOnly)
+    /// Mounted volumes on another computer, which FSEvents reports no changes on. Read off the main thread, empty until
+    /// then.
+    var networkVolumes: Set<FilePath> = []
+    /// Drives whose live updates were turned off: only their reindex interval keeps their indexes current.
+    var unfollowedVolumes: Set<FilePath> = Set(Defaults[.unfollowedVolumes])
     @ObservationIgnored var quickFilterPool: [Int]? // Legacy, for CLI
     @ObservationIgnored var quickFilterPools: [String: [Int]] = [:] // Per-engine pools
     var filteredSubsetCount: Int?
@@ -554,6 +559,9 @@ class FuzzyClient {
     /// Per-scope engines: each scope has its own SearchEngine for independent search/load/unload
     @ObservationIgnored var scopeEngines: [SearchScope: SearchEngine] = [:]
     @ObservationIgnored var volumeEngines: [FilePath: SearchEngine] = [:]
+    /// The mounted drives whose changes are followed into their indexes, and the ones about to be.
+    @ObservationIgnored var volumeWatchers: [FilePath: VolumeWatcher] = [:]
+    @ObservationIgnored var volumesStartingToFollow: Set<FilePath> = []
     @ObservationIgnored var smbMetadataCaches: [FilePath: SMBMetadataCache] = [:]
     @ObservationIgnored var recentsEngine = SearchEngine()
 
@@ -703,9 +711,24 @@ class FuzzyClient {
             let mounted = Set(externalVolumes)
             disconnectedVolumes = Set(Defaults[.indexedVolumePaths].filter { !mounted.contains($0) && !disabledVolumes.contains($0) })
             enabledVolumes = computeEnabledVolumes(mounted: externalVolumes, disabled: disabledVolumes)
-            readOnlyVolumes = externalVolumes.filter(\.url.volumeIsReadOnly)
             externalIndexes = getExternalIndexes()
+            // A drive let go of for its unmount is gone now, and is followed afresh if it comes back.
+            for volume in oldValue where !externalVolumes.contains(volume) {
+                DriveRelease.shared.forget(volume.string)
+            }
             indexStaleExternalVolumes()
+            syncVolumeFollowing()
+            // Asks each drive, which a stalled one can take tens of seconds to answer.
+            let volumes = externalVolumes
+            asyncNow {
+                let readOnly = volumes.filter(\.url.volumeIsReadOnly)
+                let network = Set(volumes.filter { !$0.url.isLocalVolume })
+                mainActor {
+                    guard self.externalVolumes == volumes else { return }
+                    self.readOnlyVolumes = readOnly
+                    self.networkVolumes = network
+                }
+            }
         }
     }
 
@@ -1148,10 +1171,18 @@ class FuzzyClient {
                 // Index volumes that just became enabled and have no loaded engine yet (covers opt-in's
                 // "flip the toggle on -> index"; a volume toggled off then on with its engine still loaded
                 // is left alone). indexVolumes already skips volumes that are mid-index.
-                let toIndex = reEnabled.filter { $0.exists && volumeEngines[$0] == nil }
+                let toIndex = reEnabled.filter { volumeEngines[$0] == nil }
                 if !toIndex.isEmpty {
                     indexVolumes(Array(toIndex))
                 }
+                syncVolumeFollowing()
+            }.store(in: &observers)
+
+        pub(.unfollowedVolumes)
+            .debounce(for: 0.5, scheduler: RunLoop.main)
+            .sink { [self] volumes in
+                unfollowedVolumes = Set(volumes.newValue)
+                syncVolumeFollowing()
             }.store(in: &observers)
 
         NSWorkspace.shared.notificationCenter
@@ -1169,6 +1200,10 @@ class FuzzyClient {
                 }
             }
             .store(in: &observers)
+
+        DriveRelease.shared.start { [weak self] volume in
+            self?.driveWillUnmount(volume)
+        }
 
         indexFolder.mkdir(withIntermediateDirectories: true, permissions: 0o700)
         externalIndexes = getExternalIndexes()
@@ -1198,6 +1233,7 @@ class FuzzyClient {
     }
 
     func cleanup() {
+        saveFollowedVolumesNow()
         liveStream?.stop()
         liveStream = nil
         searchTask?.cancel()
@@ -1506,6 +1542,15 @@ class FuzzyClient {
                     }
                     self.enabledVolumes = computeEnabledVolumes(mounted: self.externalVolumes, disabled: self.disabledVolumes)
                 }
+            }
+            // The drives that are mounted pick up from where their saved indexes stand.
+            let mounted = await MainActor.run { self.externalVolumes }
+            let network = Set(mounted.filter { !$0.url.isLocalVolume })
+            await MainActor.run {
+                if self.externalVolumes == mounted {
+                    self.networkVolumes = network
+                }
+                self.syncVolumeFollowing()
             }
 
             await MainActor.run {
@@ -2121,9 +2166,8 @@ class FuzzyClient {
     /// Writing every scope costs a few hundred MB of disk writes, while replaying changes on launch is cheap, so the
     /// indexes are only written once enough has changed or the replay would reach back several hours.
     func saveLiveIndexIfWorthIt() {
-        guard let changes = liveUpdater?.changes, changes > 0,
-              changes >= 20000 || Date().timeIntervalSince(lastLiveSave) > 6 * 60 * 60
-        else { return }
+        let changes = (liveUpdater?.changes ?? 0) + followedVolumeChanges
+        guard changes > 0, changes >= 20000 || Date().timeIntervalSince(lastLiveSave) > 6 * 60 * 60 else { return }
         scheduleSaveIndexes()
     }
 
@@ -2527,9 +2571,14 @@ class FuzzyClient {
             self.setOperation("Saving index\u{2026}")
             self.logActivity("Saving index to disk")
             let scopes = self.scopeEngines
-            let volumes = self.volumeEngines
+            // A drive being walked gets a new engine and position of its own when the walk is done.
+            let volumes = self.volumeEngines.filter { !self.volumesIndexing.contains($0.key) }
             // Taken before writing: the engines hold at least every change applied so far.
             self.advanceLiveBase()
+            let volumePositions = self.followedVolumePositions()
+            for watcher in self.volumeWatchers.values {
+                _ = watcher.updater.takeChanges()
+            }
             let positions = self.liveBase.filter { scopes.keys.contains($0.key) }
             let rules = self.liveRules
             _ = self.liveUpdater?.takeChanges()
@@ -2542,10 +2591,12 @@ class FuzzyClient {
                     eng.saveBinaryIndex(to: file.url)
                 }
                 ScopeIndexState.save(positions, rules: rules)
-                for (volume, eng) in volumes {
-                    let file = volumeIndexFile(volume)
-                    guard eng.hasUnsavedChanges || !file.exists else { continue }
-                    eng.saveBinaryIndex(to: file.url)
+                volumeSaveQueue.sync {
+                    for (volume, eng) in volumes {
+                        let file = volumeIndexFile(volume)
+                        guard eng.hasUnsavedChanges || !file.exists || volumePositions[volume] != nil else { continue }
+                        Self.saveVolume(volume, engine: eng, position: volumePositions[volume])
+                    }
                 }
             }.value
             self.logActivity("Index saved (\(scopes.count) scopes, \(volumes.count) volumes)")

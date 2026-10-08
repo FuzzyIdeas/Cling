@@ -179,7 +179,9 @@ public struct ClingVolumeStatus: Codable {
         count: Int,
         operation: String? = nil,
         operationCount: Int? = nil,
-        lastIndexedAt: Double? = nil
+        lastIndexedAt: Double? = nil,
+        following: String? = nil,
+        health: String? = nil
     ) {
         self.name = name
         self.path = path
@@ -190,6 +192,8 @@ public struct ClingVolumeStatus: Codable {
         self.operation = operation
         self.operationCount = operationCount
         self.lastIndexedAt = lastIndexedAt
+        self.following = following
+        self.health = health
     }
 
     public let name: String
@@ -201,6 +205,11 @@ public struct ClingVolumeStatus: Codable {
     public var operation: String?
     public var operationCount: Int?
     public var lastIndexedAt: Double?
+    /// "following" while the drive's changes are followed into its index, "catching up" while it replays what changed
+    /// since its index was saved; nil when it isn't followed.
+    public var following: String?
+    /// "healthy", "slow" or "struggling": how following the drive has gone over the last 10 minutes, while it is.
+    public var health: String?
 
 }
 
