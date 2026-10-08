@@ -406,6 +406,10 @@ struct ContentView: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
+    /// Decoded once per change: a `@Default` read decodes the whole JSON array, and the filter keys below are read on
+    /// every evaluation of the body.
+    @State private var defaults = DEFAULTS_CACHE
+
     @Default(.hiddenLiveEventPaths) private var hiddenLiveEventPaths
 
     @Default(.fontScale) private var fontScale
@@ -424,12 +428,16 @@ struct ContentView: View {
 
     @Default(.triggerKeys) private var triggerKeys
     @Default(.showAppKey) private var showAppKey
-    @Default(.folderFilters) private var folderFilters
-    @Default(.quickFilters) private var quickFilters
-
     @Default(.showSearchHints) private var showSearchHints
     @Default(.searchHintsManuallyEnabled) private var searchHintsManuallyEnabled
     @Default(.searchHintsFirstShownAt) private var searchHintsFirstShownAt
+
+    private var folderFilters: [FolderFilter] {
+        defaults.folderFilters
+    }
+    private var quickFilters: [QuickFilter] {
+        defaults.quickFilters
+    }
 
     /// Re-read through `fontScale` above so the whole window redraws when the size changes.
     private var rowHeight: CGFloat {

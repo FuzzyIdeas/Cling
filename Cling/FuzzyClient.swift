@@ -777,10 +777,12 @@ class FuzzyClient {
     /// The folder filter is the one a quick filter turned on for its own folders, not one picked on its own (a saved
     /// folder filter, or a folder from → or Finder, which a quick filter takes over as its folders).
     var folderFilterIsQuickFilters: Bool {
+        // From the cache: this runs in the window's body and on every search bar update, and a `Defaults` read decodes
+        // the whole list.
         guard let folder = folderFilter, let quick = quickFilter,
-              !Defaults[.folderFilters].contains(where: { $0.uuid == folder.uuid })
+              !DEFAULTS_CACHE.folderFilters.contains(where: { $0.uuid == folder.uuid })
         else { return false }
-        let saved = Defaults[.quickFilters].first { $0.uuid == quick.uuid } ?? quick
+        let saved = DEFAULTS_CACHE.quickFilters.first { $0.uuid == quick.uuid } ?? quick
         return saved.folders == folder.folders
     }
 
