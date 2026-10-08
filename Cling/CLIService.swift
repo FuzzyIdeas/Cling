@@ -478,6 +478,21 @@ extension FuzzyClient {
             return ClingResponse(error: refusal)
         }
         switch request.command {
+        case .search where request.searchBar == true:
+            var bar = request
+            bar.searchBar = nil
+            var response = handleCLIRequest(bar, coordinator: coord)
+            // The installed apps join in as they do in the bar, unless something narrows the search.
+            let narrowed = request.quickFilter != nil || request.folderFilter != nil || request.folderPrefixes != nil
+                || request.scopes != nil || request.everything == true || request.allDrives == true || request.suffixPattern != nil
+            let found = (response.results ?? []).prefix(FuzzyClient.launcherReach).map(\.path)
+            let apps = narrowed
+                ? []
+                : LauncherApps.shared.matches(request.query ?? "", literalDefault: Defaults[.literalSearch], results: found)
+                    .map { ClingSearchResult(path: $0.path, isDir: true, score: $0.rank, quality: $0.rank) }
+            response.results = response.results.map { FuzzyClient.launcherOrder($0, apps: apps, path: \.path) }
+            return response
+
         case .search:
             if request.allDrives == true {
                 return searchDrives(request, coordinator: coord)

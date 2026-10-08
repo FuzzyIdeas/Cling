@@ -481,6 +481,9 @@ class FuzzyClient {
     /// Past this many changed paths noted while hidden, they are shown anyway rather than held without bound.
     nonisolated static let hiddenChangesMax = 20000
 
+    /// How many of the first results the search bar looks through for apps.
+    nonisolated static let launcherReach = 10
+
     @ObservationIgnored var searchTask: Task<Void, Never>?
     /// Thread-safe coordinator for CLI and multi-engine search
     @ObservationIgnored let searchCoordinator = SearchCoordinator()
@@ -916,6 +919,31 @@ class FuzzyClient {
             return "~/Applications"
         }
         return path.name.string
+    }
+
+    /// The search bar doubles as a launcher: apps among its first results go to the top, in the order they matched,
+    /// ahead of documents that matched better. An app typed by its name lands among the first few results anyway, and
+    /// one further down was found for something else in its path.
+    nonisolated static func appsFirst<T>(_ items: [T], path: (T) -> String) -> [T] {
+        let reach = min(items.count, launcherReach)
+        guard reach > 1 else { return items }
+        let head = items[..<reach]
+        let apps = head.filter { isApp(path($0)) }
+        guard !apps.isEmpty, apps.count < reach else { return items }
+        return apps + head.filter { !isApp(path($0)) } + items[reach...]
+    }
+
+    /// The search bar's order: the installed apps whose names match the query, then any other app among the first
+    /// results, then the rest as they ranked.
+    nonisolated static func launcherOrder<T>(_ items: [T], apps: [T], path: (T) -> String) -> [T] {
+        guard !apps.isEmpty else { return appsFirst(items, path: path) }
+        let shown = Set(apps.map(path))
+        return apps + appsFirst(items.filter { !shown.contains(path($0)) }, path: path)
+    }
+
+    nonisolated static func isApp(_ path: String) -> Bool {
+        let path = path.hasSuffix("/") ? path.dropLast() : Substring(path)
+        return path.utf8.count > 4 && path.suffix(4).lowercased() == ".app"
     }
 
     /// Merge results from multiple engines: quality gate + sort + dedup
@@ -2405,6 +2433,12 @@ class FuzzyClient {
         }
         let pools = quickFilterPools
         let literalDefault = Defaults[.literalSearch]
+        // The search bar works as a launcher too, unless a filter narrows what it looks for.
+        let bar = WM.searchBarActive
+        let launcherQuery = bar && quickFilter == nil && folderFilter == nil && volumeFilter == nil ? query : nil
+        if launcherQuery != nil {
+            LauncherApps.shared.refreshIfStale()
+        }
 
         searching = true
         searchTask = Task.detached(priority: .userInitiated) {
@@ -2437,11 +2471,15 @@ class FuzzyClient {
                 guard !Task.isCancelled, !cancelFlag else { return }
                 let sofar = finished.withLock { $0 }
                 guard !sofar.isEmpty else { return }
-                let partialPaths = await self.existingResultPaths(from: Self.mergeResults(sofar, maxResults: maxResults))
+                let partialMerged = Self.mergeResults(sofar, maxResults: maxResults)
+                let partialPaths = await self.existingResultPaths(from: partialMerged)
+                let partialApps = launcherQuery.map {
+                    LauncherApps.shared.matches($0, literalDefault: literalDefault, results: partialMerged.prefix(Self.launcherReach).map(\.path)).map(\.path)
+                } ?? []
                 guard !Task.isCancelled, !cancelFlag else { return }
                 await MainActor.run {
                     guard !finalShown, !cancelFlag else { return }
-                    self.scoredResults = partialPaths
+                    self.scoredResults = bar ? Self.launcherOrder(partialPaths, apps: partialApps.compactMap(\.filePath), path: \.string) : partialPaths
                     self.results = self.sortedResults()
                 }
             }
@@ -2483,10 +2521,13 @@ class FuzzyClient {
 
             let searchResults = Self.mergeResults(accumulated, maxResults: maxResults)
             let finalPaths = await self.existingResultPaths(from: searchResults)
+            let apps = launcherQuery.map {
+                LauncherApps.shared.matches($0, literalDefault: literalDefault, results: searchResults.prefix(Self.launcherReach).map(\.path)).map(\.path)
+            } ?? []
 
             await MainActor.run {
                 finalShown = true
-                self.scoredResults = finalPaths
+                self.scoredResults = bar ? Self.launcherOrder(finalPaths, apps: apps.compactMap(\.filePath), path: \.string) : finalPaths
                 self.results = self.sortedResults()
                 self.searching = false
                 if !self.emptyQuery || wantVolumeFilter {

@@ -57,7 +57,8 @@ public struct ClingRequest: Codable {
         payload: String? = nil,
         quickFilter: String? = nil,
         folderFilter: String? = nil,
-        allDrives: Bool? = nil
+        allDrives: Bool? = nil,
+        searchBar: Bool? = nil
     ) {
         self.command = command
         self.query = query
@@ -78,6 +79,7 @@ public struct ClingRequest: Codable {
         self.quickFilter = quickFilter
         self.folderFilter = folderFilter
         self.allDrives = allDrives
+        self.searchBar = searchBar
     }
 
     public let command: ClingCommand
@@ -105,6 +107,8 @@ public struct ClingRequest: Codable {
     /// Search only the saved index of every external drive, connected or not, the way the window's External drives
     /// filter does.
     public var allDrives: Bool?
+    /// Order the results as the search bar does, with apps among the first ones moved to the top.
+    public var searchBar: Bool?
     /// `mcp` when the call came through the bundled MCP server. The app refuses changes carrying it until
     /// the user allows them; a person running the CLI needs no permission from anyone.
     public var origin: String?

@@ -254,6 +254,9 @@ struct Search: ParsableCommand {
     @Option(name: .long, help: "Apply a saved folder filter by name, the way the search window does")
     var folderFilter: String?
 
+    @Flag(name: .long, help: "Order results as the search bar does, with matching installed apps first")
+    var searchBar = false
+
     @Flag(name: .long, help: "Output as JSON, with scores")
     var json = false
 
@@ -270,7 +273,8 @@ struct Search: ParsableCommand {
             command: .search, query: query, maxResults: count, verbose: verbose,
             suffixPattern: suffix, folderPrefixes: folders?.components(separatedBy: ","),
             dirsOnly: dirsOnly ? true : nil, scopes: scope.isEmpty ? nil : scope, everything: everything ? true : nil,
-            quickFilter: quickFilter, folderFilter: folderFilter, allDrives: allDrives ? true : nil
+            quickFilter: quickFilter, folderFilter: folderFilter, allDrives: allDrives ? true : nil,
+            searchBar: searchBar ? true : nil
         )
 
         let t0 = CFAbsoluteTimeGetCurrent()

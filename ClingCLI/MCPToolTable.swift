@@ -105,6 +105,7 @@ extension MCPServer {
                 + flag(a, "dirsOnly", "--dirs-only")
                 + flag(a, "everything", "--everything")
                 + flag(a, "allDrives", "--all-drives")
+                + flag(a, "searchBar", "--search-bar")
                 + opt(a, "--quick-filter", "quickFilter")
                 + opt(a, "--folder-filter", "folderFilter")
                 + (scopes.isEmpty ? [] : ["--scope"] + scopes),
@@ -426,8 +427,13 @@ extension MCPServer {
                 + "everything searches the Everything index alone (Pro), loading it first and building it on first use. "
                 + "allDrives searches the saved index of every external drive alone (Pro), the ones unplugged right now "
                 + "too, and the status names each drive searched and marks the disconnected ones: use it to find which "
-                + "drive holds a file.",
+                + "drive holds a file. searchBar orders the results as the search bar shows them, so it works as a "
+                + "launcher: up to 3 installed apps whose names match go first (the whole name, its start, its initials "
+                + "or a word, a close fuzzy reading, or a misspelling when nothing else matched), the most recently "
+                + "opened first among equals, then any other app among the first 10. A file whose name starts with "
+                + "what was typed keeps a fuzzy or misspelt app match below it. Use it to reproduce what the bar showed.",
             inputSchema: ["type": "object", "properties": [
+                "searchBar": ["type": "boolean", "description": "order results as the search bar does, with matching installed apps first"],
                 "query": ["type": "string", "description": "the query as typed, operators included (.pdf, in:~/Documents, !foo, 'exact, ^start, end$)"],
                 "count": ["type": "integer", "description": "how many results, default 30"],
                 "quickFilter": ["type": "string", "description": "a saved quick filter's name"],
