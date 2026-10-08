@@ -690,7 +690,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         if sel.isEmpty {
             hints.append(.init(id: .syntax, key: "⌘/", title: "Syntax"))
         }
-        hints.append(.init(id: .window, key: "⌃ Tab", title: "Window"))
+        hints.append(.init(id: .window, key: "⌃ Tab", title: "Table"))
         root.hintBar.hints = hints
     }
 
