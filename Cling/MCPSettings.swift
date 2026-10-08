@@ -309,6 +309,21 @@ enum MCPSettingsBridge {
             Defaults[.searchHintsManuallyEnabled] = true
         },
 
+        // Filters
+        bool("filterAutoOff", .filterAutoOff, row(
+            .filters, "", "Auto-disable filters",
+            note: "The checkbox in the bar at the bottom of the Filters pane. When on, an active quick, folder or drive filter turns off "
+                + "after filterAutoOffAfter seconds with Cling in the background and the search bar closed. A filter's own "
+                + "autoOff (cling_filter_write) wins over both.",
+            keywords: ["filter", "reset", "clear", "timeout", "auto off", "background"]
+        )),
+        duration("filterAutoOffAfter", .filterAutoOffAfter, row(
+            .filters, "", "Auto-disable filters",
+            note: "The time in that bar. Counted from when Cling went to the background, or from when the filter was turned "
+                + "on if later. Only applies while filterAutoOff is true.",
+            keywords: ["filter", "reset", "clear", "timeout", "auto off", "background"]
+        )),
+
         // Drives & Volumes
         bool("disableAutomaticVolumeIndexing", .disableAutomaticVolumeIndexing, row(
             .volumes, "", "Don't index new volumes automatically",
@@ -549,6 +564,23 @@ extension MCPSettingsBridge {
         } write: { raw in
             guard let value = Double(raw.trimmingCharacters(in: .whitespaces)), values.contains(value) else {
                 return "\(name) takes one of these numbers of seconds: \(allowed.joined(separator: ", ")). Got '\(raw)'"
+            }
+            Defaults[key] = value
+            return nil
+        }
+    }
+
+    /// A duration the way the Settings field takes it: `300`, `90s`, `5m`, `1h 30m`. A bare number is seconds, the unit
+    /// the value reads back in.
+    private static func duration(_ name: String, _ key: Defaults.Key<TimeInterval>, _ row: MCPSettingRow) -> MCPSettingKey {
+        MCPSettingKey(name: name, type: "seconds", allowed: ["10 to 86400, or a duration like 90s, 10m, 2h"], row: row) {
+            String(Int(Defaults[key]))
+        } write: { raw in
+            guard let value = AutoOffDuration.parse(raw, current: 1) else {
+                return "\(name) takes seconds or a duration like 90s, 10m or 2h, not '\(raw)'"
+            }
+            if let problem = AutoOffDuration.problem(value) {
+                return "\(problem), not '\(raw)'"
             }
             Defaults[key] = value
             return nil

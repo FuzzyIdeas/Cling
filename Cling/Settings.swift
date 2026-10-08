@@ -48,12 +48,13 @@ extension Character: @retroactive Codable {
 struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     init(
         id: String, folders: [FilePath], key: Character?, maxDepth: Int? = nil,
-        icon: String? = nil, color: FilterColor? = nil, uuid: String = UUID().uuidString
+        icon: String? = nil, color: FilterColor? = nil, autoOff: FilterAutoOff? = nil, uuid: String = UUID().uuidString
     ) {
         self.id = id
         self.folders = folders
         self.key = key
         self.maxDepth = maxDepth
+        self.autoOff = autoOff
         // A filter shipped with the app gets its look from its name, so the defaults live in one
         // table instead of being repeated at every call site.
         self.icon = icon ?? BuiltinFilterAppearance.icon(for: id, kind: .folder)
@@ -74,6 +75,7 @@ struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         // upgrade shows icons straight away instead of a row of blanks.
         icon = try container.decodeIfPresent(String.self, forKey: .icon) ?? BuiltinFilterAppearance.icon(for: id, kind: .folder)
         color = try container.decodeIfPresent(FilterColor.self, forKey: .color) ?? BuiltinFilterAppearance.color(for: id, kind: .folder)
+        autoOff = try container.decodeIfPresent(FilterAutoOff.self, forKey: .autoOff)
     }
 
     /// Stable identity used for SwiftUI view identity and array lookups, so renaming (which changes
@@ -85,6 +87,8 @@ struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     let maxDepth: Int?
     let icon: String?
     let color: FilterColor?
+    /// The filter's own auto-off, nil to follow the default in Settings.
+    let autoOff: FilterAutoOff?
 
     var keyEquivalent: KeyEquivalent? {
         key.map { KeyEquivalent($0) }
@@ -99,7 +103,11 @@ struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     }
 
     func withKey(_ key: Character?) -> FolderFilter {
-        FolderFilter(id: id, folders: folders, key: key, maxDepth: maxDepth, icon: icon, color: color, uuid: uuid)
+        FolderFilter(id: id, folders: folders, key: key, maxDepth: maxDepth, icon: icon, color: color, autoOff: autoOff, uuid: uuid)
+    }
+
+    func withAutoOff(_ autoOff: FilterAutoOff?) -> FolderFilter {
+        FolderFilter(id: id, folders: folders, key: key, maxDepth: maxDepth, icon: icon, color: color, autoOff: autoOff, uuid: uuid)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -110,11 +118,12 @@ struct FolderFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         try container.encodeIfPresent(maxDepth, forKey: .maxDepth)
         try container.encodeIfPresent(icon, forKey: .icon)
         try container.encodeIfPresent(color, forKey: .color)
+        try container.encodeIfPresent(autoOff, forKey: .autoOff)
         try container.encode(uuid, forKey: .uuid)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, folders, key, maxDepth, icon, color, uuid
+        case id, folders, key, maxDepth, icon, color, autoOff, uuid
     }
 }
 
@@ -136,6 +145,7 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         rawQuery = try container.decodeIfPresent(String.self, forKey: .rawQuery)
         icon = try container.decodeIfPresent(String.self, forKey: .icon) ?? BuiltinFilterAppearance.icon(for: id, kind: .quick)
         color = try container.decodeIfPresent(FilterColor.self, forKey: .color) ?? BuiltinFilterAppearance.color(for: id, kind: .quick)
+        autoOff = try container.decodeIfPresent(FilterAutoOff.self, forKey: .autoOff)
 
         if container.contains(.extensions) {
             extensions = try container.decodeIfPresent(String.self, forKey: .extensions)
@@ -187,8 +197,10 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         match: FilterMatch = .both,
         icon: String? = nil,
         color: FilterColor? = nil,
+        autoOff: FilterAutoOff? = nil,
         uuid: String = UUID().uuidString
     ) {
+        self.autoOff = autoOff
         self.icon = icon ?? BuiltinFilterAppearance.icon(for: id, kind: .quick)
         self.color = color ?? BuiltinFilterAppearance.color(for: id, kind: .quick)
         self.id = id; self.extensions = extensions; self.preQuery = preQuery; self.postQuery = postQuery
@@ -212,6 +224,8 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     let match: FilterMatch
     let icon: String?
     let color: FilterColor?
+    /// The filter's own auto-off, nil to follow the default in Settings.
+    let autoOff: FilterAutoOff?
 
     var keyEquivalent: KeyEquivalent? {
         key.map { KeyEquivalent($0) }
@@ -274,20 +288,11 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
     }
 
     func withKey(_ key: Character?) -> QuickFilter {
-        QuickFilter(
-            id: id,
-            extensions: extensions,
-            preQuery: preQuery,
-            postQuery: postQuery,
-            dirsOnly: dirsOnly,
-            folders: folders,
-            key: key,
-            maxDepth: maxDepth,
-            exclude: exclude,
-            rawQuery: rawQuery,
-            match: match,
-            uuid: uuid
-        )
+        with(key: key, autoOff: autoOff)
+    }
+
+    func withAutoOff(_ autoOff: FilterAutoOff?) -> QuickFilter {
+        with(key: key, autoOff: autoOff)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -305,12 +310,13 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         try container.encode(match, forKey: .match)
         try container.encodeIfPresent(icon, forKey: .icon)
         try container.encodeIfPresent(color, forKey: .color)
+        try container.encodeIfPresent(autoOff, forKey: .autoOff)
         try container.encode(uuid, forKey: .uuid)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, extensions, preQuery, postQuery, dirsOnly, folders, key, maxDepth
-        case exclude, rawQuery, match, icon, color, uuid
+        case exclude, rawQuery, match, icon, color, autoOff, uuid
         case suffix, query // legacy keys for decoding only
     }
 
@@ -323,6 +329,26 @@ struct QuickFilter: Identifiable, Hashable, Codable, Defaults.Serializable {
         return compileFilterQuery(
             extensions: extensions, exclude: exclude, match: match,
             folders: folders?.map { abbreviateHome($0.string, home: home) } ?? [], maxDepth: maxDepth
+        )
+    }
+
+    private func with(key: Character?, autoOff: FilterAutoOff?) -> QuickFilter {
+        QuickFilter(
+            id: id,
+            extensions: extensions,
+            preQuery: preQuery,
+            postQuery: postQuery,
+            dirsOnly: dirsOnly,
+            folders: folders,
+            key: key,
+            maxDepth: maxDepth,
+            exclude: exclude,
+            rawQuery: rawQuery,
+            match: match,
+            icon: icon,
+            color: color,
+            autoOff: autoOff,
+            uuid: uuid
         )
     }
 
@@ -705,6 +731,10 @@ extension Defaults.Keys {
     /// Seconds away (app in the background or window hidden) after which the result selection is
     /// considered stale and jumps back to the first row. 0 = keep the selection forever.
     static let resetSelectionAfter = Key<TimeInterval>("resetSelectionAfter", default: 300)
+    /// Whether a quick, folder or drive filter turns off once Cling has spent `filterAutoOffAfter` seconds in
+    /// the background with the search bar closed. A filter's own `autoOff` overrides both.
+    static let filterAutoOff = Key<Bool>("filterAutoOff", default: true)
+    static let filterAutoOffAfter = Key<TimeInterval>("filterAutoOffAfter", default: FilterAutoOff.defaultAfter)
     /// Text size for the search window, 1 = system default. Each part of the window takes a
     /// different share of it, see FontRole.
     static let fontScale = Key<Double>("fontScale", default: 1)

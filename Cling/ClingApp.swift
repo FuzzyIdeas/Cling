@@ -271,6 +271,7 @@ class AppDelegate: LowtechProAppDelegate {
 
     override func applicationDidBecomeActive(_ notification: Notification) {
         WM.noteActive()
+        FilterAutoOffMonitor.shared.update()
         guard didBecomeActiveAtLeastOnce else {
             didBecomeActiveAtLeastOnce = true
             return
@@ -292,6 +293,7 @@ class AppDelegate: LowtechProAppDelegate {
 
     override func applicationDidResignActive(_ notification: Notification) {
         WM.noteInactive()
+        FilterAutoOffMonitor.shared.update()
         if WM.mainWindowActive, mainWindow?.isVisible == true {
             mainWindowLeftFrontAt = .now
         }
@@ -330,6 +332,7 @@ class AppDelegate: LowtechProAppDelegate {
         _ = cursorAnchor(in: window)
         EVERYTHING.windowHidden()
         WM.noteInactive()
+        FilterAutoOffMonitor.shared.update()
         FUZZY.cancelPendingSearch()
         // Hidden rather than closed, so the next summon shows it at once.
         window.animationBehavior = .none
@@ -584,6 +587,7 @@ class AppDelegate: LowtechProAppDelegate {
 
     @objc func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
+        FilterAutoOffMonitor.shared.update()
         if window.identifier?.rawValue == "main" {
             WM.mainWindowActive = false
             WM.noteInactive()
@@ -630,6 +634,7 @@ class AppDelegate: LowtechProAppDelegate {
             WM.mainContentSuspended = false
             WM.mainWindowActive = true
             WM.noteActive()
+            FilterAutoOffMonitor.shared.update()
             FUZZY.refreshDefaultResultsIfNeeded()
 
             window.alphaValue = 1

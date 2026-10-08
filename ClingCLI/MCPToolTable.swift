@@ -237,7 +237,8 @@ extension MCPServer {
                 + opt(a, "--max-depth", "maxDepth")
                 + opt(a, "--key", "key")
                 + opt(a, "--icon", "icon")
-                + opt(a, "--hue", "hue"),
+                + opt(a, "--hue", "hue")
+                + opt(a, "--auto-off", "autoOff"),
             tail: [argument(a["name"] ?? "")]
         )
     }
@@ -674,10 +675,11 @@ extension MCPServer {
                 + "Fields left out keep their current values; an empty string clears a text field and maxDepth -1 "
                 + "clears the depth. A quick filter needs at least one of extensions, exclude, match, folders, "
                 + "prepend, append or rawQuery; rawQuery replaces the structured fields with a whole query in "
-                + "Cling's query syntax. A folder filter takes only folders, maxDepth, key, icon and hue, and the "
+                + "Cling's query syntax. A folder filter takes only folders, maxDepth, key, icon, hue and autoOff, and the "
                 + "folders must exist. key is the letter pressed with ⌥ in the search window, which needs Cling "
                 + "Pro; a key taken by another filter of the same kind moves here. Picking a filter from the "
-                + "menus works without Pro. " + gate,
+                + "menus works without Pro. autoOff gives the filter its own time before it turns off, over the "
+                + "filterAutoOff and filterAutoOffAfter settings (cling_settings). " + gate,
             inputSchema: ["type": "object", "properties": [
                 "kind": ["type": "string", "enum": ["quick", "folder"]],
                 "name": ["type": "string"],
@@ -693,6 +695,12 @@ extension MCPServer {
                 "key": ["type": "string", "description": "one letter or digit, or none"],
                 "icon": ["type": "string", "description": "an SF Symbol name"],
                 "hue": ["type": "number", "description": "0 to 1 around the colour wheel"],
+                "autoOff": [
+                    "type": "string",
+                    "description": "how long Cling spends in the background with the search bar closed before this filter "
+                        + "turns off: a duration from 10s to 24h like 90s, 10m or 1h 30m; off keeps it on; default drops "
+                        + "the filter's own time so it follows the setting again",
+                ],
             ], "required": ["kind", "name"]],
             handler: filterWrite
         ),

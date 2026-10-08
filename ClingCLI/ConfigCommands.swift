@@ -277,6 +277,9 @@ struct FilterCommand: ParsableCommand {
         @Option(name: .long, help: "Colour, 0 to 1 around the colour wheel")
         var hue: Double?
 
+        @Option(name: .long, help: "Time in the background before the filter turns off, e.g. 90s, 10m or 2h. off keeps it on, default follows Settings")
+        var autoOff: String?
+
         @Flag(name: .long, help: "Output as JSON")
         var json = false
 
@@ -294,6 +297,7 @@ struct FilterCommand: ParsableCommand {
             spec.key = key
             spec.icon = icon
             spec.hue = hue
+            spec.autoOff = autoOff
             try runConfig(ClingRequest(command: .filters, action: "write", payload: encodedSpec(spec)), json: json)
         }
     }

@@ -281,6 +281,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         state = .expanded
         updateCursorFollowing()
         WM.searchBarActive = true
+        FilterAutoOffMonitor.shared.update()
         EVERYTHING.windowShown()
         FUZZY.refreshDefaultResultsIfNeeded()
         if root.field.stringValue != FUZZY.query {
@@ -343,6 +344,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
 
         state = pinned ? .compact : .hidden
         WM.searchBarActive = false
+        FilterAutoOffMonitor.shared.update()
         FUZZY.cancelPendingSearch()
         EVERYTHING.windowHidden()
         if pinned, let panel {

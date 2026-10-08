@@ -638,6 +638,9 @@ class FuzzyClient {
 
     var quickFilter: QuickFilter? {
         didSet {
+            if quickFilter != oldValue {
+                FilterAutoOffMonitor.shared.noteChange(.quick)
+            }
             guard quickFilter != oldValue, !updatingFilters else { return }
             updatingFilters = true
             defer { updatingFilters = false }
@@ -708,6 +711,9 @@ class FuzzyClient {
 
     var volumeFilter: FilePath? {
         didSet {
+            if volumeFilter != oldValue {
+                FilterAutoOffMonitor.shared.noteChange(.volume)
+            }
             guard volumeFilter != oldValue, !updatingFilters else { return }
             updatingFilters = true
             defer { updatingFilters = false }
@@ -734,6 +740,9 @@ class FuzzyClient {
     }
     var folderFilter: FolderFilter? {
         didSet {
+            if folderFilter != oldValue {
+                FilterAutoOffMonitor.shared.noteChange(.folder)
+            }
             guard folderFilter != oldValue, !updatingFilters else { return }
             updatingFilters = true
             defer { updatingFilters = false }

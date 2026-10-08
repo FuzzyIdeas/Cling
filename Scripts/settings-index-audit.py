@@ -97,7 +97,7 @@ def main():
     registry = strip_comments(read("Cling/MCPSettings.swift"))
     keys_block = registry[registry.index("static let keys:"):registry.index("static var keysByName")]
     # bool("name", .key, ...) and the other builders that take a Defaults key.
-    typed = re.findall(r'\b(?:bool|int|double|presets|rawValue|app|readOnly)\(\s*"(\w+)",\s*\.(\w+)', keys_block)
+    typed = re.findall(r'\b(?:bool|int|double|presets|duration|rawValue|app|readOnly)\(\s*"(\w+)",\s*\.(\w+)', keys_block)
     # Builders for keys that need their own parsing name the key inside.
     custom = re.findall(r'MCPSettingKey\(name: "(\w+)"', registry)
     custom_keys = {"launchAtLogin": None, "showAppKey": "showAppKey", "triggerKeys": "triggerKeys",

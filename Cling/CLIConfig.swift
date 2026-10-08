@@ -61,6 +61,7 @@ extension CLIConfig {
         /// What the filter adds around the typed query, as the editor's "Runs as" shows it.
         let runsAs: String
         let active: Bool
+        let autoOff: AutoOffInfo
     }
 
     private struct FolderFilterInfo: Encodable {
@@ -71,6 +72,25 @@ extension CLIConfig {
         let icon: String?
         let hue: Double?
         let active: Bool
+        let autoOff: AutoOffInfo
+    }
+
+    /// When the filter turns off, and whether that is its own time or the setting's.
+    private struct AutoOffInfo: Encodable {
+        @MainActor init(_ own: FilterAutoOff?) {
+            setting = own.map { $0.enabled ? AutoOffDuration.text($0.after) : "off" } ?? "default"
+            seconds = (own ?? .current).period.map { Int($0) }
+        }
+
+        /// `default`, `off` or the filter's own time, e.g. `10 minutes`.
+        let setting: String
+        /// Seconds in the background before it turns off, nil when it stays on.
+        let seconds: Int?
+
+        var text: String {
+            let when = seconds.map { "turns off after \(AutoOffDuration.text(TimeInterval($0))) in the background" } ?? "stays on"
+            return setting == "default" ? "\(when) (default)" : when
+        }
     }
 
     private struct FilterList: Encodable {
@@ -84,14 +104,14 @@ extension CLIConfig {
             name: f.id, key: f.key.map { String($0) }, extensions: f.extensions, exclude: f.exclude,
             match: f.match.rawValue, prepend: f.preQuery, append: f.postQuery, rawQuery: f.rawQuery,
             folders: f.folders?.map(\.string) ?? [], maxDepth: f.maxDepth, icon: f.icon, hue: f.color?.hue,
-            runsAs: f.queryString, active: FUZZY.quickFilter?.uuid == f.uuid
+            runsAs: f.queryString, active: FUZZY.quickFilter?.uuid == f.uuid, autoOff: AutoOffInfo(f.autoOff)
         )
     }
 
     @MainActor private static func info(_ f: FolderFilter) -> FolderFilterInfo {
         FolderFilterInfo(
             name: f.id, key: f.key.map { String($0) }, folders: f.folders.map(\.string), maxDepth: f.maxDepth,
-            icon: f.icon, hue: f.color?.hue, active: FUZZY.folderFilter?.uuid == f.uuid
+            icon: f.icon, hue: f.color?.hue, active: FUZZY.folderFilter?.uuid == f.uuid, autoOff: AutoOffInfo(f.autoOff)
         )
     }
 
@@ -102,7 +122,7 @@ extension CLIConfig {
             lines += quick.isEmpty
                 ? ["  none"]
                 : quick.map { f in
-                    "  \(f.name)\(f.key.map { "  ⌥\($0.uppercased())" } ?? "")\(f.active ? "  (active)" : "")\n    runs as: \(f.runsAs.isEmpty ? "(nothing)" : f.runsAs)"
+                    "  \(f.name)\(f.key.map { "  ⌥\($0.uppercased())" } ?? "")\(f.active ? "  (active)" : "")\n    runs as: \(f.runsAs.isEmpty ? "(nothing)" : f.runsAs)\n    \(f.autoOff.text)"
                 }
         }
         if let folder = list.folder {
@@ -113,7 +133,7 @@ extension CLIConfig {
             lines += folder.isEmpty
                 ? ["  none"]
                 : folder.map { f in
-                    "  \(f.name)\(f.key.map { "  ⌥\($0.uppercased())" } ?? "")\(f.active ? "  (active)" : "")\n    \(f.folders.joined(separator: ", "))\(f.maxDepth.map { "  depth ≤ \($0)" } ?? "")"
+                    "  \(f.name)\(f.key.map { "  ⌥\($0.uppercased())" } ?? "")\(f.active ? "  (active)" : "")\n    \(f.folders.joined(separator: ", "))\(f.maxDepth.map { "  depth ≤ \($0)" } ?? "")\n    \(f.autoOff.text)"
                 }
         }
         for warning in list.warnings ?? [] {
@@ -143,6 +163,27 @@ extension CLIConfig {
             return .failure(ClingError("a filter key is one letter or digit, or none. Got '\(raw)'"))
         }
         return .success(ch)
+    }
+
+    /// nil keeps the filter's current auto-off. `default` drops its own time, `off` keeps it on, and a duration sets
+    /// its own time. A bare number is seconds, as for the `filterAutoOffAfter` setting.
+    @MainActor private static func filterAutoOff(_ raw: String?, current: FilterAutoOff?) -> Result<FilterAutoOff?, ClingError> {
+        guard let raw = raw?.trimmingCharacters(in: .whitespaces).lowercased(), !raw.isEmpty else {
+            return .success(current)
+        }
+        let base = current ?? .current
+        switch raw {
+        case "default": return .success(nil)
+        case "off", "never", "none": return .success(FilterAutoOff(enabled: false, after: base.after))
+        default:
+            guard let seconds = AutoOffDuration.parse(raw, current: 1) else {
+                return .failure(ClingError("autoOff is a duration like 90s, 10m or 2h, off, or default. Got '\(raw)'"))
+            }
+            if let problem = AutoOffDuration.problem(seconds) {
+                return .failure(ClingError("\(problem). Got '\(raw)'"))
+            }
+            return .success(FilterAutoOff(enabled: true, after: seconds))
+        }
     }
 
     private static func folderPaths(_ raw: [String]) -> Result<[FilePath], ClingError> {
@@ -247,6 +288,11 @@ extension CLIConfig {
             return trimmed.isEmpty ? nil : trimmed
         }
         let maxDepth = spec.maxDepth.map { $0 < 0 ? nil : $0 } ?? current?.maxDepth
+        let autoOff: FilterAutoOff?
+        switch filterAutoOff(spec.autoOff, current: current?.autoOff) {
+        case let .success(value): autoOff = value
+        case let .failure(error): return ClingResponse(error: error.message)
+        }
 
         let filter = QuickFilter(
             id: name,
@@ -262,6 +308,7 @@ extension CLIConfig {
             match: match,
             icon: spec.icon ?? current?.icon,
             color: spec.hue.map { FilterColor(hue: $0) } ?? current?.color,
+            autoOff: autoOff,
             uuid: current?.uuid ?? UUID().uuidString
         )
         // The Filters pane saves nothing that would match every file, so neither does this.
@@ -306,7 +353,7 @@ extension CLIConfig {
             return ClingResponse(error: "there is already a folder filter named '\(name)'")
         }
         for (field, value) in [("extensions", spec.extensions), ("exclude", spec.exclude), ("match", spec.match), ("prepend", spec.prepend), ("append", spec.append), ("rawQuery", spec.rawQuery)] where value != nil {
-            return ClingResponse(error: "\(field) belongs to quick filters. A folder filter has folders, maxDepth, key, icon and hue.")
+            return ClingResponse(error: "\(field) belongs to quick filters. A folder filter has folders, maxDepth, key, icon, hue and autoOff.")
         }
 
         let key: Character?
@@ -324,11 +371,17 @@ extension CLIConfig {
         guard !folders.isEmpty else {
             return ClingResponse(error: "a folder filter needs at least one folder")
         }
+        let autoOff: FilterAutoOff?
+        switch filterAutoOff(spec.autoOff, current: current?.autoOff) {
+        case let .success(value): autoOff = value
+        case let .failure(error): return ClingResponse(error: error.message)
+        }
         let filter = FolderFilter(
             id: name, folders: folders, key: key,
             maxDepth: spec.maxDepth.map { $0 < 0 ? nil : $0 } ?? current?.maxDepth,
             icon: spec.icon ?? current?.icon,
             color: spec.hue.map { FilterColor(hue: $0) } ?? current?.color,
+            autoOff: autoOff,
             uuid: current?.uuid ?? UUID().uuidString
         )
 

@@ -556,11 +556,15 @@ func saveFolderFilter(
         return
     }
 
-    // Reuse the edited filter's stable identity so renaming via the add sheet doesn't recreate it.
-    let editedUUID = Defaults[.folderFilters].first { $0.id == originalID }?.uuid ?? UUID().uuidString
+    // Reuse the edited filter's stable identity so renaming via the add sheet doesn't recreate it, and keep what the
+    // sheet has no field for.
+    let edited = Defaults[.folderFilters].first { $0.id == originalID }
+    let editedUUID = edited?.uuid ?? UUID().uuidString
+    let maxDepth = edited?.maxDepth
+    let autoOff = edited?.autoOff
 
     guard key != .escape else {
-        let filter = FolderFilter(id: id, folders: folders, key: nil, icon: icon, color: color, uuid: editedUUID)
+        let filter = FolderFilter(id: id, folders: folders, key: nil, maxDepth: maxDepth, icon: icon, color: color, autoOff: autoOff, uuid: editedUUID)
         let originalFilter = Defaults[.folderFilters].first { $0.id == originalID }
 
         Defaults[.folderFilters] = Defaults[.folderFilters].without(originalFilter ?? filter) + [filter]
@@ -571,7 +575,7 @@ func saveFolderFilter(
 
     // Check for existing filter with the same key and set its key to nil
     let key = key.lowercasedChar.first
-    let filter = FolderFilter(id: id, folders: folders, key: key, icon: icon, color: color, uuid: editedUUID)
+    let filter = FolderFilter(id: id, folders: folders, key: key, maxDepth: maxDepth, icon: icon, color: color, autoOff: autoOff, uuid: editedUUID)
     let originalFilter = Defaults[.folderFilters].first { $0.id == originalID }
     // if let key, let existingFilter = Defaults[.quickFilters].first(where: { $0.key == key }) {
     //     Defaults[.quickFilters] = Defaults[.quickFilters].without(existingFilter) + [existingFilter.withKey(nil)]
@@ -667,6 +671,22 @@ struct FilterEditorSheet: View {
 
     @Default(.quickFilters) private var quickFilters
     @Default(.folderFilters) private var folderFilters
+    @Default(.filterAutoOff) private var filterAutoOff
+    @Default(.filterAutoOffAfter) private var filterAutoOffAfter
+
+    private var defaultAutoOff: Binding<FilterAutoOff> {
+        Binding(
+            get: { FilterAutoOff(enabled: filterAutoOff, after: filterAutoOffAfter) },
+            set: { new in
+                if new.enabled != filterAutoOff {
+                    filterAutoOff = new.enabled
+                }
+                if new.after != filterAutoOffAfter {
+                    filterAutoOffAfter = new.after
+                }
+            }
+        )
+    }
 
     private var disconnectedVolumes: [FilePath] {
         fuzzy.disconnectedVolumes.sorted(by: { $0.string < $1.string })
@@ -676,7 +696,15 @@ struct FilterEditorSheet: View {
         HStack(spacing: 0) {
             sidebar
             Divider()
-            detail
+            VStack(spacing: 0) {
+                detail
+                Divider()
+                // Under the detail like the Scripts pane's action bar, the sidebar keeps its full height.
+                AutoOffRow(title: "Auto-disable filters", autoOff: defaultAutoOff, sliderWidth: 200, fieldWidth: 124)
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
         }
         // Selection keys off the stable `uuid`, so renames keep it intact; only a deletion can leave
         // the selection dangling, in which case fall back to the list.
@@ -902,6 +930,7 @@ struct QuickFilterDraft {
         maxDepth = f.maxDepth ?? -1
         icon = f.icon ?? "line.3.horizontal.decrease.circle.fill"
         color = f.color ?? .forName(f.id)
+        autoOff = f.autoOff
     }
 
     /// Carried so edits preserve the filter's stable identity (see `QuickFilter.uuid`).
@@ -918,6 +947,7 @@ struct QuickFilterDraft {
     var maxDepth: Int = -1
     var icon = "line.3.horizontal.decrease.circle.fill"
     var color: FilterColor = .palette[0]
+    var autoOff: FilterAutoOff?
 
     var asFilter: QuickFilter {
         QuickFilter(
@@ -934,6 +964,7 @@ struct QuickFilterDraft {
             match: match,
             icon: icon,
             color: color,
+            autoOff: autoOff,
             uuid: uuid
         )
     }
@@ -950,6 +981,8 @@ struct QuickFilterEditor: View {
     var onEdit: () -> Void = {}
     var onAddFolder: () -> Void = {}
     var onDelete: (() -> Void)?
+    /// For the auto-off section, which changes no results. `onEdit` when nil.
+    var onAutoOffEdit: (() -> Void)?
 
     var body: some View {
         // Pinned at top so switching modes only changes the sections below it.
@@ -1047,6 +1080,11 @@ struct QuickFilterEditor: View {
                 }
             }
         }
+
+        Section {
+            FilterAutoOffOverride(autoOff: $draft.autoOff)
+                .onChange(of: draft.autoOff) { (onAutoOffEdit ?? onEdit)() }
+        }
     }
 
     private enum Mode: Hashable { case fields, raw }
@@ -1128,7 +1166,8 @@ struct QuickFilterRow: View {
             matchCountText: matchCountText,
             onEdit: { save(); refreshCount() },
             onAddFolder: addFolder,
-            onDelete: delete
+            onDelete: delete,
+            onAutoOffEdit: saveAutoOff
         )
         .task { refreshCount() }
     }
@@ -1169,6 +1208,13 @@ struct QuickFilterRow: View {
         }
     }
 
+    /// Only the saved filter: the timer reads the period from there, and the active copy would search again on every
+    /// step of the slider.
+    private func saveAutoOff() {
+        guard let idx = quickFilters.firstIndex(where: { $0.uuid == filter.uuid }) else { return }
+        quickFilters[idx] = quickFilters[idx].withAutoOff(draft.autoOff)
+    }
+
     private func delete() {
         quickFilters.removeAll { $0.uuid == filter.uuid }
         if FUZZY.quickFilter?.uuid == filter.uuid {
@@ -1206,6 +1252,7 @@ struct FolderFilterRow: View {
         _maxDepth = State(initialValue: filter.maxDepth ?? -1)
         _icon = State(initialValue: filter.icon ?? "folder.fill")
         _color = State(initialValue: filter.color ?? .forName(filter.id))
+        _autoOff = State(initialValue: filter.autoOff)
     }
 
     @EnvironmentObject var env: EnvState
@@ -1280,6 +1327,11 @@ struct FolderFilterRow: View {
                 }
             }
         }
+
+        Section {
+            FilterAutoOffOverride(autoOff: $autoOff)
+                .onChange(of: autoOff) { saveAutoOff() }
+        }
     }
 
     @State private var name: String
@@ -1289,6 +1341,7 @@ struct FolderFilterRow: View {
     @State private var hotkey: SauceKey
     @State private var recording = false
     @State private var maxDepth: Int
+    @State private var autoOff: FilterAutoOff?
     @FocusState private var nameFocused: Bool
     @State private var matchCountText = ""
     @State private var countTask: Task<Void, Never>?
@@ -1321,12 +1374,18 @@ struct FolderFilterRow: View {
         guard let idx = folderFilters.firstIndex(where: { $0.uuid == filter.uuid }) else { return }
         let updated = FolderFilter(
             id: name, folders: folders, key: hotkey == .escape ? nil : hotkey.lowercasedChar.first,
-            maxDepth: maxDepth < 0 ? nil : maxDepth, icon: icon, color: color, uuid: filter.uuid
+            maxDepth: maxDepth < 0 ? nil : maxDepth, icon: icon, color: color, autoOff: autoOff, uuid: filter.uuid
         )
         folderFilters[idx] = updated
         if FUZZY.folderFilter?.uuid == filter.uuid {
             FUZZY.folderFilter = updated
         }
+    }
+
+    /// Only the saved filter, as for quick filters.
+    private func saveAutoOff() {
+        guard let idx = folderFilters.firstIndex(where: { $0.uuid == filter.uuid }) else { return }
+        folderFilters[idx] = folderFilters[idx].withAutoOff(autoOff)
     }
 
     private func delete() {
@@ -1351,6 +1410,135 @@ struct FolderFilterRow: View {
                 save()
             }
         }
+    }
+}
+
+// MARK: - AutoOffRow
+
+/// A checkbox that turns auto-off off without losing the time, a slider for quick changes and a field for an exact
+/// time in any unit.
+struct AutoOffRow: View {
+    let title: String
+    @Binding var autoOff: FilterAutoOff
+
+    /// nil fills the row. A bar caps it so the slider doesn't stretch across the window.
+    var sliderWidth: CGFloat?
+    var fieldWidth: CGFloat = 140
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Toggle(title, isOn: $autoOff.enabled)
+                .toggleStyle(.checkbox)
+                .fixedSize()
+            Group {
+                Slider(value: position, in: 0 ... Double(AutoOffDuration.anchors.count - 1))
+                    .accessibilityLabel(title)
+                    .accessibilityValue(AutoOffDuration.text(autoOff.after))
+                    .frame(maxWidth: sliderWidth ?? .infinity)
+                AutoOffField(title: title, seconds: $autoOff.after)
+                    .frame(width: fieldWidth)
+                // Text ignores `.disabled`, so it dims with the controls by hand.
+                Text("after search")
+                    .foregroundStyle(isEnabled && autoOff.enabled ? .primary : .tertiary)
+                    .fixedSize()
+            }
+            .disabled(!autoOff.enabled)
+        }
+    }
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    private var position: Binding<Double> {
+        Binding(
+            get: { AutoOffDuration.position(for: autoOff.after) },
+            set: { new in
+                let seconds = AutoOffDuration.seconds(at: new)
+                if seconds != autoOff.after {
+                    autoOff.after = seconds
+                }
+            }
+        )
+    }
+}
+
+// MARK: - AutoOffField
+
+/// The time in the unit that reads best. A new time in any unit applies on Return or when the field loses focus.
+struct AutoOffField: View {
+    let title: String
+
+    @Binding var seconds: TimeInterval
+
+    var body: some View {
+        TextField(title, text: $text)
+            .labelsHidden()
+            .accessibilityLabel(title)
+            .textFieldStyle(.roundedBorder)
+            .multilineTextAlignment(.trailing)
+            .monospacedDigit()
+            .focused($focused)
+            .help("Time in the background before a filter turns off")
+            .onSubmit(commit)
+            .onChange(of: focused) { _, focused in
+                if !focused {
+                    commit()
+                }
+            }
+            .onChange(of: seconds) {
+                if !focused {
+                    text = AutoOffDuration.text(seconds)
+                }
+            }
+            .onAppear { text = AutoOffDuration.text(seconds) }
+    }
+
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private func commit() {
+        if let value = AutoOffDuration.parse(text, current: seconds).map(AutoOffDuration.clamped), value != seconds {
+            seconds = value
+        }
+        text = AutoOffDuration.text(seconds)
+    }
+}
+
+// MARK: - FilterAutoOffOverride
+
+/// A filter's own auto-off. While the filter follows the default, the row shows the default, dimmed.
+struct FilterAutoOffOverride: View {
+    @Binding var autoOff: FilterAutoOff?
+
+    var body: some View {
+        Toggle("Override auto-disable", isOn: overriding)
+        AutoOffRow(title: "Auto-disable", autoOff: value)
+            .disabled(autoOff == nil)
+    }
+
+    @Default(.filterAutoOff) private var defaultEnabled
+    @Default(.filterAutoOffAfter) private var defaultAfter
+
+    private var defaultAutoOff: FilterAutoOff {
+        FilterAutoOff(enabled: defaultEnabled, after: defaultAfter)
+    }
+
+    /// Turning it on starts from the default, so nothing changes until the row does.
+    private var overriding: Binding<Bool> {
+        Binding(
+            get: { autoOff != nil },
+            set: { autoOff = $0 ? defaultAutoOff : nil }
+        )
+    }
+
+    private var value: Binding<FilterAutoOff> {
+        Binding(
+            get: { autoOff ?? defaultAutoOff },
+            set: { new in
+                if autoOff != nil {
+                    autoOff = new
+                }
+            }
+        )
     }
 }
 

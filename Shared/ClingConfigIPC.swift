@@ -39,6 +39,9 @@ public struct ClingFilterSpec: Codable {
     public var icon: String?
     /// 0 to 1 around the colour wheel.
     public var hue: Double?
+    /// How long Cling stays in the background before the filter turns off: a duration like `90s`, `10m` or `2h`,
+    /// `off` to keep it on, or `default` to follow the setting.
+    public var autoOff: String?
 }
 
 // MARK: - ClingScriptSpec
