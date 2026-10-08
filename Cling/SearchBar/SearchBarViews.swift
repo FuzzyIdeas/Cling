@@ -87,11 +87,25 @@ final class SearchBarIconButton: NSButton {
         }
         let textSize = content.text.size()
         let glyphSize = content.glyph.size
-        var x = ((bounds.width - glyphSize.width - Self.labelGap - textSize.width) / 2).rounded()
+        // Centred when it fits. Otherwise the symbol keeps its place at the padding and the text ends in an ellipsis,
+        // instead of both overflowing the pill's ends.
+        let room = bounds.width - 2 * Self.labelPadding - glyphSize.width - Self.labelGap
+        var x = textSize.width <= room
+            ? ((bounds.width - glyphSize.width - Self.labelGap - textSize.width) / 2).rounded()
+            : Self.labelPadding
         // Both centred on the same midline; for the system font the capitals' centre is the line box's centre.
         content.glyph.draw(in: NSRect(x: x, y: ((bounds.height - glyphSize.height) / 2).rounded(), width: glyphSize.width, height: glyphSize.height))
         x += glyphSize.width + Self.labelGap
-        content.text.draw(at: NSPoint(x: x, y: ((bounds.height - textSize.height) / 2).rounded()))
+        let textY = ((bounds.height - textSize.height) / 2).rounded()
+        if textSize.width <= room {
+            content.text.draw(at: NSPoint(x: x, y: textY))
+        } else {
+            let truncated = NSMutableAttributedString(attributedString: content.text)
+            let style = NSMutableParagraphStyle()
+            style.lineBreakMode = .byTruncatingTail
+            truncated.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: truncated.length))
+            truncated.draw(in: NSRect(x: x, y: textY, width: max(room, 0), height: textSize.height))
+        }
     }
 
     override func acceptsFirstMouse(for _: NSEvent?) -> Bool {
@@ -745,6 +759,7 @@ final class SearchBarRootView: NSView {
 
         // Search row, laid out from both ends towards the field. Everything is centred on the row's midline.
         let mid = rowHeight / 2
+        let font = field.font ?? .systemFont(ofSize: 20)
         let iconBox = FontScale.length(28, .control)
         // The filter button is centred over the rows' icons and the query starts where their names do.
         let rowStyle = SearchBarRowStyle.shared
@@ -754,8 +769,9 @@ final class SearchBarRootView: NSView {
             let filterX = (SearchBarRowStyle.iconX + rowStyle.iconSide / 2 - filterWidth / 2).rounded()
             filterButton.frame = NSRect(x: filterX, y: (mid - iconBox / 2).rounded(), width: filterWidth, height: iconBox)
         } else {
-            // An active filter is a pill around the filter icon, starting where the rows' highlight does.
-            let width = min(filterButton.fittingWidth, max(w * 0.4, 160))
+            // An active filter is a pill around the filter icon, starting where the rows' highlight does, on the same
+            // midline as the bare icon so the button doesn't move when a filter turns on.
+            let width = min(filterButton.fittingWidth, max(min(w * 0.3, FontScale.length(240, .control)), 140))
             filterButton.frame = NSRect(x: SearchBarMetrics.inset + 4, y: (mid - side / 2).rounded(), width: width, height: side)
         }
 
@@ -773,7 +789,6 @@ final class SearchBarRootView: NSView {
 
         // The text sits with its capitals centred on the midline, like the symbols around it. The field draws its text
         // 2 pt in from its frame, with its baseline a point short of one ascender down from the top.
-        let font = field.font ?? .systemFont(ofSize: 20)
         let fieldX = max(rowStyle.textX - 2, filterButton.frame.maxX + 10)
         let fieldHeight = ceil(font.ascender - font.descender) + 2
         let fieldY = (mid + font.capHeight / 2 - font.ascender + 1).rounded()

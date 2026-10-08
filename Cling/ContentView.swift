@@ -463,17 +463,7 @@ struct ContentView: View {
     }
 
     private var filterSubtitle: String? {
-        var parts = [String]()
-        if let q = fuzzy.quickFilter {
-            parts.append(q.id)
-        }
-        if let f = fuzzy.folderFilter {
-            parts.append("in \(f.id)")
-        }
-        if let v = fuzzy.volumeFilterName {
-            parts.append("on \(v)")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: " ")
+        fuzzy.filterLine
     }
 
     private var showingResults: Bool {

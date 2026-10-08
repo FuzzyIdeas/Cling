@@ -765,6 +765,32 @@ class FuzzyClient {
         }
     }
 
+    /// The folder filter is the one a quick filter turned on for its own folders, not one picked on its own (a saved
+    /// folder filter, or a folder from → or Finder, which a quick filter takes over as its folders).
+    var folderFilterIsQuickFilters: Bool {
+        guard let folder = folderFilter, let quick = quickFilter,
+              !Defaults[.folderFilters].contains(where: { $0.uuid == folder.uuid })
+        else { return false }
+        let saved = Defaults[.quickFilters].first { $0.uuid == quick.uuid } ?? quick
+        return saved.folders == folder.folders
+    }
+
+    /// The active filters as the window and the search bar name them: `Images in Documents on External drives`. A
+    /// quick filter's own folders go unsaid, its name covers them.
+    var filterLine: String? {
+        var parts = [String]()
+        if let quickFilter {
+            parts.append(quickFilter.id)
+        }
+        if let folderFilter, !folderFilterIsQuickFilters {
+            parts.append("in \(folderFilter.id)")
+        }
+        if let volumeFilterName {
+            parts.append("on \(volumeFilterName)")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
     var sortField: SortField = .score {
         didSet {
             guard sortField != oldValue else { return }

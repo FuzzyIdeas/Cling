@@ -97,6 +97,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
 
     /// Everything the bar shows that comes from the shared search state.
     static let everythingTip = "Everything: every file on the local disks, nothing excluded (⌘⇧E)"
+    static let filterTip = "Quick Filters: narrow down results without typing often used queries"
 
     static let shared = SearchBarController()
 
@@ -990,7 +991,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         root.field.delegate = self
         root.field.onMouseDown = { [weak self] in self?.setListFocused(false) }
         root.filterButton.configure(symbol: "line.3.horizontal.decrease.circle", accessibility: "Filters", target: self, action: #selector(showFilterMenu(_:)))
-        root.filterButton.toolTip = "Quick Filters: narrow down results without typing often used queries"
+        root.filterButton.toolTip = Self.filterTip
         root.everythingButton.configure(symbol: "asterisk", accessibility: "Everything", target: self, action: #selector(toggleEverything(_:)))
         root.everythingButton.toolTip = Self.everythingTip
         root.sortButton.configure(symbol: "arrow.up.arrow.down", accessibility: "Sort", target: self, action: #selector(showSortMenu(_:)))
@@ -1121,16 +1122,6 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             }
         }
 
-        var parts = [String]()
-        if let q = fuzzy.quickFilter {
-            parts.append(q.id)
-        }
-        if let f = fuzzy.folderFilter {
-            parts.append("in \(f.id)")
-        }
-        if let v = fuzzy.volumeFilterName {
-            parts.append("on \(v)")
-        }
         let scope = fuzzy.scopeAppearance
 
         return Inputs(
@@ -1139,7 +1130,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             searching: fuzzy.searching,
             stash: STASH.files,
             query: fuzzy.query,
-            filterText: parts.joined(separator: " "),
+            filterText: fuzzy.filterLine ?? "",
             scopeIcon: scope?.icon,
             scopeHue: scope?.color.hue,
             wash: fuzzy.scopeWash.map { SearchBarWashView.Wash(top: $0.top, bottom: $0.bottom) },
@@ -1243,6 +1234,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             || inputs.everythingBlocked != previous?.everythingBlocked || previous == nil
         {
             root.filterButton.label = inputs.filterText.isEmpty ? nil : inputs.filterText
+            // The whole line, for a pill too narrow to show it.
+            root.filterButton.toolTip = inputs.filterText.isEmpty ? Self.filterTip : inputs.filterText
             root.filterButton.tint = inputs.filterText.isEmpty ? nil : inputs.scopeHue.map { NSColor.searchBarFilter(hue: $0) }
             root.everythingButton.tint = inputs.everything ? .searchBarOrange : nil
             root.everythingButton.label = inputs.everything ? "Everything" : nil
