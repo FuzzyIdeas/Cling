@@ -609,8 +609,17 @@ struct PDFKitPreview: NSViewRepresentable {
     /// otherwise wipe a one-time inset. The equality guard keeps this from
     /// looping (a no-op layout pass doesn't reassign the insets).
     final class InsetPDFView: PDFView {
+        override var document: PDFDocument? {
+            didSet { leaveFocusAlone() }
+        }
+
         var contentInsetsOverride = NSEdgeInsetsZero {
             didSet { needsLayout = true }
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            leaveFocusAlone()
         }
 
         override func layout() {
@@ -622,6 +631,23 @@ struct PDFKitPreview: NSViewRepresentable {
                 || have.left != want.left || have.right != want.right
             {
                 scroll.contentInsets = want
+            }
+        }
+
+        /// A locked PDF shows PDFKit's password form, whose view controller moves keyboard focus into it a moment
+        /// later through a delayed perform, so every key typed after landing on the file goes to the form. Dropping
+        /// that pending call keeps focus where it was, and a click still puts it in the field.
+        private func leaveFocusAlone() {
+            guard document?.isLocked == true else { return }
+            for field in findViews(ofType: NSSecureTextField.self) {
+                var view: NSView? = field
+                while let current = view, current !== self {
+                    if let controller = current.nextResponder as? NSViewController {
+                        NSObject.cancelPreviousPerformRequests(withTarget: controller)
+                        break
+                    }
+                    view = current.superview
+                }
             }
         }
     }
