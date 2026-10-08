@@ -1670,6 +1670,34 @@ final class SearchEngine: @unchecked Sendable {
         return n
     }
 
+    /// The entries at or below each of `dirs`, the folder's own one included, in a single pass however many there are.
+    /// A folder inside another of the list is counted as part of the outer one only.
+    func countsBelow(_ dirs: [String]) -> [Int] {
+        let own = dirs.map(Self.lowercasedDirPrefix)
+        let prefixes = Set(own).sorted { $0.lexicographicallyPrecedes($1) }
+            .reduce(into: [[UInt8]]()) { kept, p in
+                if let last = kept.last, p.starts(with: last) {
+                    return
+                }
+                kept.append(p)
+            }
+        guard !prefixes.isEmpty else { return own.map { _ in 0 } }
+
+        var counts = [Int](repeating: 0, count: prefixes.count)
+        lock.lock()
+        allBytes.withUnsafeBufferPointer { buf in
+            guard let base = buf.baseAddress else { return }
+            for i in 0 ..< entries.count where byteLengths[i] > 0 {
+                if let p = Self.prefixIndex(base + byteOffsets[i], byteLengths[i], prefixes) {
+                    counts[p] &+= 1
+                }
+            }
+        }
+        lock.unlock()
+        let byPrefix = Dictionary(zip(prefixes, counts), uniquingKeysWith: { a, _ in a })
+        return own.map { byPrefix[$0] ?? 0 }
+    }
+
     /// Remove `dir` and everything below it, returning how many entries went.
     @discardableResult
     func removeSubtree(_ dir: String) -> Int {
@@ -2917,6 +2945,11 @@ final class SearchEngine: @unchecked Sendable {
     /// Whether the path bytes name one of the `dir/` prefixes' dirs or something below one. Compares the path
     /// with a slash appended, so the dir itself lands exactly on its prefix.
     private static func isInside(_ path: UnsafePointer<UInt8>, _ len: Int, _ prefixes: [[UInt8]]) -> Bool {
+        prefixIndex(path, len, prefixes) != nil
+    }
+
+    /// Which of the sorted, prefix-free `dir/` prefixes names the path's dir or one holding it.
+    private static func prefixIndex(_ path: UnsafePointer<UInt8>, _ len: Int, _ prefixes: [[UInt8]]) -> Int? {
         // Index of the first prefix that sorts after the slashed path.
         var lo = 0, hi = prefixes.count
         while lo < hi {
@@ -2927,12 +2960,13 @@ final class SearchEngine: @unchecked Sendable {
                 hi = mid
             }
         }
-        guard lo > 0 else { return false }
+        guard lo > 0 else { return nil }
         let prefix = prefixes[lo - 1]
-        guard len + 1 >= prefix.count else { return false }
-        return prefix.withUnsafeBufferPointer { p in
+        guard len + 1 >= prefix.count else { return nil }
+        let inside = prefix.withUnsafeBufferPointer { p in
             memcmp(path, p.baseAddress!, min(len, prefix.count)) == 0
         }
+        return inside ? lo - 1 : nil
     }
 
     /// Orders `prefix` against the path bytes followed by `/`: negative, zero or positive like memcmp.

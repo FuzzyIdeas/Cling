@@ -199,12 +199,33 @@ final class EverythingIndex {
         updater?.syncCloud(listed: root)
     }
 
-    /// FSEvents dropped events or lost its history, so the loaded engine may have missed changes.
+    /// FSEvents dropped events or lost its history, so the loaded engine may have missed changes. The updater walks
+    /// the folders that changed around a drop again; this walks everything, for what a drop missed elsewhere. A walk
+    /// is a minute or more of a core on a big disk, and a busy disk drops events every few minutes, so it runs at most
+    /// once an hour: a loss inside the hour waits for the hour to be up.
     func historyLost(in engine: SearchEngine) {
         guard self.engine === engine, !walking else { return }
+        if let last = lastLossWalk, Date().timeIntervalSince(last) < Self.lossWalkInterval {
+            guard lossWalkTask == nil else { return }
+            let wait = Self.lossWalkInterval - Date().timeIntervalSince(last)
+            log.info("Everything: change history lost again, walking in \(Int(wait / 60)) min")
+            lossWalkTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(wait))
+                guard let self, !Task.isCancelled else { return }
+                lossWalkTask = nil
+                guard self.engine != nil, !walking else { return }
+                lastLossWalk = Date()
+                log.info("Everything: walking again for change history lost within the hour")
+                walk(priority: .utility)
+            }
+            return
+        }
+        lastLossWalk = Date()
         log.info("Everything: change history lost, walking again")
         walk(priority: .utility)
     }
+
+    private static let lossWalkInterval: TimeInterval = 60 * 60
 
     @ObservationIgnored private var unloadTask: Task<Void, Never>?
     @ObservationIgnored private var updater: EverythingUpdater?
@@ -218,6 +239,9 @@ final class EverythingIndex {
     @ObservationIgnored private var snapshot: EverythingSnapshot?
     @ObservationIgnored private var lastEventID: UInt64 = 0
     @ObservationIgnored private var unsavedChanges = 0
+    /// When a lost history last walked everything, and the walk waiting for the hour to be up.
+    @ObservationIgnored private var lastLossWalk: Date?
+    @ObservationIgnored private var lossWalkTask: Task<Void, Never>?
 
     // MARK: Walking
 
@@ -422,6 +446,9 @@ final class EverythingIndex {
         guard !walking else { return }
         walking = true
         walked = 0
+        // This walk picks up whatever a drop before it missed.
+        lossWalkTask?.cancel()
+        lossWalkTask = nil
         // Changes made from here on are replayed on top of this walk once it is watched.
         let start = EverythingSnapshot.current
         let fresh = SearchEngine()
@@ -489,7 +516,7 @@ final class EverythingIndex {
         let updater = EverythingUpdater(engine: engine, volumes: volumes, cloud: cloud)
         self.updater = updater
         // Changes arrive a few seconds late, in fewer and larger batches.
-        stream = FSChangeStream(paths: ["/"], since: since, latency: 3, queue: streamQueue) { events in
+        stream = FSChangeStream(paths: ["/"], since: since, latency: EverythingUpdater.latency, queue: streamQueue) { events in
             updater.enqueue(events)
         }
         if stream == nil {
@@ -543,6 +570,9 @@ final class EverythingUpdater: @unchecked Sendable {
         self.cloud = Set(cloud.on)
         cloudOff = cloud.all.filter { !cloud.on.contains($0) }
     }
+
+    /// Changes arrive a few seconds late, in fewer and larger batches.
+    static let latency: CFTimeInterval = 3
 
     /// Takes a delivery from the stream; changes are applied half a second after the first of a batch arrives.
     func enqueue(_ events: [FSChange]) {
@@ -630,19 +660,155 @@ final class EverythingUpdater: @unchecked Sendable {
         }
     }
 
+    /// How long before and after a drop the folders that changed are walked again: two of the stream's deliveries.
+    private static let lossRescanWindow = 2 * latency
+    /// How long the changes must stay quiet before the collected folders are walked, longer than a delivery takes.
+    private static let lossRescanQuiet = latency + 1
+    /// The longest the walk waits for quiet, through changes that keep coming.
+    private static let lossRescanLongest: CFAbsoluteTime = 30
+    /// The most entries a folder can hold and still be walked again whole after a drop. A file written in the home
+    /// folder during a burst makes it one of the folders that changed, and walking it whole is most of the disk.
+    private static let lossRescanWholeMax = 100_000
+
     private let engine: SearchEngine
     private let queue = DispatchQueue(label: "com.lowtechguys.Cling.everything", qos: .utility)
     private var pending: [FSChange] = []
     private var flushScheduled = false
+    /// Changes were dropped since this updater started. Only touched on `queue`, like everything below.
+    private var lost = false
+    /// The folders each recent batch changed, kept for `lossRescanWindow`.
+    private var recentBusyFolders: [(at: CFAbsoluteTime, dirs: Set<String>)] = []
+    /// Until when the folders each batch changes are collected, after a drop.
+    private var rescanBusyFoldersUntil: CFAbsoluteTime = 0
+    /// Folders collected around drops, waiting for the changes to go quiet.
+    private var lossRescanDirs = Set<String>()
+    private var lossRescanSince: CFAbsoluteTime?
+    private var lastLossActivity: CFAbsoluteTime = 0
+    private var lossRescanScheduled = false
     /// The internal volumes under /Volumes being followed; events from anything else mounted there are ignored.
     private var volumes: Set<String>
     /// The cloud folders that are on, and the ones that are off, whose events are ignored.
     private var cloud: Set<String>
     private var cloudOff: [String]
 
+    /// The folders these changes landed in: a folder's own path, a file's parent. The top of the disk is left out, as
+    /// walking it again is the walk of everything a drop asks for already.
+    private static func busyFolders(_ flagsByPath: [String: EonilFSEventsEventFlags]) -> Set<String> {
+        var dirs = Set<String>()
+        // A folder flagged for rescanning is walked for that already, which includes the walks asked for below.
+        for (path, flags) in flagsByPath where !flags.contains(.mustScanSubDirs) {
+            for dir in FSEventsHistory.changedFolders(path, flags: flags) where dir != "/" {
+                dirs.insert(dir)
+            }
+        }
+        return dirs
+    }
+
     private func notify(eventID: UInt64, changes: Int) {
         let engine = engine
         Task { @MainActor in EVERYTHING.applied(to: engine, eventID: eventID, changes: changes) }
+    }
+
+    /// Asks for a walk of everything once, and keeps applying what comes after: stopping at the drop left the rest of
+    /// the batch out of the engine until that walk was done.
+    private func reportLoss() {
+        guard !lost else { return }
+        lost = true
+        let engine = engine
+        Task { @MainActor in EVERYTHING.historyLost(in: engine) }
+    }
+
+    /// A drop names no folder, only `/`, but what it dropped happened among the changes delivered around it: a burst
+    /// too fast for FSEvents, like a big folder written or deleted at once, drops a third of its changes or more. The
+    /// folders those changes landed in, just before the drop and for a few seconds after, are walked again once the
+    /// changes go quiet, instead of the files waiting up to an hour for the next walk of everything.
+    private func collectAroundLoss(_ flagsByPath: [String: EonilFSEventsEventFlags], sawLoss: Bool) {
+        let now = CFAbsoluteTimeGetCurrent()
+        let busy = Self.busyFolders(flagsByPath)
+        recentBusyFolders.removeAll { now - $0.at > Self.lossRescanWindow }
+        var dirs = Set<String>()
+        if sawLoss {
+            rescanBusyFoldersUntil = now + Self.lossRescanWindow
+            for recent in recentBusyFolders {
+                dirs.formUnion(recent.dirs)
+            }
+        }
+        if now < rescanBusyFoldersUntil {
+            dirs.formUnion(busy)
+        }
+        if !busy.isEmpty {
+            recentBusyFolders.append((now, busy))
+        }
+        guard !dirs.isEmpty || sawLoss else { return }
+        lossRescanDirs.formUnion(dirs)
+        lossRescanSince = lossRescanSince ?? now
+        lastLossActivity = now
+        scheduleLossRescan()
+    }
+
+    /// Walks the folders collected around drops once nothing has changed for `lossRescanQuiet`, or after
+    /// `lossRescanLongest` of changes that never stop.
+    private func scheduleLossRescan() {
+        guard !lossRescanScheduled else { return }
+        lossRescanScheduled = true
+        queue.asyncAfter(deadline: .now() + Self.lossRescanQuiet) { [self] in
+            lossRescanScheduled = false
+            let now = CFAbsoluteTimeGetCurrent()
+            let settled = now - lastLossActivity >= Self.lossRescanQuiet && now >= rescanBusyFoldersUntil
+            guard settled || now - (lossRescanSince ?? now) >= Self.lossRescanLongest else {
+                scheduleLossRescan()
+                return
+            }
+            let dirs = Array(lossRescanDirs)
+            lossRescanDirs.removeAll()
+            lossRescanSince = nil
+            rescanAroundLoss(dirs)
+        }
+    }
+
+    /// Walks these folders again whole, like a folder flagged for rescanning. One holding more than
+    /// `lossRescanWholeMax` entries only has what sits directly in it brought up to date, and the folders inside it
+    /// that changed are walked in its place.
+    private func rescanAroundLoss(_ dirs: [String]) {
+        var left = dirs
+        var whole: [String] = []
+        var large: [String] = []
+        while !left.isEmpty {
+            let outer = FSEventsHistory.outermost(left)
+            var big: [String] = []
+            for (dir, count) in zip(outer, engine.countsBelow(outer)) {
+                if count > Self.lossRescanWholeMax {
+                    big.append(dir)
+                } else {
+                    whole.append(dir)
+                }
+            }
+            large += big
+            let prefixes = big.map { $0 + "/" }
+            left = left.filter { dir in prefixes.contains { dir.hasPrefix($0) } }
+        }
+        guard !whole.isEmpty || !large.isEmpty else { return }
+        log.info("Everything: walking \(whole.count) folders that changed around dropped events, and the top of \(large.count) large ones")
+        apply(whole.map { FSChange(path: $0, flags: [.itemIsDir, .mustScanSubDirs], id: 0) } + large.flatMap(childChanges))
+    }
+
+    /// What sits directly in `dir` that the engine has wrong: entries gone from the disk, and ones it never got, which
+    /// are walked if they are folders. Flagged for rescanning, so they don't count as folders that changed.
+    private func childChanges(of dir: String) -> [FSChange] {
+        var st = stat()
+        guard lstat(dir, &st) == 0 else {
+            return FSEventsHistory.isGone(errno) ? [FSChange(path: dir, flags: [.itemRemoved, .mustScanSubDirs], id: 0)] : []
+        }
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return [] }
+        let onDisk = names.map { dir + "/" + $0 }
+        let indexed = engine.childCounts(of: dir).map(\.path)
+        let onDiskKeys = Set(onDisk.map { $0.lowercased() })
+        let indexedKeys = Set(indexed.map { $0.lowercased() })
+        let gone = indexed.filter { !onDiskKeys.contains($0.lowercased()) }
+            .map { FSChange(path: $0, flags: [.itemRemoved, .mustScanSubDirs], id: 0) }
+        let new = onDisk.filter { !indexedKeys.contains($0.lowercased()) }
+            .map { FSChange(path: $0, flags: [.itemCreated, .mustScanSubDirs], id: 0) }
+        return gone + new
     }
 
     /// One pass over the engine per batch whatever its size: every path that went away or came back is removed
@@ -651,17 +817,19 @@ final class EverythingUpdater: @unchecked Sendable {
         let t0 = CFAbsoluteTimeGetCurrent()
         var flagsByPath: [String: EonilFSEventsEventFlags] = [:]
         var maxEventID: UInt64 = 0
+        var sawLoss = false
         for event in events {
             maxEventID = max(maxEventID, event.id)
             let flags = event.flags
             if FSEventsHistory.lost(flags, path: event.path) {
-                let engine = engine
-                Task { @MainActor in EVERYTHING.historyLost(in: engine) }
-                return
+                reportLoss()
+                sawLoss = true
+                continue
             }
             guard let path = normalized(event.path) else { continue }
             flagsByPath[path, default: []].formUnion(flags)
         }
+        collectAroundLoss(flagsByPath, sawLoss: sawLoss)
         guard !flagsByPath.isEmpty else {
             notify(eventID: maxEventID, changes: 0)
             return
