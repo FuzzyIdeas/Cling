@@ -87,6 +87,29 @@ struct IndexStats {
         items.reduce(0) { $0 + (value($1) ?? 0) }
     }
 
+    /// Always a decimal point, whatever the region uses, and numeric at zero ("0 KB", not "Zero kB"), which an index
+    /// that only reads its file often is.
+    static func size(_ bytes: Int, base: Double) -> String {
+        let units = ["KB", "MB", "GB", "TB"]
+        var value = Double(bytes) / base
+        var unit = 0
+        while value >= 1000, unit < units.count - 1 {
+            value /= base
+            unit += 1
+        }
+        let decimals = [0, 1, 2, 2][unit]
+        return String(format: "%.\(decimals)f %@", value, units[unit])
+    }
+
+    /// A size on disk, the way the index browser and Settings show it.
+    static func diskSize(_ bytes: Int) -> String {
+        size(bytes, base: 1000)
+    }
+
+    static func memorySize(_ bytes: Int) -> String {
+        size(bytes, base: 1024)
+    }
+
     /// Takes the engines on the main actor and measures them off it: checking their pages holds each engine's lock
     /// for a system call per column.
     @MainActor static func gather() async -> IndexStats {
@@ -110,10 +133,10 @@ struct IndexStats {
 
         return await Task.detached(priority: .utility) {
             let walks = IndexWalks.read()
+            let sizes = IndexSizes.measure()
             func item(_ source: Source) -> Item {
-                let size = (try? FileManager.default.attributesOfItem(atPath: source.file.string))?[.size] as? Int ?? 0
-                return Item(
-                    id: source.id, name: source.name, files: source.engine?.count, diskBytes: size,
+                Item(
+                    id: source.id, name: source.name, files: source.engine?.count, diskBytes: sizes[source.file.string] ?? 0,
                     memoryBytes: source.engine?.footprintBytes, walk: walks[source.key]
                 )
             }
@@ -251,26 +274,133 @@ struct IndexStatsView: View {
         }
     }
 
-    /// Always a decimal point, whatever the region uses, and numeric at zero ("0 KB", not "Zero kB"), which an index
-    /// that only reads its file often is.
-    private static func size(_ bytes: Int, base: Double) -> String {
-        let units = ["KB", "MB", "GB", "TB"]
-        var value = Double(bytes) / base
-        var unit = 0
-        while value >= 1000, unit < units.count - 1 {
-            value /= base
-            unit += 1
-        }
-        let decimals = [0, 1, 2, 2][unit]
-        return String(format: "%.\(decimals)f %@", value, units[unit])
-    }
-
     private func disk(_ bytes: Int) -> String {
-        Self.size(bytes, base: 1000)
+        IndexStats.diskSize(bytes)
     }
 
     private func memory(_ bytes: Int) -> String {
-        Self.size(bytes, base: 1024)
+        IndexStats.memorySize(bytes)
     }
 
+}
+
+// MARK: - IndexSizes
+
+/// What each saved index takes on disk, for the rows in Settings and the CLI's lists. Measured off the main thread, at
+/// first use and again whenever a file in the index folder is written or removed: every save renames its finished file
+/// into place, which the folder reports. Everything's own folder isn't watched, so it asks for a measure after it
+/// saves or deletes.
+@MainActor @Observable
+final class IndexSizes {
+    private init() {
+        refresh()
+    }
+
+    static let shared = IndexSizes()
+
+    /// Bytes by index file path, for the files that exist.
+    private(set) var bytes: [String: Int] = [:]
+
+    var everything: Int? {
+        saved(EverythingIndex.indexFile)
+    }
+
+    /// Every `.idx` file in the index folder and in Everything's, by path. Reads the disk: never on the main thread.
+    nonisolated static func measure() -> [String: Int] {
+        var sizes: [String: Int] = [:]
+        for folder in [indexFolder, EverythingIndex.indexFile.removingLastComponent()] {
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.string)) ?? [] where name.hasSuffix(".idx") {
+                let file = folder / name
+                if let size = (try? FileManager.default.attributesOfItem(atPath: file.string))?[.size] as? Int {
+                    sizes[file.string] = size
+                }
+            }
+        }
+        return sizes
+    }
+
+    func scope(_ scope: SearchScope) -> Int? {
+        saved(scopeIndexFile(scope))
+    }
+
+    func volume(_ volume: FilePath) -> Int? {
+        saved(volumeIndexFile(volume))
+    }
+
+    /// Measures again soon, once for a burst of asks: a save writes and renames, a walk of several scopes saves each.
+    func refresh() {
+        guard !measuring else {
+            measureAgain = true
+            return
+        }
+        measuring = true
+        let watching = watcher != nil
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(for: .milliseconds(300))
+            let source = watching ? nil : Self.watchIndexFolder()
+            let measured = Self.measure()
+            await MainActor.run {
+                if let source {
+                    self.watcher = source
+                }
+                self.update(measured)
+                self.measuring = false
+                if self.measureAgain {
+                    self.measureAgain = false
+                    self.refresh()
+                }
+            }
+        }
+    }
+
+    /// Takes sizes measured elsewhere off the main thread, as the CLI does before it answers.
+    func update(_ measured: [String: Int]) {
+        if measured != bytes {
+            bytes = measured
+        }
+    }
+
+    /// Takes a deleted index out at once, before the folder reports it.
+    func forget(_ file: FilePath) {
+        bytes[file.string] = nil
+    }
+
+    @ObservationIgnored private var watcher: DispatchSourceFileSystemObject?
+    @ObservationIgnored private var measuring = false
+    @ObservationIgnored private var measureAgain = false
+
+    /// nil while the index folder doesn't exist yet; the next measure tries again.
+    private nonisolated static func watchIndexFolder() -> DispatchSourceFileSystemObject? {
+        let fd = open(indexFolder.string, O_EVTONLY)
+        guard fd >= 0 else { return nil }
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write], queue: .global(qos: .utility))
+        source.setEventHandler {
+            Task { @MainActor in INDEX_SIZES.refresh() }
+        }
+        source.setCancelHandler { close(fd) }
+        source.resume()
+        return source
+    }
+
+    /// No size for an index with no file, or an empty one.
+    private func saved(_ file: FilePath) -> Int? {
+        bytes[file.string].flatMap { $0 > 0 ? $0 : nil }
+    }
+}
+
+@MainActor let INDEX_SIZES = IndexSizes.shared
+
+// MARK: - IndexSizeText
+
+/// An index's size on disk, as a value at the end of its row. Nothing while it has no saved file.
+struct IndexSizeText: View {
+    let bytes: Int?
+
+    var body: some View {
+        if let bytes {
+            Text(IndexStats.diskSize(bytes))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+    }
 }

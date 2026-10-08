@@ -21,7 +21,7 @@ struct EverythingSettingsSection: View {
                     }
                 }
             ))
-            .onAppear { everything.refreshSavedBytes() }
+            .onAppear { INDEX_SIZES.refresh() }
             .alert("Delete the Everything index?", isPresented: $confirmingDelete) {
                 Button("Delete", role: .destructive) { everything.deleteIndex() }
                 Button("Cancel", role: .cancel) {}
@@ -39,9 +39,7 @@ struct EverythingSettingsSection: View {
             if everything.savedBytes > 0 {
                 LabeledContent("Saved index") {
                     HStack(spacing: 8) {
-                        Text(size)
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
+                        IndexSizeText(bytes: everything.savedBytes)
                         Button("Delete…") { confirmingDelete = true }
                             .controlSize(.small)
                     }
@@ -57,7 +55,7 @@ struct EverythingSettingsSection: View {
     @Default(.everythingEnabled) private var everythingEnabled
 
     private var size: String {
-        EverythingIndex.sizeText(everything.savedBytes)
+        IndexStats.diskSize(everything.savedBytes)
     }
 
     /// Applied right away rather than when the setting's publisher gets to it, so the window and the bar follow at once.

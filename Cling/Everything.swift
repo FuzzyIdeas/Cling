@@ -54,7 +54,6 @@ struct EverythingSnapshot: Codable {
 @MainActor @Observable
 final class EverythingIndex {
     private init() {
-        savedBytes = Self.diskBytes()
         settingObserver = Defaults.publisher(.everythingEnabled, options: []).sink { [weak self] _ in
             Task { @MainActor in self?.applySetting() }
         }
@@ -81,8 +80,6 @@ final class EverythingIndex {
     /// The `everythingEnabled` setting as last applied. Off, nothing loads, walks or follows the index, and its
     /// toggle and shortcut are gone from the window, the search bar and the file server.
     private(set) var available = Defaults[.everythingEnabled]
-    /// What the saved index takes on disk.
-    private(set) var savedBytes = 0
     /// Searches go to this index instead of the normal one.
     private(set) var enabled = false
     private(set) var loading = false
@@ -119,6 +116,11 @@ final class EverythingIndex {
         !available ? "off" : loading ? "loading" : walking ? "indexing" : engine != nil ? "ready" : "unloaded"
     }
 
+    /// What the saved index takes on disk, as last measured off the main thread.
+    var savedBytes: Int {
+        INDEX_SIZES.everything ?? 0
+    }
+
     /// Volumes on the internal disk other than the startup one (a second partition, say), walked as their own roots,
     /// unless turned off in Settings > Drives. Drives plugged in over USB, Thunderbolt or a card slot stay out, and
     /// so does a Time Machine disk, which holds copies of what is already indexed, millions of files deep. Telling
@@ -143,19 +145,6 @@ final class EverythingIndex {
         let all = CloudStorage.locations().map(\.root.string)
         let off = Set(Defaults[.disabledCloudLocations].map(\.string))
         return (all.filter { !off.contains($0) }, all)
-    }
-
-    /// The files in the index's folder, added up.
-    nonisolated static func diskBytes() -> Int {
-        let folder = everythingFolder.string
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []
-        return names.reduce(0) { total, name in
-            total + ((try? FileManager.default.attributesOfItem(atPath: folder + "/" + name))?[.size] as? Int ?? 0)
-        }
-    }
-
-    nonisolated static func sizeText(_ bytes: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 
     func toggle() {
@@ -220,21 +209,17 @@ final class EverythingIndex {
     /// freed. Whether Everything is on stays as it was: on, its next search walks the local disks again.
     @discardableResult
     func deleteIndex() -> Int {
-        let freed = Self.diskBytes()
+        let freed = savedBytes
         shutDown(saving: false)
         Self.deletions.withLock { $0 += 1 }
         Self.diskQueue.async {
             try? FileManager.default.removeItem(at: everythingFolder.url)
-            Task { @MainActor in EVERYTHING.refreshSavedBytes() }
+            Task { @MainActor in INDEX_SIZES.refresh() }
         }
-        savedBytes = 0
+        INDEX_SIZES.forget(everythingIndexFile)
         log.info("Everything index deleted, \(freed) bytes")
         FUZZY.logActivity("Everything index deleted")
         return freed
-    }
-
-    func refreshSavedBytes() {
-        savedBytes = Self.diskBytes()
     }
 
     /// Called after a batch of file changes lands, and on walk progress.
@@ -488,7 +473,7 @@ final class EverythingIndex {
                 engine.saveBinaryIndex(to: url)
                 saved.write()
             }
-            await MainActor.run { EVERYTHING.refreshSavedBytes() }
+            await MainActor.run { INDEX_SIZES.refresh() }
         }
     }
 
@@ -621,7 +606,7 @@ final class EverythingIndex {
             }
             let engine = finished
             await MainActor.run {
-                self.refreshSavedBytes()
+                INDEX_SIZES.refresh()
                 guard self.generation == gen else { return }
                 self.walkStop = nil
                 self.walking = false
@@ -1044,13 +1029,14 @@ extension CLIConfig {
     /// `cling everything`: status, on, off and delete. On and off change the `everythingEnabled` setting, the one
     /// Settings > Search changes. Delete works whether Everything is on or off, and without Pro, so an index built
     /// during a trial can still be removed.
+    /// The saved index's size comes from `INDEX_SIZES`, which `handle` measured off the main thread just before.
     @MainActor static func everything(_ req: ClingRequest) -> ClingResponse {
-        let size = EverythingIndex.sizeText
+        let size = IndexStats.diskSize
         var said: String?
         var freed: Int?
         switch req.action ?? "status" {
         case "status":
-            EVERYTHING.refreshSavedBytes()
+            break
         case "on":
             Defaults[.everythingEnabled] = true
             EVERYTHING.applySetting()
@@ -1058,7 +1044,6 @@ extension CLIConfig {
         case "off":
             Defaults[.everythingEnabled] = false
             EVERYTHING.applySetting()
-            EVERYTHING.refreshSavedBytes()
             let bytes = EVERYTHING.savedBytes
             said = bytes > 0
                 ? "Everything is off. Its saved index stays on disk (\(size(bytes))): cling everything delete removes it."

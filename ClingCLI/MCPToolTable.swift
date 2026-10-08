@@ -625,7 +625,8 @@ extension MCPServer {
         // --- what gets indexed
         MCPTool(
             name: "cling_scopes",
-            description: "List the search scopes, or enable or disable them. Disabling one unloads its index and "
+            description: "List the search scopes, with each one's saved index size on disk (saved, savedBytes; the cloud "
+                + "scope's is the one index of every cloud folder), or enable or disable them. Disabling one unloads its index and "
                 + "deletes the saved copy, so its files stop showing up at once; enabling one walks it again. "
                 + "system and root need Cling Pro: enabling them without it is refused, and an enabled one is not "
                 + "searched while the licence is missing. list: open; enable and disable: " + gate,

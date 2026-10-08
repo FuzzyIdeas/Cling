@@ -25,8 +25,13 @@ enum CLIConfig {
         default:
             break
         }
+        // The lists that give each index's size on disk have it read here, off the main thread.
+        let sizes = [.scopes, .volumes, .everything].contains(request.command) ? IndexSizes.measure() : nil
         let answer = waitOnMain { () -> ClingResponse in
-            switch request.command {
+            if let sizes {
+                INDEX_SIZES.update(sizes)
+            }
+            return switch request.command {
             case .settings: MCPSettingsBridge.handle(request)
             case .filters: filters(request)
             case .scripts: scripts(request)
@@ -660,6 +665,9 @@ extension CLIConfig {
     private struct VolumeInfo: Encodable {
         let name: String
         let path: String
+        /// The saved index's size on disk, absent while there is none.
+        var savedBytes: Int?
+        var saved: String?
         let mounted: Bool
         let enabled: Bool
         let indexed: Bool
@@ -765,7 +773,7 @@ extension CLIConfig {
                 health: FUZZY.followedDriveHealth(v).map(VolumeHealthInfo.init)
             )
         }
-        let list = VolumeList(pro: proactive, automaticIndexing: !Defaults[.disableAutomaticVolumeIndexing], volumes: volumes)
+        let list = VolumeList(pro: proactive, automaticIndexing: !Defaults[.disableAutomaticVolumeIndexing], volumes: volumes.map(withSavedSize))
         var lines = volumes.isEmpty
             ? ["No external volumes."]
             : volumes.map { v in
@@ -777,7 +785,19 @@ extension CLIConfig {
         if !proactive {
             lines.append("Indexing external volumes needs Cling Pro.")
         }
+        let sized = list.volumes.compactMap { v in v.saved.map { "\(v.name) \($0)" } }
+        if !sized.isEmpty {
+            lines.append("on disk: " + sized.joined(separator: ", "))
+        }
         return ClingResponse(status: lines.joined(separator: "\n"), payload: payloadJSON(list))
+    }
+
+    /// Measured by `handle` before it came to the main thread.
+    @MainActor private static func withSavedSize(_ info: VolumeInfo) -> VolumeInfo {
+        var info = info
+        info.savedBytes = INDEX_SIZES.volume(FilePath(info.path))
+        info.saved = info.savedBytes.map(IndexStats.diskSize)
+        return info
     }
 
     @MainActor private static func findVolume(_ raw: String?) -> FilePath? {
@@ -923,6 +943,9 @@ extension CLIConfig {
         let indexed: Bool
         let count: Int
         let roots: [String]
+        /// The saved index's size on disk, absent while there is none.
+        let savedBytes: Int?
+        let saved: String?
     }
 
     @MainActor private static func scopeResponse() -> ClingResponse {
@@ -937,15 +960,18 @@ extension CLIConfig {
             }
             // The cloud scope follows its folders' toggles (cling cloud), not the scope list.
             let on = s == .cloud ? !FUZZY.cloudRoots.isEmpty : enabled.contains(s)
+            let saved = INDEX_SIZES.scope(s)
             return ScopeInfo(
                 name: s.rawValue, label: s.label, enabled: on,
                 needsPro: !FuzzyClient.freeScopes.contains(s),
                 searched: on && (proactive || FuzzyClient.freeScopes.contains(s)),
-                indexed: FUZZY.scopeEngines[s] != nil, count: FUZZY.scopeEngines[s]?.count ?? 0, roots: roots
+                indexed: FUZZY.scopeEngines[s] != nil, count: FUZZY.scopeEngines[s]?.count ?? 0, roots: roots,
+                savedBytes: saved, saved: saved.map(IndexStats.diskSize)
             )
         }
         let text = scopes.map { s in
-            "\(s.name): \(s.enabled ? "enabled" : "disabled")\(s.needsPro ? " (Pro)" : "")\(s.enabled && !s.searched ? ", not searched without Pro" : ""), \(s.indexed ? "\(s.count.formatted()) entries" : "not indexed")  \(s.roots.joined(separator: ", "))"
+            let size = s.saved.map { ", \($0) on disk" } ?? ""
+            return "\(s.name): \(s.enabled ? "enabled" : "disabled")\(s.needsPro ? " (Pro)" : "")\(s.enabled && !s.searched ? ", not searched without Pro" : ""), \(s.indexed ? "\(s.count.formatted()) entries" : "not indexed")\(size)  \(s.roots.joined(separator: ", "))"
         }.joined(separator: "\n")
         return ClingResponse(status: text, payload: payloadJSON(["scopes": scopes]))
     }

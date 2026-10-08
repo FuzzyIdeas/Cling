@@ -1226,8 +1226,10 @@ private struct SearchSettingsPane: View {
             }
             .accessibilityLabel(label)
             Spacer()
+            IndexSizeText(bytes: INDEX_SIZES.scope(scope))
             reindexButton(for: scope)
         }
+        .onAppear { INDEX_SIZES.refresh() }
     }
 
     private func proScopeRow(_ scope: SearchScope, label: String, detail: LocalizedStringKey) -> some View {
@@ -1241,6 +1243,7 @@ private struct SearchSettingsPane: View {
             .accessibilityLabel(label)
             .disabled(!proactive)
             Spacer()
+            IndexSizeText(bytes: INDEX_SIZES.scope(scope))
             reindexButton(for: scope)
         }
     }
@@ -1267,7 +1270,11 @@ private struct VolumesSettingsPane: View {
                 Section {
                     CloudStorageList()
                 } header: {
-                    Text("Cloud Storage")
+                    HStack {
+                        Text("Cloud Storage")
+                        Spacer()
+                        IndexSizeText(bytes: INDEX_SIZES.scope(.cloud))
+                    }
                 }
             }
 
@@ -1945,6 +1952,7 @@ struct VolumeListView: View {
                         .monospaced()
                         .foregroundColor(.secondary)
                         .truncationMode(.middle)
+                    IndexSizeText(bytes: INDEX_SIZES.volume(volume))
                     if fuzzy.enabledVolumes.contains(volume) {
                         if fuzzy.volumesIndexing.contains(volume) {
                             Button("Cancel") {
@@ -1966,6 +1974,7 @@ struct VolumeListView: View {
             }
             ReindexTimeIntervalSlider(volume: volume, interval: Defaults[.reindexTimeIntervalPerVolume][volume] ?? DEFAULT_VOLUME_REINDEX_INTERVAL)
         }
+        .onAppear { INDEX_SIZES.refresh() }
     }
 
     @State private var fuzzy = FUZZY
@@ -1993,6 +2002,7 @@ struct VolumeListView: View {
                     .truncationMode(.middle)
             }
             Spacer()
+            IndexSizeText(bytes: INDEX_SIZES.volume(volume))
             Button("Remove") {
                 fuzzy.removeVolume(volume)
             }
