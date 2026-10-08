@@ -668,8 +668,24 @@
                 return
             }
             if CommandLine.arguments.contains("-searchBarShowcaseWindow") {
-                FUZZY.query = query
+                // `-searchBarShowcaseActivate` for clicks: the window draws and takes events once Cling is active.
+                if CommandLine.arguments.contains("-searchBarShowcaseActivate") {
+                    NSApp.activate(ignoringOtherApps: true)
+                }
                 WM.open("main")
+                if let folder = argument("-searchBarShowcaseFolder") {
+                    let path = (folder as NSString).expandingTildeInPath
+                    FUZZY.folderFilter = FolderFilter(id: (path as NSString).lastPathComponent, folders: [FilePath(path)], key: nil)
+                }
+                // Searched before the index loads, the window keeps whatever the first engines found.
+                let readyBy = Date().addingTimeInterval(120)
+                while Date() < readyBy, FUZZY.indexedCount == 0 || FUZZY.indexing {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+                await settle(1000)
+                // Searches run only for an active window, which a Mac with another app in front never makes this one.
+                WM.mainWindowActive = true
+                FUZZY.query = query
                 return
             }
             // The main window on the live index changes.
