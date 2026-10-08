@@ -772,22 +772,19 @@ extension CLIConfig {
                 liveUpdates: local == false ? nil : !FUZZY.unfollowedVolumes.contains(v),
                 health: FUZZY.followedDriveHealth(v).map(VolumeHealthInfo.init)
             )
-        }
-        let list = VolumeList(pro: proactive, automaticIndexing: !Defaults[.disableAutomaticVolumeIndexing], volumes: volumes.map(withSavedSize))
+        }.map(withSavedSize)
+        let list = VolumeList(pro: proactive, automaticIndexing: !Defaults[.disableAutomaticVolumeIndexing], volumes: volumes)
         var lines = volumes.isEmpty
             ? ["No external volumes."]
             : volumes.map { v in
                 let state = !v.enabled ? "disabled" : v.indexing ? "indexing" : v.indexed ? "\(v.count.formatted()) entries" : "not indexed"
+                let size = v.saved.map { ", \($0) on disk" } ?? ""
                 let live = v.following.map { ", \($0)" } ?? (v.enabled && v.mounted && v.liveUpdates == false ? ", live updates off" : "")
-                let line = "\(v.name) (\(v.path))\(v.mounted ? "" : " [disconnected]"): \(state)\(live), reindexed every \(v.reindexInterval)"
+                let line = "\(v.name) (\(v.path))\(v.mounted ? "" : " [disconnected]"): \(state)\(size)\(live), reindexed every \(v.reindexInterval)"
                 return v.health.map { line + "\n  " + $0.line } ?? line
             }
         if !proactive {
             lines.append("Indexing external volumes needs Cling Pro.")
-        }
-        let sized = list.volumes.compactMap { v in v.saved.map { "\(v.name) \($0)" } }
-        if !sized.isEmpty {
-            lines.append("on disk: " + sized.joined(separator: ", "))
         }
         return ClingResponse(status: lines.joined(separator: "\n"), payload: payloadJSON(list))
     }

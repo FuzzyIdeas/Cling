@@ -639,8 +639,8 @@ extension MCPServer {
         MCPTool(
             name: "cling_volumes",
             description: "External and network volumes (Cling Pro). list shows each one with whether it is mounted, "
-                + "enabled and indexed, its entry count, whether its changes are followed and how often it is "
-                + "reindexed. A mounted local drive's changes go into its index as they happen (following; catching "
+                + "enabled and indexed, its entry count, its saved index size on disk (saved, savedBytes; absent "
+                + "while there is none), whether its changes are followed and how often it is reindexed. A mounted local drive's changes go into its index as they happen (following; catching "
                 + "up while it replays what changed since its index was last saved); network volumes are not "
                 + "followed. enable and disable turn its indexing on or off, as its toggle in Settings does; enabling "
                 + "one with no index walks it. follow and unfollow turn a drive's live updates on or off; an "
