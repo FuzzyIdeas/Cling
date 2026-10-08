@@ -34,6 +34,14 @@ extension FSEventsHistory {
         return onDisk != reported && onDisk.lowercased() == reported.lowercased()
     }
 
+    /// The folders a change landed in: a file's parent, a folder itself, and for a folder created, removed or renamed
+    /// its parent too. A burst can drop every change made inside a new or deleted folder, and the folder holding it is
+    /// then the only place it can be found again.
+    static func changedFolders(_ path: String, flags: EonilFSEventsEventFlags) -> [String] {
+        guard flags.contains(.itemIsDir), !flags.contains(.itemIsSymlink) else { return [path.parentPath] }
+        return flags.isDisjoint(with: [.itemCreated, .itemRemoved, .itemRenamed]) ? [path] : [path, path.parentPath]
+    }
+
     /// Folders not inside another folder of the list.
     static func outermost(_ dirs: [String]) -> [String] {
         var result: [String] = []
@@ -476,6 +484,11 @@ final class LiveIndexUpdater: @unchecked Sendable {
     /// How long before and after a drop the folders that changed are walked again.
     private static let lossRescanWindow: CFAbsoluteTime = 3
 
+    /// How long the changes must stay quiet before the collected folders are walked.
+    private static let lossRescanQuiet: CFAbsoluteTime = 2
+    /// The longest the walk waits for quiet, through changes that keep coming.
+    private static let lossRescanLongest: CFAbsoluteTime = 30
+
     private let lock = NSLock()
     private var _routes: [LiveRoute]
 
@@ -492,8 +505,13 @@ final class LiveIndexUpdater: @unchecked Sendable {
     private var lost = false
     /// The folders each recent batch changed, kept for `lossRescanWindow`. Only touched on `queue`.
     private var recentBusyFolders: [(at: CFAbsoluteTime, dirs: Set<String>)] = []
-    /// Until when the folders each batch changes are walked again, after a drop. Only touched on `queue`.
+    /// Until when the folders each batch changes are collected, after a drop. Only touched on `queue`.
     private var rescanBusyFoldersUntil: CFAbsoluteTime = 0
+    /// Folders collected around drops, waiting for the changes to go quiet. Only touched on `queue`.
+    private var lossRescanDirs = Set<String>()
+    private var lossRescanSince: CFAbsoluteTime?
+    private var lastLossActivity: CFAbsoluteTime = 0
+    private var lossRescanScheduled = false
     private let started = CFAbsoluteTimeGetCurrent()
     private var _replayed = 0
     private var _caughtUp = false
@@ -522,21 +540,25 @@ final class LiveIndexUpdater: @unchecked Sendable {
     /// it again is the whole scope, which the walk after a loss already does.
     private static func busyFolders(_ flagsByPath: [String: EonilFSEventsEventFlags], routes: [LiveRoute]) -> Set<String> {
         var dirs = Set<String>()
-        for (path, flags) in flagsByPath {
-            let dir = flags.contains(.itemIsDir) && !flags.contains(.itemIsSymlink) ? path : path.parentPath
-            guard !dirs.contains(dir), !routes.contains(where: { $0.root == dir }), routes.contains(where: { $0.contains(dir) }) else {
-                continue
+        // A folder flagged for rescanning is walked for that already, which includes the walks asked for below.
+        for (path, flags) in flagsByPath where !flags.contains(.mustScanSubDirs) {
+            for dir in FSEventsHistory.changedFolders(path, flags: flags) {
+                guard !dirs.contains(dir), !routes.contains(where: { $0.root == dir }), routes.contains(where: { $0.contains(dir) }) else {
+                    continue
+                }
+                dirs.insert(dir)
             }
-            dirs.insert(dir)
         }
         return dirs
     }
 
     /// A drop names no folder, only `/`, but what it dropped happened among the changes delivered around it: a burst
     /// too fast for FSEvents, like a big folder written or deleted at once, drops a third of its changes or more. The
-    /// folders those changes landed in, just before the drop and for a few seconds after, are walked again, so a
-    /// deleted folder leaves the index now rather than at the walk a loss asks for, which can be an hour away.
-    private func rescanAroundLoss(_ flagsByPath: inout [String: EonilFSEventsEventFlags], sawLoss: Bool, routes: [LiveRoute]) {
+    /// folders those changes landed in, just before the drop and for a few seconds after, are walked again once the
+    /// changes go quiet, so a deleted folder leaves the index then rather than at the walk a loss asks for, which can be
+    /// an hour away. Waiting for quiet walks each folder once, where walking them with every batch would remove and walk
+    /// a whole project again twice a second through a big checkout.
+    private func collectAroundLoss(_ flagsByPath: [String: EonilFSEventsEventFlags], sawLoss: Bool, routes: [LiveRoute]) {
         let now = CFAbsoluteTimeGetCurrent()
         let busy = Self.busyFolders(flagsByPath, routes: routes)
         recentBusyFolders.removeAll { now - $0.at > Self.lossRescanWindow }
@@ -553,11 +575,32 @@ final class LiveIndexUpdater: @unchecked Sendable {
         if !busy.isEmpty {
             recentBusyFolders.append((now, busy))
         }
-        guard !dirs.isEmpty else { return }
-        let outer = FSEventsHistory.outermost(Array(dirs))
-        log.info("Live index: walking \(outer.count) folders that changed around dropped events")
-        for dir in outer {
-            flagsByPath[dir, default: []].formUnion([.itemIsDir, .mustScanSubDirs])
+        guard !dirs.isEmpty || sawLoss else { return }
+        lossRescanDirs.formUnion(dirs)
+        lossRescanSince = lossRescanSince ?? now
+        lastLossActivity = now
+        scheduleLossRescan()
+    }
+
+    /// Walks the folders collected around drops once nothing has changed for `lossRescanQuiet`, or after
+    /// `lossRescanLongest` of changes that never stop.
+    private func scheduleLossRescan() {
+        guard !lossRescanScheduled else { return }
+        lossRescanScheduled = true
+        queue.asyncAfter(deadline: .now() + Self.lossRescanQuiet) { [self] in
+            lossRescanScheduled = false
+            let now = CFAbsoluteTimeGetCurrent()
+            let settled = now - lastLossActivity >= Self.lossRescanQuiet && now >= rescanBusyFoldersUntil
+            guard settled || now - (lossRescanSince ?? now) >= Self.lossRescanLongest else {
+                scheduleLossRescan()
+                return
+            }
+            let outer = FSEventsHistory.outermost(Array(lossRescanDirs))
+            lossRescanDirs.removeAll()
+            lossRescanSince = nil
+            guard !outer.isEmpty else { return }
+            log.info("Live index: walking \(outer.count) folders that changed around dropped events")
+            rescan(outer)
         }
     }
 
@@ -608,7 +651,7 @@ final class LiveIndexUpdater: @unchecked Sendable {
 
         let routes = lock.withLock { _routes }
         if listing {
-            rescanAroundLoss(&flagsByPath, sawLoss: sawLoss, routes: routes)
+            collectAroundLoss(flagsByPath, sawLoss: sawLoss, routes: routes)
         }
         let structural: EonilFSEventsEventFlags = [.itemCreated, .itemRenamed, .itemRemoved, .mustScanSubDirs]
         // Kept apart and appended to in place: a struct of arrays copied out of a dictionary and written back
