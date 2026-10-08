@@ -633,7 +633,8 @@
             }.value
         }
 
-        /// Scrolls the tallest scroll view of the visible windows to its end.
+        /// Scrolls the pane's form to its end: the widest scroll view of the visible windows with more to show. A pane
+        /// with a list of its own (Filters, Scripts) has a sidebar that can be taller than the form.
         private static func scrollToEnd() {
             func scrollViews(in view: NSView) -> [NSScrollView] {
                 view.subviews.flatMap { sub -> [NSScrollView] in
@@ -642,9 +643,10 @@
                 }
             }
             let windows = NSApp.windows.filter { $0.isVisible && !($0 is NSPanel) }
-            let tallest = windows.compactMap(\.contentView).flatMap(scrollViews(in:))
-                .max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
-            guard let scrollView = tallest, let document = scrollView.documentView else { return }
+            let widest = windows.compactMap(\.contentView).flatMap(scrollViews(in:))
+                .filter { ($0.documentView?.frame.height ?? 0) > $0.contentView.bounds.height + 1 }
+                .max { $0.frame.width < $1.frame.width }
+            guard let scrollView = widest, let document = scrollView.documentView else { return }
             let clip = scrollView.contentView
             let y = document.isFlipped ? max(document.frame.height - clip.bounds.height, 0) : 0
             clip.scroll(to: NSPoint(x: 0, y: y))
