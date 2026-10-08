@@ -270,7 +270,7 @@ enum MCPSettingsBridge {
 
         // Search
         bool("updateWhileClosed", .updateWhileClosed, row(
-            .search, "", "Watch file events in the background",
+            .search, "", "Watch file events while the app is quit",
             note: "A launch agent gathers file changes while Cling is closed, so the indexes are nearly current when it opens.",
             keywords: ["closed", "catch up", "launch agent", "fsevents"]
         )) { _ in

@@ -121,7 +121,7 @@ The most CPU-intensive operations are:
 - **Following changes**: the indexes follow file changes as they happen, through FSEvents, instead of being re-indexed on a schedule
 - **Fuzzy search**: when you type in the search bar, Cling searches every index in parallel, across all cores
 
-When Cling launches, each index catches up by replaying the file changes made since it was saved. While Cling is closed, a small background job gathers those changes every few hours, waiting for a moment when you're not using the Mac, so the next launch has less to replay. It can be turned off with *Watch file events in the background* in Settings > Search.
+When Cling launches, each index catches up by replaying the file changes made since it was saved. While Cling is closed, a small background job gathers those changes every few hours, waiting for a moment when you're not using the Mac, so the next launch has less to replay. It can be turned off with *Watch file events while the app is quit* in Settings > Search.
 
 A scope is walked again from scratch only when there is no history to replay: after a macOS update, when its ignore rules changed while Cling was closed, or when macOS threw away its file change history. External drives are walked again once a week by default, which can be changed per drive in Settings > Drives & Volumes.
 
