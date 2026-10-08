@@ -24,7 +24,8 @@ enum HotkeyTarget: String, CaseIterable, Defaults.Serializable {
 }
 
 extension Defaults.Keys {
-    static let hotkeyTarget = Key<HotkeyTarget>("hotkeyTarget", default: .window)
+    /// The bar for new installs. Installs from before it became the default keep the window, see `Migration.migrateV4`.
+    static let hotkeyTarget = Key<HotkeyTarget>("hotkeyTarget", default: .searchBar)
     /// The bar's own default results: with `.empty` it opens as a lone field, like Spotlight.
     static let searchBarDefaultResults = Key<DefaultResultsMode>("searchBarDefaultResults", default: .empty)
     /// The compact field stays on screen while the bar is collapsed.

@@ -9,7 +9,7 @@ private let log = Logger(subsystem: clingSubsystem, category: "Migration")
 // MARK: - Migration
 
 enum Migration {
-    static let CURRENT_VERSION = 3
+    static let CURRENT_VERSION = 4
 
     static let OLD_DEFAULT_SCRIPTS = [
         "Copy to temporary folder.zsh",
@@ -20,10 +20,22 @@ enum Migration {
     static func run() {
         let version = Defaults[.migrationVersion]
         guard version < CURRENT_VERSION else { return }
+        // A fresh install runs every migration from 0 too. One that ran Cling before has a migration on record, or
+        // finished onboarding in a version from before migrations were.
+        let existingInstall = version > 0 || Defaults[.onboardingCompleted]
 
-        if version < 1 { migrateV1() }
-        if version < 2 { migrateV2() }
-        if version < 3 { migrateV3() }
+        if version < 1 {
+            migrateV1()
+        }
+        if version < 2 {
+            migrateV2()
+        }
+        if version < 3 {
+            migrateV3()
+        }
+        if version < 4 {
+            migrateV4(existingInstall: existingInstall)
+        }
 
         Defaults[.migrationVersion] = CURRENT_VERSION
     }
@@ -144,6 +156,16 @@ enum Migration {
         }
     }
 
+    /// v4: The search bar became what the hotkey brings up on a new install. One from before keeps the search window
+    /// it was getting, unless the user had already picked one.
+    private static func migrateV4(existingInstall: Bool) {
+        // The stored settings only: Defaults registers every key's default, so `object(forKey:)` is never nil.
+        let stored = Bundle.main.bundleIdentifier.flatMap { UserDefaults.standard.persistentDomain(forName: $0) }
+        guard existingInstall, stored?[Defaults.Keys.hotkeyTarget.name] == nil else { return }
+        Defaults[.hotkeyTarget] = .window
+        log.info("Migration v4: kept the search window as the hotkey target")
+    }
+
     // MARK: - Surgical helpers
 
     /// Non-comment, non-blank lines (trimmed), in order.
@@ -167,7 +189,9 @@ enum Migration {
         }
         guard !newLines.isEmpty else { return content }
         var updated = content
-        if !updated.isEmpty, !updated.hasSuffix("\n") { updated += "\n" }
+        if !updated.isEmpty, !updated.hasSuffix("\n") {
+            updated += "\n"
+        }
         updated += newLines.joined(separator: "\n")
         return updated
     }
