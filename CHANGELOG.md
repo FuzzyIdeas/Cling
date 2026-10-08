@@ -1,3 +1,13 @@
+# 3.1.1
+
+**[Download Cling 3.1.1 →](https://files.lowtechguys.com/releases/Cling-3.1.1.dmg)**
+## Fixes
+
+- Thousands of files added or deleted at once across many folders, like an unpacked archive or a big checkout, enter or leave the index within seconds, where new folders used to wait up to an hour for the next full reindex
+- Everything picks up thousands of files added or deleted at once within seconds, instead of walking the whole disk again for each of them
+- A big git checkout no longer makes Cling walk the same folders over and over
+- The search window does less work on each redraw when you have many quick and folder filters
+
 # 3.1.0
 
 **[Download Cling 3.1.0 →](https://files.lowtechguys.com/releases/Cling-3.1.0.dmg)**
