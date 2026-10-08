@@ -28,14 +28,12 @@ struct EverythingSettingsSection: View {
             } message: {
                 Text("Frees \(size). The next Everything search walks the local disks again to rebuild it.")
             }
-            .alert("Delete the Everything index too?", isPresented: $confirmingOff) {
+            .alert("Delete the Everything index too? (\(size))", isPresented: $confirmingOff) {
                 Button("Delete", role: .destructive) {
                     everything.deleteIndex()
                     setEnabled(false)
                 }
                 Button("Keep", role: .cancel) { setEnabled(false) }
-            } message: {
-                Text("Frees \(size). Without it, turning Everything back on walks the local disks again.")
             }
 
             if everything.savedBytes > 0 {
