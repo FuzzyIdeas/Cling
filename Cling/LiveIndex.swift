@@ -473,6 +473,9 @@ final class LiveIndexUpdater: @unchecked Sendable {
     /// Skipped folders counted at most, every `.git` and build folder that changed being one.
     private static let skippedMax = 10000
 
+    /// How long before and after a drop the folders that changed are walked again.
+    private static let lossRescanWindow: CFAbsoluteTime = 3
+
     private let lock = NSLock()
     private var _routes: [LiveRoute]
 
@@ -487,6 +490,10 @@ final class LiveIndexUpdater: @unchecked Sendable {
     private var flushScheduled = false
     /// Changes were dropped since this updater started. Only touched on `queue`.
     private var lost = false
+    /// The folders each recent batch changed, kept for `lossRescanWindow`. Only touched on `queue`.
+    private var recentBusyFolders: [(at: CFAbsoluteTime, dirs: Set<String>)] = []
+    /// Until when the folders each batch changes are walked again, after a drop. Only touched on `queue`.
+    private var rescanBusyFoldersUntil: CFAbsoluteTime = 0
     private let started = CFAbsoluteTimeGetCurrent()
     private var _replayed = 0
     private var _caughtUp = false
@@ -511,6 +518,49 @@ final class LiveIndexUpdater: @unchecked Sendable {
         return rules.folder(dir, cache: &folders).added ? nil : dir
     }
 
+    /// The folders these changes landed in: a folder's own path, a file's parent. A scope folder is left out, as walking
+    /// it again is the whole scope, which the walk after a loss already does.
+    private static func busyFolders(_ flagsByPath: [String: EonilFSEventsEventFlags], routes: [LiveRoute]) -> Set<String> {
+        var dirs = Set<String>()
+        for (path, flags) in flagsByPath {
+            let dir = flags.contains(.itemIsDir) && !flags.contains(.itemIsSymlink) ? path : path.parentPath
+            guard !dirs.contains(dir), !routes.contains(where: { $0.root == dir }), routes.contains(where: { $0.contains(dir) }) else {
+                continue
+            }
+            dirs.insert(dir)
+        }
+        return dirs
+    }
+
+    /// A drop names no folder, only `/`, but what it dropped happened among the changes delivered around it: a burst
+    /// too fast for FSEvents, like a big folder written or deleted at once, drops a third of its changes or more. The
+    /// folders those changes landed in, just before the drop and for a few seconds after, are walked again, so a
+    /// deleted folder leaves the index now rather than at the walk a loss asks for, which can be an hour away.
+    private func rescanAroundLoss(_ flagsByPath: inout [String: EonilFSEventsEventFlags], sawLoss: Bool, routes: [LiveRoute]) {
+        let now = CFAbsoluteTimeGetCurrent()
+        let busy = Self.busyFolders(flagsByPath, routes: routes)
+        recentBusyFolders.removeAll { now - $0.at > Self.lossRescanWindow }
+        var dirs = Set<String>()
+        if sawLoss {
+            rescanBusyFoldersUntil = now + Self.lossRescanWindow
+            for recent in recentBusyFolders {
+                dirs.formUnion(recent.dirs)
+            }
+        }
+        if now < rescanBusyFoldersUntil {
+            dirs.formUnion(busy)
+        }
+        if !busy.isEmpty {
+            recentBusyFolders.append((now, busy))
+        }
+        guard !dirs.isEmpty else { return }
+        let outer = FSEventsHistory.outermost(Array(dirs))
+        log.info("Live index: walking \(outer.count) folders that changed around dropped events")
+        for dir in outer {
+            flagsByPath[dir, default: []].formUnion([.itemIsDir, .mustScanSubDirs])
+        }
+    }
+
     /// Asks for a walk once, and keeps applying what comes after: the walk is held to one an hour, and stopping here
     /// left the indexes following nothing at all until Cling was relaunched.
     private func reportLoss() {
@@ -527,6 +577,7 @@ final class LiveIndexUpdater: @unchecked Sendable {
         var flagsByPath: [String: EonilFSEventsEventFlags] = [:]
         var maxEventID: UInt64 = 0
         var replayDone = false
+        var sawLoss = false
         // A replay is applied without being listed: it would fill the live changes list with a day of changes.
         let listing = lock.withLock { _caughtUp }
         for event in events {
@@ -548,6 +599,7 @@ final class LiveIndexUpdater: @unchecked Sendable {
             }
             if FSEventsHistory.lost(flags, path: event.path) {
                 reportLoss()
+                sawLoss = true
                 continue
             }
             guard let path = FSEventsHistory.normalized(event.path) else { continue }
@@ -555,6 +607,9 @@ final class LiveIndexUpdater: @unchecked Sendable {
         }
 
         let routes = lock.withLock { _routes }
+        if listing {
+            rescanAroundLoss(&flagsByPath, sawLoss: sawLoss, routes: routes)
+        }
         let structural: EonilFSEventsEventFlags = [.itemCreated, .itemRenamed, .itemRemoved, .mustScanSubDirs]
         // Kept apart and appended to in place: a struct of arrays copied out of a dictionary and written back
         // copies the arrays on every append, which made a replay of a million changes quadratic.
