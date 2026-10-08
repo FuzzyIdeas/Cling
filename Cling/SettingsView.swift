@@ -1077,6 +1077,8 @@ private struct SearchSettingsPane: View {
                     .onChange(of: updateWhileClosed) { CatchUpAgent.sync() }
             }
 
+            EverythingSettingsSection()
+
             Section("Matching") {
                 DescriptiveToggle(
                     title: "Literal search",

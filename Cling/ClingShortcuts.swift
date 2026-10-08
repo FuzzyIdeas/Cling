@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import Defaults
 import KeyboardShortcuts
 
 func carbonModifiers(from flags: NSEvent.ModifierFlags) -> Int {
@@ -132,6 +133,12 @@ enum ClingShortcuts {
     /// (all of ours are dispatched window-locally, so none may register a real global hotkey).
     static let allNames = Array(nameByAction.values) + sortNames + utilityShortcuts.map(\.name)
 
+    /// The utility shortcuts that do something now. Toggle Everything is left out while Everything is off in
+    /// Settings: its key isn't listened for then, so it is not listed or counted as taken either.
+    static var activeUtilityShortcuts: [UtilityShortcut] {
+        utilityShortcuts.filter { $0.name != .clToggleEverything || Defaults[.everythingEnabled] }
+    }
+
     static func name(for id: ActionID) -> KeyboardShortcuts.Name {
         nameByAction[id]!
     }
@@ -158,7 +165,7 @@ enum ClingShortcuts {
                 return sort.title
             }
         }
-        for utility in utilityShortcuts where utility.name != name {
+        for utility in activeUtilityShortcuts where utility.name != name {
             if KeyboardShortcuts.getShortcut(for: utility.name) == shortcut {
                 return utility.title
             }

@@ -596,6 +596,38 @@ struct ScopeCommand: ParsableCommand {
     }
 }
 
+// MARK: - EverythingCommand
+
+struct EverythingCommand: ParsableCommand {
+    enum Action: String, ExpressibleByArgument, CaseIterable {
+        case status
+        case on
+        case off
+        case delete
+    }
+
+    static let configuration = CommandConfiguration(
+        commandName: "everything",
+        abstract: "Turn the Everything index on or off, or delete it to free its disk space.",
+        discussion: """
+        cling everything status
+        cling everything on|off
+        cling everything delete      removes the saved index
+        After a delete, the next Everything search walks the local disks again.
+        """
+    )
+
+    @Argument(help: "status, on, off or delete")
+    var action: Action = .status
+
+    @Flag(name: .long, help: "Output as JSON")
+    var json = false
+
+    mutating func run() throws {
+        try runConfig(ClingRequest(command: .everything, action: action.rawValue), json: json)
+    }
+}
+
 // MARK: - IgnoreCommand
 
 struct IgnoreCommand: ParsableCommand {

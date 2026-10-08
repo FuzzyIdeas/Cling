@@ -80,6 +80,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         var everything: Bool
         /// Why the Everything button is off limits, while the search is limited to external drives.
         var everythingBlocked: String?
+        /// Everything is on in Settings, so its button shows.
+        var everythingAvailable: Bool
         /// Only the search row shows: nothing typed, nothing chosen for the bar to show before typing and nothing stashed.
         var fieldOnly: Bool
         /// The stash is all there is to show, and the bar is only as tall as it needs.
@@ -1138,6 +1140,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             wash: fuzzy.scopeWash.map { SearchBarWashView.Wash(top: $0.top, bottom: $0.bottom) },
             everything: EVERYTHING.applies,
             everythingBlocked: EVERYTHING.blockedReason,
+            everythingAvailable: EVERYTHING.available,
             fieldOnly: defaultList && defaultResults == .empty && STASH.files.isEmpty,
             stashOnly: defaultList && defaultResults == .empty && !STASH.files.isEmpty
         )
@@ -1233,7 +1236,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             }
         }
         if inputs.filterText != previous?.filterText || inputs.everything != previous?.everything
-            || inputs.everythingBlocked != previous?.everythingBlocked || previous == nil
+            || inputs.everythingBlocked != previous?.everythingBlocked || inputs.everythingAvailable != previous?.everythingAvailable
+            || previous == nil
         {
             root.filterButton.label = inputs.filterText.isEmpty ? nil : inputs.filterText
             // The whole line, for a pill too narrow to show it.
@@ -1243,6 +1247,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             root.everythingButton.label = inputs.everything ? "Everything" : nil
             root.everythingButton.isEnabled = proactive && inputs.everythingBlocked == nil
             root.everythingButton.toolTip = inputs.everythingBlocked ?? Self.everythingTip
+            root.everythingButton.isHidden = !inputs.everythingAvailable
             root.needsLayout = true
         }
 
@@ -1470,7 +1475,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
                 Defaults[.searchBarShowPreview].toggle()
                 return nil
             }
-            if pressed == KeyboardShortcuts.getShortcut(for: .clToggleEverything) {
+            if EVERYTHING.available, pressed == KeyboardShortcuts.getShortcut(for: .clToggleEverything) {
                 EVERYTHING.toggle()
                 return nil
             }

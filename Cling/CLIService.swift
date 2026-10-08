@@ -375,6 +375,8 @@ extension FuzzyClient {
             Thread.sleep(forTimeInterval: 0.05)
         }
         switch access {
+        case .off:
+            return ClingResponse(error: EverythingIndex.offMessage)
         case .needsPro:
             return ClingResponse(error: "Everything needs Cling Pro")
         case .loading:
@@ -530,9 +532,8 @@ extension FuzzyClient {
             )
 
         case .index where request.everything == true, .reindex where request.everything == true:
-            let started = DispatchQueue.main.sync { MainActor.assumeIsolated { EVERYTHING.rebuild() } }
-            guard started else {
-                return ClingResponse(error: "Everything needs Cling Pro")
+            if let refusal = DispatchQueue.main.sync(execute: { MainActor.assumeIsolated { EVERYTHING.rebuild() } }) {
+                return ClingResponse(error: refusal)
             }
             return ClingResponse(status: "indexing everything")
 
@@ -744,8 +745,8 @@ extension FuzzyClient {
                 everythingCount = EVERYTHING.count
                 everythingWalked = EVERYTHING.walking ? EVERYTHING.walked : nil
                 switch EVERYTHING.state {
-                case "unloaded":
-                    lines.append("everything: unloaded")
+                case "unloaded", "off":
+                    lines.append("everything: \(EVERYTHING.state)")
                 case "loading":
                     lines.append("everything: loading")
                 case "indexing" where !EVERYTHING.building:
@@ -848,7 +849,8 @@ extension FuzzyClient {
             }
             return ClingResponse(status: messages.joined(separator: "\n"), indexCount: coord.count)
 
-        case .explain where request.action == "diagnose", .why, .settings, .filters, .scripts, .volumes, .cloud, .scopes, .ignore, .shortcuts:
+        case .explain where request.action == "diagnose", .why, .settings, .filters, .scripts, .volumes, .cloud, .scopes, .ignore, .shortcuts,
+             .everything:
             return CLIConfig.handle(request, coordinator: coord)
 
         case .explain:

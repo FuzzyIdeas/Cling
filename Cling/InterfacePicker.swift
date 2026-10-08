@@ -365,7 +365,7 @@ private struct MiniBar: View {
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
-                    ForEach(["asterisk", "arrow.up.arrow.down", "sidebar.right"], id: \.self) { symbol in
+                    ForEach((everythingEnabled ? ["asterisk"] : []) + ["arrow.up.arrow.down", "sidebar.right"], id: \.self) { symbol in
                         Image(systemName: symbol)
                             .font(.system(size: row * 0.32, weight: .medium))
                             .foregroundStyle(.secondary)
@@ -414,6 +414,7 @@ private struct MiniBar: View {
 
     @Default(.searchBarDefaultResults) private var defaultResults
     @Default(.searchBarPinned) private var pinned
+    @Default(.everythingEnabled) private var everythingEnabled
 }
 
 // MARK: - MiniPill

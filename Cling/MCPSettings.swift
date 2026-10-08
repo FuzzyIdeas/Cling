@@ -276,6 +276,17 @@ enum MCPSettingsBridge {
         )) { _ in
             CatchUpAgent.sync()
         },
+        bool("everythingEnabled", .everythingEnabled, row(
+            .search, "Everything", "Enable Everything",
+            note: "Off unloads the Everything index, stops its walk and its following of file changes, and hides its asterisk "
+                + "in the search window, the search bar and the file server; the Toggle Everything shortcut does nothing. "
+                + "Searches asking for Everything are refused. The saved index stays on disk: cling_everything delete "
+                + "removes it. Back on, nothing runs until the next Everything search loads the saved index, or walks the "
+                + "local disks when it was deleted. Free to change; searching Everything still needs Cling Pro.",
+            keywords: ["everything", "whole disk", "asterisk", "disk space", "delete index", "turn off"], ui: true
+        )) { _ in
+            EVERYTHING.applySetting()
+        },
         bool("literalSearch", .literalSearch, row(
             .search, "Matching", "Literal search",
             subtitle: "Words match as typed, not fuzzily. Prefix a word with ' to fuzzy match it.",
@@ -809,6 +820,8 @@ extension ClingRequest {
             action == "set"
         case .filters, .scripts, .volumes, .cloud, .scopes, .ignore, .shortcuts:
             !["list", "show", nil].contains(action)
+        case .everything:
+            !["status", nil].contains(action)
         }
     }
 

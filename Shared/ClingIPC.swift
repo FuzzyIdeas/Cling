@@ -33,6 +33,8 @@ public enum ClingCommand: String, Codable {
     case scopes
     case ignore
     case shortcuts
+    /// The Everything index's switch and its saved files.
+    case everything
 }
 
 // MARK: - ClingRequest
@@ -259,7 +261,7 @@ public struct ClingResponse: Codable {
     public var operation: String?
     public var scopes: [ClingScopeStatus]?
     public var volumes: [ClingVolumeStatus]?
-    /// State of the Everything index: unloaded, loading, indexing or ready.
+    /// State of the Everything index: off, unloaded, loading, indexing or ready.
     public var everything: String?
     public var everythingCount: Int?
     /// Entries a walk of the Everything index has reached so far. A walk that replaces a loaded index fills a new

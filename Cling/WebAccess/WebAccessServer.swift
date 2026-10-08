@@ -644,6 +644,7 @@ final class WebAccessServer: @unchecked Sendable {
                     problem = waitOnMain(timeout: 2) { () -> String? in
                         switch EVERYTHING.cliAccess() {
                         case .ready: nil
+                        case .off: "Everything is off"
                         case .needsPro: "Everything needs Cling Pro"
                         case .loading: "The Everything index is still loading"
                         }
@@ -691,6 +692,7 @@ final class WebAccessServer: @unchecked Sendable {
                 scopes: FUZZY.searchableScopes.map { ($0.rawValue, $0.label) },
                 drives: FUZZY.driveEngines.map { ($0.label, !offline.contains($0.label)) },
                 allDrives: FUZZY.offersAllDrivesFilter && !FUZZY.driveEngines.isEmpty,
+                everything: EVERYTHING.available,
                 // The fallbacks are the window's, for a filter never given an icon or a colour.
                 quickFilters: Defaults[.quickFilters].map {
                     .init(name: $0.id, icon: $0.icon ?? "line.3.horizontal.decrease.circle.fill", hue: ($0.color ?? .forName($0.id)).hue)

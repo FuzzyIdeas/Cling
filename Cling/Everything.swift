@@ -53,10 +53,18 @@ struct EverythingSnapshot: Codable {
 /// what changed since it was saved, and it is only walked again when that history is lost.
 @MainActor @Observable
 final class EverythingIndex {
+    private init() {
+        savedBytes = Self.diskBytes()
+        settingObserver = Defaults.publisher(.everythingEnabled, options: []).sink { [weak self] _ in
+            Task { @MainActor in self?.applySetting() }
+        }
+    }
+
     enum CLIAccess {
         case ready(SearchEngine, building: Bool)
         case loading
         case needsPro
+        case off
     }
 
     static let shared = EverythingIndex()
@@ -64,10 +72,17 @@ final class EverythingIndex {
     /// How long it stays in memory after it is switched off, or after the window goes away while it is on.
     static let unloadDelay: TimeInterval = 10 * 60
 
+    nonisolated static let offMessage = "Everything is off. Turn it on in Settings > Search, or with: cling everything on"
+
     nonisolated static var indexFile: FilePath {
         everythingIndexFile
     }
 
+    /// The `everythingEnabled` setting as last applied. Off, nothing loads, walks or follows the index, and its
+    /// toggle and shortcut are gone from the window, the search bar and the file server.
+    private(set) var available = Defaults[.everythingEnabled]
+    /// What the saved index takes on disk.
+    private(set) var savedBytes = 0
     /// Searches go to this index instead of the normal one.
     private(set) var enabled = false
     private(set) var loading = false
@@ -101,7 +116,7 @@ final class EverythingIndex {
     }
 
     var state: String {
-        loading ? "loading" : walking ? "indexing" : engine != nil ? "ready" : "unloaded"
+        !available ? "off" : loading ? "loading" : walking ? "indexing" : engine != nil ? "ready" : "unloaded"
     }
 
     /// Volumes on the internal disk other than the startup one (a second partition, say), walked as their own roots,
@@ -130,7 +145,21 @@ final class EverythingIndex {
         return (all.filter { !off.contains($0) }, all)
     }
 
+    /// The files in the index's folder, added up.
+    nonisolated static func diskBytes() -> Int {
+        let folder = everythingFolder.string
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []
+        return names.reduce(0) { total, name in
+            total + ((try? FileManager.default.attributesOfItem(atPath: folder + "/" + name))?[.size] as? Int ?? 0)
+        }
+    }
+
+    nonisolated static func sizeText(_ bytes: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+
     func toggle() {
+        guard available else { return }
         guard proactive else {
             showProPrompt = true
             return
@@ -155,6 +184,7 @@ final class EverythingIndex {
 
     /// For a CLI search: loads the index when needed and keeps it warm for `unloadDelay` after the last call.
     func cliAccess() -> CLIAccess {
+        guard available else { return .off }
         guard proactive else { return .needsPro }
         keepWarm()
         if !loading, engine == nil {
@@ -165,11 +195,46 @@ final class EverythingIndex {
     }
 
     /// Walks everything again, replacing the loaded engine when done, or filling a new one that is searched as it fills.
-    func rebuild() -> Bool {
-        guard proactive else { return false }
+    /// nil once started, otherwise why it can't.
+    func rebuild() -> String? {
+        guard available else { return Self.offMessage }
+        guard proactive else { return "Everything needs Cling Pro" }
         keepWarm()
         walk(priority: .userInitiated)
-        return true
+        return nil
+    }
+
+    /// Follows the `everythingEnabled` setting. Called on every change to it, and right after a change made here, so
+    /// whoever changed it reads the new state back at once.
+    func applySetting() {
+        let on = Defaults[.everythingEnabled]
+        guard on != available else { return }
+        available = on
+        log.info("Everything turned \(on ? "on" : "off")")
+        if !on {
+            shutDown(saving: true)
+        }
+    }
+
+    /// Unloads the index and deletes it from disk, stopping a walk that would write it again, and returns the bytes
+    /// freed. Whether Everything is on stays as it was: on, its next search walks the local disks again.
+    @discardableResult
+    func deleteIndex() -> Int {
+        let freed = Self.diskBytes()
+        shutDown(saving: false)
+        Self.deletions.withLock { $0 += 1 }
+        Self.diskQueue.async {
+            try? FileManager.default.removeItem(at: everythingFolder.url)
+            Task { @MainActor in EVERYTHING.refreshSavedBytes() }
+        }
+        savedBytes = 0
+        log.info("Everything index deleted, \(freed) bytes")
+        FUZZY.logActivity("Everything index deleted")
+        return freed
+    }
+
+    func refreshSavedBytes() {
+        savedBytes = Self.diskBytes()
     }
 
     /// Called after a batch of file changes lands, and on walk progress.
@@ -227,6 +292,11 @@ final class EverythingIndex {
 
     private static let lossWalkInterval: TimeInterval = 60 * 60
 
+    /// Writes and deletions of the index files, one at a time and in order.
+    private nonisolated static let diskQueue = DispatchQueue(label: "com.lowtechguys.Cling.everythingDisk", qos: .utility)
+    /// How many times the index was deleted. A save scheduled before a deletion leaves the files alone.
+    private nonisolated static let deletions = OSAllocatedUnfairLock(initialState: 0)
+
     @ObservationIgnored private var unloadTask: Task<Void, Never>?
     @ObservationIgnored private var updater: EverythingUpdater?
     @ObservationIgnored private var stream: FSChangeStream?
@@ -242,6 +312,11 @@ final class EverythingIndex {
     /// When a lost history last walked everything, and the walk waiting for the hour to be up.
     @ObservationIgnored private var lastLossWalk: Date?
     @ObservationIgnored private var lossWalkTask: Task<Void, Never>?
+    @ObservationIgnored private var settingObserver: AnyCancellable?
+    /// Bumped on every shutdown, so a load or walk started before it can tell its result is no longer wanted.
+    @ObservationIgnored private var generation = 0
+    /// Set to stop the walk in progress.
+    @ObservationIgnored private var walkStop: OSAllocatedUnfairLock<Bool>?
 
     // MARK: Walking
 
@@ -249,7 +324,8 @@ final class EverythingIndex {
     /// under /Volumes and each cloud folder that is on. No ignore rules, `.git` folders and `.DS_Store` files stay in,
     /// and entries are appended without a duplicate check.
     private nonisolated static func walkEverything(
-        into engine: SearchEngine, volumes: [String], cloud: (on: [String], all: [String]), progress: @escaping @Sendable () -> Void
+        into engine: SearchEngine, volumes: [String], cloud: (on: [String], all: [String]), stop: OSAllocatedUnfairLock<Bool>,
+        progress: @escaping @Sendable () -> Void
     ) async {
         let (roots, topLevel) = startupDiskRoots()
         for (path, isDir) in topLevel {
@@ -270,7 +346,8 @@ final class EverythingIndex {
                         skipGitDirs: false,
                         skipJunkFiles: false,
                         dedupe: false,
-                        progress: { _, _ in progress() }
+                        progress: { _, _ in progress() },
+                        cancelled: { stop.withLock { $0 } }
                     )
                 }
             }
@@ -319,6 +396,38 @@ final class EverythingIndex {
         FUZZY.everythingChanged()
         // Kept warm for a while, so switching straight back costs nothing.
         scheduleUnload()
+    }
+
+    /// Stops all of it at once: the walk in progress, a load, following changes and the timers. The engine goes too,
+    /// saved first when `saving` and that is worth it. A walk stopped part way is never saved.
+    private func shutDown(saving: Bool) {
+        generation += 1
+        walkStop?.withLock { $0 = true }
+        walkStop = nil
+        unloadTask?.cancel()
+        unloadTask = nil
+        lossWalkTask?.cancel()
+        lossWalkTask = nil
+        let wasEnabled = enabled
+        let firstBuild = building
+        enabled = false
+        loading = false
+        walking = false
+        building = false
+        showProPrompt = false
+        stopWatching()
+        if let engine {
+            if saving, !firstBuild {
+                saveIfWorthIt(engine)
+            } else {
+                releaseInBackground(engine)
+            }
+        }
+        engine = nil
+        count = 0
+        if wasEnabled {
+            FUZZY.everythingChanged()
+        }
     }
 
     private func keepWarm() {
@@ -370,11 +479,16 @@ final class EverythingIndex {
         snapshot.eventID = lastEventID
         let pending = snapshot
         let url = everythingIndexFile.url
+        let deletions = Self.deletions.withLock { $0 }
         Task.detached(priority: .background) {
             var saved = pending
             saved.volumes = Self.internalVolumes()
-            engine.saveBinaryIndex(to: url)
-            saved.write()
+            Self.diskQueue.sync {
+                guard Self.deletions.withLock({ $0 }) == deletions else { return }
+                engine.saveBinaryIndex(to: url)
+                saved.write()
+            }
+            await MainActor.run { EVERYTHING.refreshSavedBytes() }
         }
     }
 
@@ -389,6 +503,7 @@ final class EverythingIndex {
         }
         loading = true
         let url = everythingIndexFile.url
+        let gen = generation
         Task.detached(priority: .userInitiated) {
             let t0 = CFAbsoluteTimeGetCurrent()
             let engine = SearchEngine()
@@ -409,6 +524,8 @@ final class EverythingIndex {
                 added = now.filter { !saved.volumes.contains($0) }
             }
             await MainActor.run {
+                // Turned off or deleted while it loaded.
+                guard self.generation == gen else { return }
                 self.loading = false
                 guard loaded else {
                     self.walk(priority: .userInitiated)
@@ -457,6 +574,9 @@ final class EverythingIndex {
             install(fresh)
         }
         let url = everythingIndexFile.url
+        let gen = generation
+        let stop = OSAllocatedUnfairLock(initialState: false)
+        walkStop = stop
         Task.detached(priority: priority) {
             var snapshot = start
             snapshot.volumes = Self.internalVolumes()
@@ -464,8 +584,9 @@ final class EverythingIndex {
             let cloud = Self.cloudRoots()
             let t0 = CFAbsoluteTimeGetCurrent()
             let began = Date()
-            await Self.walkEverything(into: fresh, volumes: started.volumes, cloud: cloud) {
+            await Self.walkEverything(into: fresh, volumes: started.volumes, cloud: cloud, stop: stop) {
                 Task { @MainActor in
+                    guard self.generation == gen else { return }
                     if self.walking {
                         self.walked = fresh.count
                     }
@@ -473,15 +594,24 @@ final class EverythingIndex {
                 }
             }
             let walked = CFAbsoluteTimeGetCurrent()
-            try? FileManager.default.createDirectory(at: everythingFolder.url, withIntermediateDirectories: true)
-            fresh.saveBinaryIndex(to: url)
-            started.write()
+            // Turned off or deleted while it walked: what it has is partial, and none of it is kept.
+            let saved = Self.diskQueue.sync { () -> Bool in
+                guard !stop.withLock({ $0 }) else { return false }
+                try? FileManager.default.createDirectory(at: everythingFolder.url, withIntermediateDirectories: true)
+                fresh.saveBinaryIndex(to: url)
+                started.write()
+                return true
+            }
+            guard saved else {
+                log.info("Everything walk stopped")
+                return
+            }
             let n = fresh.count
             log.info("Everything walk: \(n) entries in \(walked - t0, format: .fixed(precision: 1))s, saved in \(CFAbsoluteTimeGetCurrent() - walked, format: .fixed(precision: 1))s")
 
             // Reloading the saved file sheds the walk's growth slack, over half its memory at this size, like the
             // scope walks do. That includes the first build, which swaps the engine on show for its reloaded copy.
-            let wanted = await MainActor.run { self.engine != nil }
+            let wanted = await MainActor.run { self.generation == gen && self.engine != nil }
             var finished = fresh
             if wanted {
                 let reloaded = SearchEngine()
@@ -491,6 +621,9 @@ final class EverythingIndex {
             }
             let engine = finished
             await MainActor.run {
+                self.refreshSavedBytes()
+                guard self.generation == gen else { return }
+                self.walkStop = nil
                 self.walking = false
                 self.building = false
                 self.walked = n
@@ -891,5 +1024,64 @@ final class EverythingUpdater: @unchecked Sendable {
             guard volumes.contains(volume) else { return nil }
         }
         return path
+    }
+}
+
+// MARK: - cling everything
+
+extension CLIConfig {
+    private struct EverythingInfo: Encodable {
+        let enabled: Bool
+        /// off, unloaded, loading, indexing or ready.
+        let state: String
+        /// Entries in the loaded index, absent while it is unloaded.
+        let entries: Int?
+        let savedBytes: Int
+        let saved: String?
+        var freedBytes: Int?
+    }
+
+    /// `cling everything`: status, on, off and delete. On and off change the `everythingEnabled` setting, the one
+    /// Settings > Search changes. Delete works whether Everything is on or off, and without Pro, so an index built
+    /// during a trial can still be removed.
+    @MainActor static func everything(_ req: ClingRequest) -> ClingResponse {
+        let size = EverythingIndex.sizeText
+        var said: String?
+        var freed: Int?
+        switch req.action ?? "status" {
+        case "status":
+            EVERYTHING.refreshSavedBytes()
+        case "on":
+            Defaults[.everythingEnabled] = true
+            EVERYTHING.applySetting()
+            said = "Everything is on"
+        case "off":
+            Defaults[.everythingEnabled] = false
+            EVERYTHING.applySetting()
+            EVERYTHING.refreshSavedBytes()
+            let bytes = EVERYTHING.savedBytes
+            said = bytes > 0
+                ? "Everything is off. Its saved index stays on disk (\(size(bytes))): cling everything delete removes it."
+                : "Everything is off"
+        case "delete":
+            let bytes = EVERYTHING.deleteIndex()
+            freed = bytes
+            said = bytes > 0 ? "Deleted the Everything index, freeing \(size(bytes))" : "There is no Everything index on disk"
+        default:
+            return ClingResponse(error: "everything takes status, on, off or delete")
+        }
+
+        let ev = EVERYTHING
+        let loaded = ev.state == "ready" || ev.state == "indexing"
+        var info = EverythingInfo(
+            enabled: ev.available, state: ev.state, entries: loaded ? ev.count : nil,
+            savedBytes: ev.savedBytes, saved: ev.savedBytes > 0 ? size(ev.savedBytes) : nil
+        )
+        info.freedBytes = freed
+        let text = said ?? [
+            "everything: " + (ev.available ? "on, \(ev.state)" : "off") + (loaded ? ", \(ev.count.formatted()) entries" : ""),
+            "saved index: " + (info.saved ?? "none"),
+        ].joined(separator: "\n")
+        return ClingResponse(status: text, payload: payloadJSON(info))
     }
 }

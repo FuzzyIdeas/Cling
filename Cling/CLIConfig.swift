@@ -35,6 +35,7 @@ enum CLIConfig {
             case .scopes: scopes(request)
             case .ignore: ignore(request)
             case .shortcuts: shortcuts(request)
+            case .everything: everything(request)
             default: ClingResponse(error: "not a configuration command")
             }
         }
@@ -1267,7 +1268,7 @@ extension CLIConfig {
             return (name, action.id.rawValue, action.title, action.segment.title)
         }
         let sorts = ClingShortcuts.sortShortcuts.map { ($0.name, "sortBy\($0.field.rawValue.capitalized)", $0.title, "Sorting") }
-        let utilities = ClingShortcuts.utilityShortcuts.map { ($0.name, $0.name.rawValue.replacingOccurrences(of: "cl_", with: ""), $0.title, "Stash") }
+        let utilities = ClingShortcuts.activeUtilityShortcuts.map { ($0.name, $0.name.rawValue.replacingOccurrences(of: "cl_", with: ""), $0.title, "Stash") }
         return actions + sorts + utilities
     }
 

@@ -29,6 +29,7 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 # Settings files whose @Default bindings are what the user can change on screen.
 PANE_FILES = [
     "Cling/SettingsView.swift",
+    "Cling/EverythingSettings.swift",
     "Cling/ShortcutsSettingsPane.swift",
     "Cling/MCPSettingsPane.swift",
     "Cling/InterfacePicker.swift",

@@ -795,6 +795,8 @@ extension Defaults.Keys {
     static let honorGitignore = Key<Bool>("honorGitignore", default: false)
     /// A launchd agent gathers file changes while Cling is closed, so the indexes are nearly current when it opens.
     static let updateWhileClosed = Key<Bool>("updateWhileClosed", default: true)
+    /// Off, nothing loads, walks or follows the Everything index, and its toggle and shortcut are gone everywhere.
+    static let everythingEnabled = Key<Bool>("everythingEnabled", default: true)
 
     /// Lines starting with "#" are comments. "#:group id=… name=…" headers mark a block of rules so a future
     /// settings UI can toggle whole groups; rules you add yourself land under "#:custom". Both are ignored by

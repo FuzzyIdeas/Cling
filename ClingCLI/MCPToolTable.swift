@@ -24,7 +24,8 @@ extension MCPServer {
     External volumes are indexed separately and need Pro; a volume's index stays searchable while it is unplugged, \
     and cling_search allDrives searches all of them at once. Everything is a separate Pro index of every file on \
     the internal disk, with no ignore rules, searched alone when it is on: the startup volume plus any other volume \
-    on that disk that is on in Settings > Drives. External drives are never in it, whatever their toggle says.
+    on that disk that is on in Settings > Drives. External drives are never in it, whatever their toggle says. \
+    cling_everything turns it off or deletes its saved index to free the space.
     - Cloud storage (iCloud Drive and ~/Library/CloudStorage: Dropbox, Google Drive, OneDrive…) is the cloud \
     scope, which the library scope leaves out. It is on while any of its folders is, and cling_cloud turns each \
     one on or off. Files there can be online only: Cling lists their folders without downloading anything, and \
@@ -155,6 +156,14 @@ extension MCPServer {
         }
         // `index` takes its paths with `.remaining`, so they go in raw, after the action.
         return try text(["index", action], tail: paths(a), terminator: false)
+    }
+
+    static func everything(_ a: [String: Any]) throws -> ToolOutput {
+        let action = argument(a["action"] ?? "status")
+        guard EverythingCommand.Action(rawValue: action) != nil else {
+            throw ClingMCPError("action must be status, on, off or delete")
+        }
+        return try run(["everything", action])
     }
 
     static func ignore(_ a: [String: Any]) throws -> ToolOutput {
@@ -424,7 +433,8 @@ extension MCPServer {
                 + "filter's own tokens and this does the same. It does not apply the window's live tidying "
                 + "(results deleted or excluded since the last walk are hidden there), minQueryLength, or the "
                 + "500 result cap without Pro. Use cling_explain_search to see why a file ranks where it does. "
-                + "everything searches the Everything index alone (Pro), loading it first and building it on first use. "
+                + "everything searches the Everything index alone (Pro), loading it first and building it on first use; "
+                + "it is refused while Everything is turned off (cling_everything). "
                 + "allDrives searches the saved index of every external drive alone (Pro), the ones unplugged right now "
                 + "too, and the status names each drive searched and marks the disconnected ones: use it to find which "
                 + "drive holds a file. searchBar orders the results as the search bar shows them, so it works as a "
@@ -493,6 +503,21 @@ extension MCPServer {
                 "paths": ["type": "array", "items": ["type": "string"]],
             ], "required": ["action", "paths"]],
             handler: indexPaths
+        ),
+        MCPTool(
+            name: "cling_everything",
+            description: "The Everything index's switch and its saved files. status says whether Everything is on, its "
+                + "state (off, unloaded, loading, indexing, ready), its entry count while loaded, and how much disk its "
+                + "saved index takes. on and off change the everythingEnabled setting, as Enable Everything in Settings > "
+                + "Search does: off stops its walk and its following of file changes, unloads it, refuses searches that ask "
+                + "for it, and hides its asterisk and shortcut in the window, the search bar and the file server, keeping "
+                + "the saved index on disk. on starts nothing; the next Everything search loads the saved index, or walks "
+                + "the local disks when there is none. delete unloads it and removes the saved index to free the space, "
+                + "and leaves the switch as it was. None of these need Pro. status: open; on, off and delete: " + gate,
+            inputSchema: ["type": "object", "properties": [
+                "action": ["type": "string", "enum": EverythingCommand.Action.allCases.map(\.rawValue)],
+            ]],
+            handler: everything
         ),
 
         // --- troubleshooting

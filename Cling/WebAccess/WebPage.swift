@@ -5,6 +5,7 @@
 //  The HTML for Web Access: one page, and the fragments htmx swaps into it.
 //
 
+import Defaults
 import Foundation
 
 enum WebPage {
@@ -34,6 +35,10 @@ enum WebPage {
 
         init(_ request: HTTPRequest) {
             place = request.param("where") ?? ""
+            // From a bookmark or a tab left open since before Everything was turned off.
+            if place == "everything", !Defaults[.everythingEnabled] {
+                place = ""
+            }
             quickFilter = request.param("filter") ?? ""
             folderFilter = request.param("folders") ?? ""
         }
@@ -72,6 +77,8 @@ enum WebPage {
         var drives: [(name: String, connected: Bool)] = []
         /// Every external drive at once, offered from two of them up.
         var allDrives = false
+        /// Settings > Search can turn Everything off, and then it isn't offered.
+        var everything = Defaults[.everythingEnabled]
         var quickFilters: [Filter] = []
         var folderFilters: [Filter] = []
     }
@@ -448,7 +455,10 @@ enum WebPage {
         }
         let none = #"<picture class="sym"></picture>"#
 
-        var places = [place("", "All"), place("everything", "Everything")]
+        var places = [place("", "All")]
+        if choices.everything {
+            places.append(place("everything", "Everything"))
+        }
         places += choices.scopes.map { place("scope:\($0.value)", $0.label) }
         if choices.allDrives {
             places.append(place("drives", "External drives"))

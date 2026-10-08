@@ -1077,7 +1077,9 @@ struct ContentView: View {
             }
             .animation(.easeInOut(duration: 0.15), value: fuzzy.searching)
             .animation(.easeInOut(duration: 0.15), value: queryTooShort)
-            everythingButton
+            if everything.available {
+                everythingButton
+            }
             xButton
             historyButton
             saveFilterButton
@@ -1895,8 +1897,9 @@ struct ContentView: View {
                 Defaults[.showFilePreview].toggle()
                 return nil
             }
-            // Search everything instead of the normal index (default ⌘⇧E, rebindable).
-            if let pressed = KeyboardShortcuts.Shortcut(event: event),
+            // Search everything instead of the normal index (default ⌘⇧E, rebindable). Off in Settings, the key
+            // goes on to whatever else takes it.
+            if EVERYTHING.available, let pressed = KeyboardShortcuts.Shortcut(event: event),
                pressed == KeyboardShortcuts.getShortcut(for: .clToggleEverything)
             {
                 EVERYTHING.toggle()

@@ -1,3 +1,4 @@
+import Defaults
 import KeyboardShortcuts
 import SwiftUI
 
@@ -34,7 +35,7 @@ struct ShortcutsSettingsPane: View {
                 }
             }
             Section("Stash") {
-                ForEach(ClingShortcuts.utilityShortcuts) { utility in
+                ForEach(ClingShortcuts.utilityShortcuts.filter { $0.name != .clToggleEverything || everythingEnabled }) { utility in
                     LabeledContent {
                         ShortcutRecorder(name: utility.name, label: utility.title) { _ in
                             validate(name: utility.name, title: utility.title)
@@ -62,6 +63,8 @@ struct ShortcutsSettingsPane: View {
     }
 
     @State private var conflict: String?
+
+    @Default(.everythingEnabled) private var everythingEnabled
 
     private let displaySegments: [ActionSegment] = [.open, .fileOps, .share, .destructive, .alternate]
 

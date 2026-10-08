@@ -776,7 +776,7 @@ final class SearchBarRootView: NSView {
         }
 
         var right = w - 12
-        for button in [previewButton, sortButton, everythingButton] {
+        for button in [previewButton, sortButton, everythingButton] where !button.isHidden {
             let width = button.fittingWidth
             right -= width
             button.frame = NSRect(x: right, y: (mid - side / 2).rounded(), width: width, height: side)
