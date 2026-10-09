@@ -105,7 +105,10 @@ final class SyntaxHighlighter {
     ) {
         queue.async { [self] in
             let attributed: NSAttributedString
-            if let hl = highlighter {
+            // The library force-unwraps the font's family name, which the system monospaced font has come back
+            // without (CLING-AR); the fixed-pitch font stands in for it then.
+            let font = font.familyName != nil ? font : NSFont.userFixedPitchFont(ofSize: font.pointSize) ?? font
+            if let hl = highlighter, font.familyName != nil {
                 hl.theme.setCodeFont(font)
                 let lang = language ?? "plaintext"
                 let result: NSAttributedString?
