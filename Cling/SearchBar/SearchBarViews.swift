@@ -205,12 +205,27 @@ final class SearchBarIconButton: NSButton {
 
 struct SearchBarHint: Equatable {
     enum ID: Equatable {
-        case open, paste, showInFinder, quickLook, copy, drill, actions, window, syntax, settings
+        case open, paste, showInFinder, quickLook, copy, drill, actions, window, syntax, settings, reindexDrives, skipDriveReindex
     }
 
     let id: ID
     let key: String
     let title: String
+}
+
+// MARK: - SearchBarNotice
+
+/// A line drawn in place of the key hints, with words after it to click.
+struct SearchBarNotice: Equatable {
+    struct Action: Equatable {
+        let id: SearchBarHint.ID
+        let title: String
+        let help: String?
+    }
+
+    let text: String
+    let help: String
+    let actions: [Action]
 }
 
 // MARK: - SearchBarHintBar
@@ -257,6 +272,13 @@ final class SearchBarHintBar: NSView {
     var status = "" {
         didSet {
             guard status != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
+    var notice: SearchBarNotice? {
+        didSet {
+            guard notice != oldValue else { return }
             needsDisplay = true
         }
     }
@@ -332,8 +354,27 @@ final class SearchBarHintBar: NSView {
         func width(_ hint: SearchBarHint) -> CGFloat {
             max(text.size(hint.key, style: .hintKey).width + 8, capHeight) + 5 + text.size(hint.title, style: .hintTitle).width
         }
+        var tips: [(NSRect, String)] = []
+        if let notice {
+            let noticeSize = text.size(notice.text, style: .hintTitle)
+            context.setAlpha(textAlpha)
+            text.draw(notice.text, style: .hintTitle, at: NSPoint(x: x, y: (bounds.height - noticeSize.height) / 2), color: .secondaryLabelColor)
+            tips.append((NSRect(x: x, y: 0, width: noticeSize.width, height: bounds.height), notice.help))
+            x += noticeSize.width + 14
+            for action in notice.actions {
+                let size = text.size(action.title, style: .hintTitle)
+                guard x + size.width <= limit else { break }
+                text.draw(action.title, style: .hintTitle, at: NSPoint(x: x, y: (bounds.height - size.height) / 2), color: .controlAccentColor)
+                let hit = NSRect(x: x - 4, y: 0, width: size.width + 8, height: bounds.height)
+                rects.append((action.id, hit))
+                if let help = action.help {
+                    tips.append((hit, help))
+                }
+                x += size.width + 14
+            }
+        }
         // What doesn't fit goes, least needed first, instead of whatever happens to come last.
-        var shown = hints
+        var shown = notice == nil ? hints : []
         while !shown.isEmpty, x + shown.map { width($0) + 16 }.reduce(0, +) - 16 > limit,
               let drop = Self.dropOrder.lazy.compactMap({ id in shown.firstIndex { $0.id == id } }).first
         {
@@ -368,12 +409,16 @@ final class SearchBarHintBar: NSView {
         rects.append((.settings, NSRect(x: gearRect.minX - 6, y: 0, width: gearRect.width + 12, height: bounds.height)))
         // Cursor rects are part of the window's structural regions, which AppKit recomputes in
         // full when they're invalidated, so only when the hints actually moved.
-        if !rects.elementsEqual(hintRects, by: { $0.0 == $1.0 && $0.1 == $1.1 }) {
+        if !rects.elementsEqual(hintRects, by: { $0.0 == $1.0 && $0.1 == $1.1 }) || !tips.elementsEqual(noticeTips, by: { $0.0 == $1.0 && $0.1 == $1.1 }) {
             hintRects = rects
+            noticeTips = tips
             window?.invalidateCursorRects(for: self)
             removeAllToolTips()
             if let gearHit = rects.last?.1 {
                 addToolTip(gearHit, owner: self, userData: nil)
+            }
+            for (rect, _) in tips {
+                addToolTip(rect, owner: self, userData: nil)
             }
         }
     }
@@ -403,6 +448,9 @@ final class SearchBarHintBar: NSView {
             self?.needsDisplay = true
         }
     }
+
+    /// Where the notice's words have something more to say on hover.
+    fileprivate var noticeTips: [(NSRect, String)] = []
 
     private static let dropOrder: [SearchBarHint.ID] = [.copy, .drill, .showInFinder, .quickLook, .window, .actions, .paste, .open]
 
@@ -441,8 +489,8 @@ final class SearchBarHintBar: NSView {
 // MARK: NSViewToolTipOwner
 
 extension SearchBarHintBar: NSViewToolTipOwner {
-    func view(_: NSView, stringForToolTip _: NSView.ToolTipTag, point _: NSPoint, userData _: UnsafeMutableRawPointer?) -> String {
-        "Settings ⌘,"
+    func view(_: NSView, stringForToolTip _: NSView.ToolTipTag, point: NSPoint, userData _: UnsafeMutableRawPointer?) -> String {
+        noticeTips.first { $0.0.contains(point) }?.1 ?? "Settings ⌘,"
     }
 }
 

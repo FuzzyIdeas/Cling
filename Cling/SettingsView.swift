@@ -1219,14 +1219,17 @@ private struct SearchSettingsPane: View {
     private func scopeRow(_ scope: SearchScope, label: String, detail: LocalizedStringKey) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Toggle(isOn: scope.binding) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(label)
-                    Text(detail).font(.callout).foregroundColor(.secondary)
+                // The size goes in the label so the switches line up whatever its width.
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(label)
+                        Text(detail).font(.callout).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    IndexSizeText(bytes: INDEX_SIZES.scope(scope))
                 }
             }
             .accessibilityLabel(label)
-            Spacer()
-            IndexSizeText(bytes: INDEX_SIZES.scope(scope))
             reindexButton(for: scope)
         }
         .onAppear { INDEX_SIZES.refresh() }
@@ -1235,15 +1238,17 @@ private struct SearchSettingsPane: View {
     private func proScopeRow(_ scope: SearchScope, label: String, detail: LocalizedStringKey) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Toggle(isOn: scope.binding) {
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) { Text(label); ProBadge() }
-                    Text(detail).font(.callout).foregroundColor(.secondary)
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) { Text(label); ProBadge() }
+                        Text(detail).font(.callout).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    IndexSizeText(bytes: INDEX_SIZES.scope(scope))
                 }
             }
             .accessibilityLabel(label)
             .disabled(!proactive)
-            Spacer()
-            IndexSizeText(bytes: INDEX_SIZES.scope(scope))
             reindexButton(for: scope)
         }
     }
@@ -1280,9 +1285,10 @@ private struct VolumesSettingsPane: View {
 
             Section {
                 DescriptiveToggle(
-                    title: "Don't index new volumes automatically",
-                    detail: "When on, a volume connected for the first time is not indexed until you enable it below. Volumes you've already indexed keep refreshing on their own.",
-                    isOn: $disableAutomaticVolumeIndexing
+                    title: "Index new volumes automatically",
+                    detail: "When off, a volume connected for the first time is not indexed until you enable it below. Volumes you've already indexed keep refreshing on their own.",
+                    // The stored setting keeps its old sense, so nobody's choice flips on update.
+                    isOn: Binding(get: { !disableAutomaticVolumeIndexing }, set: { disableAutomaticVolumeIndexing = !$0 })
                 )
                 .disabled(!proactive)
             }
@@ -2021,7 +2027,7 @@ struct VolumeListView: View {
 /// drive keeping Cling busy or answering slowly stands out from the rest.
 struct DriveLiveUpdatesView: View {
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 2)) { _ in
+        TimelineView(.periodic(from: .now, by: 2)) { context in
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                 GridRow {
                     Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
@@ -2031,8 +2037,10 @@ struct DriveLiveUpdatesView: View {
                     header("Busy time", "Processor time Cling spent on this drive's changes over the last 10 minutes")
                     header("Eject latency", "How long Cling held up the drive's last eject")
                 }
+                // Read at the timeline's date: nothing the rows show is observed, and the timeline redraws only what
+                // depends on its date.
                 ForEach(fuzzy.followableVolumes, id: \.string) { volume in
-                    row(volume)
+                    row(volume, at: context.date)
                 }
             }
         }
@@ -2068,12 +2076,16 @@ struct DriveLiveUpdatesView: View {
             .help(help)
     }
 
-    private func row(_ volume: FilePath) -> some View {
+    private func row(_ volume: FilePath, at date: Date) -> some View {
         let on = !unfollowedVolumes.contains(volume)
-        let health = DriveHealth.existing(volume.string)?.snapshot
+        let health = DriveHealth.existing(volume.string)?.snapshot(at: date)
         let shown = on && fuzzy.volumeWatchers[volume] != nil ? health : nil
         let catchingUp = fuzzy.volumeWatchers[volume].map { !$0.updater.replay.caughtUp } ?? false
-        let status: String? = fuzzy.volumesIndexing.contains(volume) ? "indexing" : catchingUp ? "catching up" : nil
+        let status: String? = fuzzy.volumesIndexing.contains(volume)
+            ? "indexing"
+            : catchingUp
+                ? "catching up"
+                : fuzzy.volumesWaitingForQuiet.contains(volume) ? "waiting for quiet" : fuzzy.volumesNeedingWalk[volume] != nil ? "needs reindex" : nil
         return GridRow {
             HStack(spacing: 8) {
                 Toggle(volume.name.string, isOn: followBinding(volume))

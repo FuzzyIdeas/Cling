@@ -1445,6 +1445,10 @@ struct ContentView: View {
                     }
                     .background(.background.opacity(0.3))
 
+                    let staleDrives = fuzzy.searchedDrivesNeedingWalk
+                    if !staleDrives.isEmpty {
+                        DriveReindexNotice(drives: staleDrives)
+                    }
                     if !fuzzy.noQuery {
                         MissingPathResultsBar(query: fuzzy.query)
                     }

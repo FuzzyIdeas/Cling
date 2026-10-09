@@ -277,7 +277,7 @@ enum MCPSettingsBridge {
             CatchUpAgent.sync()
         },
         bool("everythingEnabled", .everythingEnabled, row(
-            .search, "Everything", "Enable Everything",
+            .search, "Everything", "Enable Everything index",
             note: "Off unloads the Everything index, stops its walk and its following of file changes, and hides its asterisk "
                 + "in the search window, the search bar and the file server; the Toggle Everything shortcut does nothing. "
                 + "Searches asking for Everything are refused. The saved index stays on disk: cling_everything delete "
@@ -337,9 +337,9 @@ enum MCPSettingsBridge {
 
         // Drives & Volumes
         bool("disableAutomaticVolumeIndexing", .disableAutomaticVolumeIndexing, row(
-            .volumes, "", "Don't index new volumes automatically",
-            subtitle: "When on, a volume connected for the first time is not indexed until you enable it below. Volumes you've already indexed keep refreshing on their own.",
-            note: "Needs Cling Pro.",
+            .volumes, "", "Index new volumes automatically",
+            subtitle: "When off, a volume connected for the first time is not indexed until you enable it below. Volumes you've already indexed keep refreshing on their own.",
+            note: "The reverse of its Settings toggle: true means a volume connected for the first time is not indexed until it is enabled. Needs Cling Pro.",
             keywords: ["external", "usb", "drive", "volume"]
         ), pro: true),
 

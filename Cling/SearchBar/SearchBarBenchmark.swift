@@ -661,9 +661,25 @@
                 SettingsNavigation.shared.selection = SettingsCategory(rawValue: pane) ?? .general
                 WM.open("settings")
                 await settle(1500)
-                // `-searchBarShowcaseScrollToEnd` for the bottom of a long pane.
+                // `-searchBarShowcaseSettingsHeight <points>` for a taller window, centred on the screen.
+                if let height = argument("-searchBarShowcaseSettingsHeight").flatMap(Double.init),
+                   let window = NSApp.windows.first(where: { $0.isVisible && $0.title == "Settings" }), let screen = window.screen
+                {
+                    var frame = window.frame
+                    frame.size.height = min(height, screen.visibleFrame.height)
+                    frame.origin.y = screen.visibleFrame.midY - frame.height / 2
+                    window.setFrame(frame, display: true)
+                    await settle(500)
+                }
+                // `-searchBarShowcaseScrollToEnd` for the bottom of a long pane, kept there as rows fill in.
                 if CommandLine.arguments.contains("-searchBarShowcaseScrollToEnd") {
                     scrollToEnd()
+                    Task { @MainActor in
+                        for _ in 0 ..< 200 {
+                            try? await Task.sleep(for: .seconds(3))
+                            scrollToEnd()
+                        }
+                    }
                 }
                 // Nothing focused, so a Mac with keyboard navigation on draws no focus ring on the first control.
                 NSApp.keyWindow?.makeFirstResponder(nil)
@@ -685,6 +701,7 @@
                     try? await Task.sleep(for: .milliseconds(250))
                 }
                 await settle(1000)
+                await showcaseDrive()
                 // Searches run only for an active window, which a Mac with another app in front never makes this one.
                 WM.mainWindowActive = true
                 FUZZY.query = query
@@ -755,9 +772,24 @@
                 try? await Task.sleep(for: .milliseconds(250))
             }
             await settle(1000)
+            await showcaseDrive()
             await setQuery(query)
             await settle(1500)
             SB.moveSelection(by: 1)
+        }
+
+        /// `-searchBarShowcaseDrive <name>` searches that drive alone, once it is mounted and enabled.
+        private static func showcaseDrive() async {
+            guard let name = argument("-searchBarShowcaseDrive") else { return }
+            let readyBy = Date().addingTimeInterval(60)
+            while Date() < readyBy {
+                if let drive = FUZZY.enabledVolumes.first(where: { $0.name.string == name }), FUZZY.volumeEngines[drive] != nil {
+                    FUZZY.volumeFilter = drive
+                    await settle(1000)
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
         }
 
         private static func argument(_ name: String) -> String? {

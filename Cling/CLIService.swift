@@ -714,7 +714,8 @@ extension FuzzyClient {
                         let following = FUZZY.followingStatus(volume)
                         let health = FUZZY.followedDriveHealth(volume)?.level.verdict
                         let unwell = health.flatMap { $0 == DriveHealth.Level.good.verdict ? nil : ", \($0)" } ?? ""
-                        lines.append("  \(volume.name.string) (\(volume.shellString)): \(status)\(following.map { ", \($0)" } ?? "")\(unwell)")
+                        let reindex = FUZZY.volumesNeedingWalk[volume] != nil ? ", needs a reindex" : ""
+                        lines.append("  \(volume.name.string) (\(volume.shellString)): \(status)\(following.map { ", \($0)" } ?? "")\(unwell)\(reindex)")
                         let volFile = volumeIndexFile(volume)
                         let lastIndexedAt = volFile.exists ? volFile.timestamp : nil
                         volumeStatuses.append(ClingVolumeStatus(

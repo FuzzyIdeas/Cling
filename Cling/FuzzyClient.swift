@@ -565,6 +565,11 @@ class FuzzyClient {
     /// The mounted drives whose changes are followed into their indexes, and the ones about to be.
     @ObservationIgnored var volumeWatchers: [FilePath: VolumeWatcher] = [:]
     @ObservationIgnored var volumesStartingToFollow: Set<FilePath> = []
+    /// Drives whose indexes may be missing changes only a walk would find, with why: searching one offers the walk.
+    var volumesNeedingWalk: [FilePath: String] = DriveWalksNeeded.read()
+    /// Drives due a walk nobody asked for, waiting for them to go quiet first.
+    var volumesWaitingForQuiet: Set<FilePath> = []
+    @ObservationIgnored var quietWaits: [FilePath: DriveQuiet] = [:]
     @ObservationIgnored var smbMetadataCaches: [FilePath: SMBMetadataCache] = [:]
     @ObservationIgnored var recentsEngine = SearchEngine()
 
@@ -718,6 +723,7 @@ class FuzzyClient {
             // A drive let go of for its unmount is gone now, and is followed afresh if it comes back.
             for volume in oldValue where !externalVolumes.contains(volume) {
                 DriveRelease.shared.forget(volume.string)
+                stopWaitingForQuiet(volume)
             }
             indexStaleExternalVolumes()
             syncVolumeFollowing()

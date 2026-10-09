@@ -490,6 +490,7 @@ struct VolumeCommand: ParsableCommand {
         case disable
         case follow
         case unfollow
+        case skipReindex = "skip-reindex"
         case interval
         case remove
     }
@@ -501,13 +502,14 @@ struct VolumeCommand: ParsableCommand {
         cling volume list
         cling volume enable|disable <volume>
         cling volume follow|unfollow <volume>        live updates on or off; the reindex interval still applies
+        cling volume skip-reindex <volume>           keep its index until the next scheduled reindex
         cling volume interval <volume> <seconds>     3600 (1 hour) to 2419200 (4 weeks)
         cling volume remove <volume>                 a disconnected volume's index
         Reindex a volume now with: cling reindex --scope /Volumes/<name>
         """
     )
 
-    @Argument(help: "list, enable, disable, follow, unfollow, interval or remove")
+    @Argument(help: "list, enable, disable, follow, unfollow, skip-reindex, interval or remove")
     var action: Action = .list
 
     @Argument(help: "The volume's name or path")

@@ -87,8 +87,25 @@ final class DriveHealth: @unchecked Sendable {
     /// A change waiting longer than this to reach the index leaves Cling behind the drive.
     static let behindAfter: CFTimeInterval = 30
 
-    var snapshot: Snapshot {
-        let now = CFAbsoluteTimeGetCurrent()
+    /// The drive mounted at `volume`, kept by its mount point until Cling quits.
+    static func of(_ volume: String) -> DriveHealth {
+        registryLock.withLock {
+            if let health = registry[volume] {
+                return health
+            }
+            let health = DriveHealth()
+            registry[volume] = health
+            return health
+        }
+    }
+
+    static func existing(_ volume: String) -> DriveHealth? {
+        registryLock.withLock { registry[volume] }
+    }
+
+    /// The last 10 minutes as they stand at `date`.
+    func snapshot(at date: Date = Date()) -> Snapshot {
+        let now = date.timeIntervalSinceReferenceDate
         return lock.withLock {
             settle(now)
             prune(now)
@@ -111,22 +128,6 @@ final class DriveHealth: @unchecked Sendable {
                 changes: changes, drops: drops, since: Date(timeIntervalSinceReferenceDate: started), lastEject: lastEject
             )
         }
-    }
-
-    /// The drive mounted at `volume`, kept by its mount point until Cling quits.
-    static func of(_ volume: String) -> DriveHealth {
-        registryLock.withLock {
-            if let health = registry[volume] {
-                return health
-            }
-            let health = DriveHealth()
-            registry[volume] = health
-            return health
-        }
-    }
-
-    static func existing(_ volume: String) -> DriveHealth? {
-        registryLock.withLock { registry[volume] }
     }
 
     /// A batch of changes is being applied on the calling thread, `arrived` when its first change came as it was made.

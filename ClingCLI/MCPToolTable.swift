@@ -275,8 +275,8 @@ extension MCPServer {
 
     static func volumes(_ a: [String: Any]) throws -> ToolOutput {
         let action = argument(a["action"] ?? "list")
-        guard ["list", "enable", "disable", "follow", "unfollow", "interval", "remove"].contains(action) else {
-            throw ClingMCPError("action must be list, enable, disable, follow, unfollow, interval or remove")
+        guard ["list", "enable", "disable", "follow", "unfollow", "skip-reindex", "interval", "remove"].contains(action) else {
+            throw ClingMCPError("action must be list, enable, disable, follow, unfollow, skip-reindex, interval or remove")
         }
         let volume = a["volume"].map { argument($0) } ?? ""
         let seconds = a["seconds"].map { argument($0) } ?? ""
@@ -508,7 +508,7 @@ extension MCPServer {
             name: "cling_everything",
             description: "The Everything index's switch and its saved files. status says whether Everything is on, its "
                 + "state (off, unloaded, loading, indexing, ready), its entry count while loaded, and how much disk its "
-                + "saved index takes. on and off change the everythingEnabled setting, as Enable Everything in Settings > "
+                + "saved index takes. on and off change the everythingEnabled setting, as Enable Everything index in Settings > "
                 + "Search does: off stops its walk and its following of file changes, unloads it, refuses searches that ask "
                 + "for it, and hides its asterisk and shortcut in the window, the search bar and the file server, keeping "
                 + "the saved index on disk. on starts nothing; the next Everything search loads the saved index, or walks "
@@ -653,14 +653,19 @@ extension MCPServer {
                 + "flagged (perFileLatencyWhileWritten, slowestEventWhileWritten) and left out of the verdict: macOS "
                 + "holds Cling's reads back then on purpose. minutesBehind (how long a change had waited over 30 "
                 + "seconds to reach the index) counts either way: a drive written to without end that Cling can't "
-                + "keep up with. Use it to find the drive slowing things down, then unfollow that one. "
+                + "keep up with. Use it to find the drive slowing things down, then unfollow that one. A drive whose "
+                + "index may be missing changes only a walk would find (it was unplugged without being ejected, "
+                + "formatted again, its change history started over, or too much changed during a walk) is not walked "
+                + "on its own: needsReindex gives why, searching it in the app offers Reindex or Skip, and its reindex "
+                + "interval still walks it. Interval walks wait for the drive to go a minute without changes "
+                + "(waitingForQuiet). skip-reindex clears needsReindex, as Skip does. "
                 + "interval sets how often it is walked again, which is what finds "
                 + "changes made while the drive was connected to another computer, in seconds from 3600 (1 hour) to "
                 + "2419200 (4 weeks). remove deletes a disconnected volume's saved index; a connected one can only be "
                 + "disabled. To walk one now, use cling_reindex with its path. Whether new volumes are indexed on "
                 + "their own is the disableAutomaticVolumeIndexing setting. list: open; the rest need Pro and: " + gate,
             inputSchema: ["type": "object", "properties": [
-                "action": ["type": "string", "enum": ["list", "enable", "disable", "follow", "unfollow", "interval", "remove"]],
+                "action": ["type": "string", "enum": ["list", "enable", "disable", "follow", "unfollow", "skip-reindex", "interval", "remove"]],
                 "volume": ["type": "string", "description": "its name or its path under /Volumes"],
                 "seconds": ["type": "integer", "description": "for interval"],
             ]],

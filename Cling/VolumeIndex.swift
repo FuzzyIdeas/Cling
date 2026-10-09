@@ -230,8 +230,9 @@ extension FuzzyClient {
             mainActor {
                 let stale = self.staleExternalVolumes(amongMounted: mounted)
                 guard !stale.isEmpty else { return }
-                // Nobody asked for these: the reads give way to everything else on the drive.
-                self.indexVolumes(stale, priority: .background)
+                // Nobody asked for these: they wait for each drive to go quiet, and the reads give way to everything
+                // else on it.
+                self.walkWhenQuiet(stale)
             }
         }
     }
@@ -311,6 +312,7 @@ extension FuzzyClient {
 
         backgroundIndexing = true
         volumesIndexing.insert(volume)
+        stopWaitingForQuiet(volume)
         // The walk replaces the engine being followed, which is followed again from where the walk started.
         stopFollowing(volume)
         let checkpointFile = volumeCheckpointFile(volume)
@@ -357,7 +359,8 @@ extension FuzzyClient {
                 cancelled: { Task.isCancelled || DriveRelease.shared.isReleasing(volume.string) }
             )
             DriveRelease.shared.stopReading(volume.string)
-            let walkAgain = walkWatch?.finish() ?? []
+            // Nil when too much changed during the walk to say where.
+            let walkAgain: [String]? = walkWatch == nil ? [] : walkWatch!.finish()
 
             let wasCancelled = Task.isCancelled || DriveRelease.shared.isReleasing(volume.string)
             let file = volumeIndexFile(volume)
@@ -374,7 +377,7 @@ extension FuzzyClient {
                         // A drive that isn't followed after the walk, and whose history ends with the mount, can give
                         // what changes from here on only until it is unmounted.
                         let unwatched = !(mounted?.keepsHistory ?? true) && Defaults[.unfollowedVolumes].contains(volume)
-                        mounted.map { $0.state(FollowedPosition(mounted: $0, eventID: walkStart, dirty: unwatched, missed: nil)).save(volume) }
+                        mounted.map { $0.state(FollowedPosition(mounted: $0, eventID: walkStart, dirty: unwatched ? "live updates were off" : nil, missed: nil)).save(volume) }
                         log.debug("Indexed volume \(volumeName): \(result.added) entries -> \(file.string)")
                     }
                 }
@@ -394,6 +397,10 @@ extension FuzzyClient {
                     }
                     self.updateIndexedCount()
                     IndexWalks.record(.volume(volume), started: started)
+                    self.forgetWalkNeeded(volume)
+                    if walkAgain == nil {
+                        self.noteWalkNeeded(volume, "too much changed during its last reindex")
+                    }
                     self.logActivity("Indexed volume: \(volumeName) (\(result.added.formatted()) files)", operationKey: opKey)
                     if !Defaults[.metadataPrunedVolumes].contains(volume) {
                         Defaults[.metadataPrunedVolumes].append(volume)
@@ -412,7 +419,7 @@ extension FuzzyClient {
                     self.performSearch()
                 }
                 // A cancelled walk left the engine as it was, which picks up from its saved position.
-                self.followVolume(volume, walkedFrom: wasCancelled ? nil : walkStart, walkAgain: wasCancelled ? [] : walkAgain)
+                self.followVolume(volume, walkedFrom: wasCancelled ? nil : walkStart, walkAgain: wasCancelled ? [] : walkAgain ?? [])
                 batchTracker?.runCompletionIfNeeded(shouldRunCompletion)
             }
         }
@@ -471,6 +478,8 @@ extension FuzzyClient {
 
     func removeVolume(_ volume: FilePath) {
         stopFollowing(volume, save: false)
+        stopWaitingForQuiet(volume)
+        forgetWalkNeeded(volume)
         cancelVolumeIndexing(volume: volume)
         volumeIndexTasks[volume] = nil
         releaseInBackground(volumeEngines.removeValue(forKey: volume))

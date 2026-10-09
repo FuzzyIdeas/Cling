@@ -22,6 +22,7 @@
 
 - **Fuzzy search across millions of files** in under 100ms
 - **Search bar** that floats over any app like Spotlight, or sits pinned to the desktop as a small search field
+- **App launcher** in the search bar: installed apps whose names match come first
 - **Quick Filters** for file types (Images, Videos, Documents, Code, PDFs, etc.) and folder restrictions
 - **Act on files instantly** with hotkeys, scripts, drag and drop, or batch rename
 - **Smart defaults** showing your most recently changed files on launch
@@ -29,14 +30,14 @@
 - **Extension-aware queries** like `.png icon` or `.pdf invoice`
 - **Search operators** to filter and exclude results as you type
 - **Configurable search scopes** (Home, Library, Cloud Storage, Applications, System, Root) with `.fsignore` support
-- **External volume indexing** with persistent indexes that work even when unmounted
+- **External volume indexing** with persistent indexes that work even when unmounted, and live updates while connected
 - **Cloud storage** search across iCloud Drive, Dropbox, Google Drive and other cloud folders, files kept online only included, without downloading them
 - **Live filesystem tracking** via FSEvents
 - **Index size view** showing how many files each scope and folder adds to the index, with a way to prune the ones you don't need
 - **Send securely** to share files over an encrypted, auto-expiring link
 - **CLI tool** for terminal-based searching
 - **MCP server** so an AI agent can search, explain why a file is missing and change indexes, ignore rules, filters and settings
-- **the Everything index**: every file on the local disks, with no ignore rules, like Everything on Windows
+- **the Everything index**: every file on the local disks, with no ignore rules, like Everything on Windows, or turned off entirely
 
 ---
 
@@ -109,7 +110,7 @@ What does count:
 - **Extension table**: one table of file extensions shared by every index, usually under 10 MB
 - **Search buffers**: a search over millions of files works in memory that goes back to the system as soon as the search is done
 
-The **Everything** index stays on disk until you turn it on, and leaves memory 10 minutes after you turn it off or close the window.
+The **Everything** index stays on disk until you turn it on, and leaves memory 10 minutes after you turn it off or close the window. Turning Everything off in Settings > Search can also delete its saved index.
 
 On disk, an index takes about 160 bytes per file. The index size view in the status bar shows each index's files, size on disk, memory and when it was last indexed in full.
 
@@ -123,7 +124,7 @@ The most CPU-intensive operations are:
 
 When Cling launches, each index catches up by replaying the file changes made since it was saved. While Cling is closed, a small background job gathers those changes every few hours, waiting for a moment when you're not using the Mac, so the next launch has less to replay. It can be turned off with *Watch file events while the app is quit* in Settings > Search.
 
-A scope is walked again from scratch only when there is no history to replay: after a macOS update, when its ignore rules changed while Cling was closed, or when macOS threw away its file change history. External drives are walked again once a week by default, which can be changed per drive in Settings > Drives & Volumes.
+A scope is walked again from scratch only when there is no history to replay: after a macOS update, when its ignore rules changed while Cling was closed, or when macOS threw away its file change history. External drives follow their changes the same way while connected, and are walked again once a week by default, once the drive has gone a minute without changes. Both can be changed per drive in Settings > Drives & Volumes. A drive unplugged without ejecting is walked again only when you ask, from the offer to reindex it shown when you search it.
 
 Searching will consume CPU in short bursts. In a Release build, a typical search across 9+ million files completes in under 100ms. When Cling is in background, it will pause searching and consume very little CPU for processing file changes.
 

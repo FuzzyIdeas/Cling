@@ -22,6 +22,8 @@ struct VolumeLiveState: Codable, Equatable {
     /// Changes were made that the index may not hold and the drive's history can't give again: it went away without
     /// being ejected, changes were still arriving when it was let go of, or more were left unapplied than were kept.
     var dirty: Bool?
+    /// Why it is dirty, as searching the drive gives it.
+    var why: String?
     /// Paths changed that weren't applied yet, with their FSEvents flags, on a drive whose history ends with the mount.
     var missed: [String: UInt32]?
 
@@ -94,7 +96,7 @@ struct MountedVolume: Sendable {
     func state(_ position: FollowedPosition) -> VolumeLiveState {
         VolumeLiveState(
             volumeUUID: volumeUUID, historyUUID: Self.historyUUID(of: device) ?? historyUUID, eventID: position.eventID,
-            dirty: position.dirty ? true : nil, missed: position.missed?.isEmpty == false ? position.missed : nil
+            dirty: position.dirty != nil ? true : nil, why: position.dirty, missed: position.missed?.isEmpty == false ? position.missed : nil
         )
     }
 }
@@ -105,7 +107,8 @@ struct MountedVolume: Sendable {
 struct FollowedPosition: Sendable {
     let mounted: MountedVolume
     let eventID: UInt64
-    let dirty: Bool
+    /// Why the index may hold less than the drive's history can give again, nil when it doesn't.
+    let dirty: String?
     let missed: [String: UInt32]?
 }
 
@@ -116,11 +119,9 @@ enum VolumeCatchUp: Equatable {
     /// Replays the drive's history from the saved position, and checks the paths that changed without being applied
     /// before it went: only what changed is read from the drive.
     case replay(UInt64, missed: [String: UInt32])
-    /// Follows changes from now on, with no saved position to replay from. The index is as current as its last walk,
-    /// which the drive's reindex interval keeps it to.
+    /// Follows changes from now on, with no saved position to replay from, or none that means anything any more. The
+    /// index is as current as its last walk, which the drive's reindex interval keeps it to.
     case live
-    /// The saved index is of something else, and the drive is walked again.
-    case walk(String)
 
     /// A drive taken to another Mac and written to there comes back with a history that leaves those changes out, and
     /// with nothing that says so: its UUID reads as unset until this Mac changes something on it, then as it was before
@@ -128,29 +129,40 @@ enum VolumeCatchUp: Equatable {
     static func plan(saved: VolumeLiveState?, mounted: MountedVolume) -> Self {
         guard let saved, saved.eventID > 0 else { return .live }
         if !saved.volumeUUID.isEmpty, !mounted.volumeUUID.isEmpty, saved.volumeUUID != mounted.volumeUUID {
-            return .walk("it was formatted again")
+            return .live
         }
         if mounted.keepsHistory {
             if let had = saved.historyUUID, let has = mounted.historyUUID, had != has {
-                return .walk("its change history started over")
-            }
-            // Pulled out, FSEvents may not have written its last changes to the drive.
-            if saved.dirty == true {
-                return .walk("it went away without being ejected")
+                return .live
             }
             return .replay(saved.eventID, missed: [:])
         }
         // exFAT and FAT keep a history only since the mount, under a UUID of its own, and only in memory, where the
-        // oldest of it goes first: a replay gives what is left with nothing to say what isn't. One from a position
-        // that was clean when it was saved is the changes made since, which a menubar app away for a moment leaves
-        // few of. One from a position left with more changes than it held would find the start already gone.
-        if saved.dirty == true {
-            return .walk("it went away with changes not in its index")
-        }
+        // oldest of it goes first: a replay gives what is left with nothing to say what isn't. On the same mount that
+        // is whatever changed since, which a menubar app away for a moment leaves little of.
         if let had = saved.historyUUID, had == mounted.historyUUID {
             return .replay(saved.eventID, missed: [:])
         }
         return .replay(saved.eventID, missed: saved.missed ?? [:])
+    }
+
+    /// Why the saved index may be missing changes that no replay gives back, which only a walk would find. Nothing
+    /// walks the drive for it: a drive can hold millions of files behind a slow connection, and searching it offers
+    /// the walk instead (`FuzzyClient.volumesNeedingWalk`).
+    static func walkNeeded(saved: VolumeLiveState?, mounted: MountedVolume) -> String? {
+        guard let saved, saved.eventID > 0 else { return nil }
+        if !saved.volumeUUID.isEmpty, !mounted.volumeUUID.isEmpty, saved.volumeUUID != mounted.volumeUUID {
+            return "formatted again"
+        }
+        if mounted.keepsHistory {
+            if let had = saved.historyUUID, let has = mounted.historyUUID, had != has {
+                return "change history started over"
+            }
+            // Pulled out, FSEvents may not have written its last changes to the drive.
+            return saved.dirty == true ? saved.why ?? "unplugged without being ejected" : nil
+        }
+        // One left with more changes than its history holds would find the start of them already gone.
+        return saved.dirty == true ? saved.why ?? "unmounted while changes were still arriving" : nil
     }
 }
 
@@ -292,18 +304,19 @@ final class VolumeWatcher: @unchecked Sendable {
         let applied = max(startID, updater.lastAppliedEventID)
         // APFS and HFS+ keep their history, and the next mount replays it.
         guard !mounted.keepsHistory else {
-            return FollowedPosition(mounted: mounted, eventID: applied, dirty: vanished.value, missed: nil)
+            return FollowedPosition(mounted: mounted, eventID: applied, dirty: vanished.value ? "unplugged without being ejected" : nil, missed: nil)
         }
         let missed = unapplied.after(applied)
         // Changes that kept arriving after the drive was let go of were made while it was being unmounted, and a
         // forced unmount drops the ones not delivered yet.
         let unsettled = releasedBusy.value || unapplied.arrivedAfterLetGo || !settled && CFAbsoluteTimeGetCurrent() - unapplied.lastNoted < 5
-        let dirty = vanished.value || missed == nil || unsettled || unwatched
-        if dirty, ending {
-            let why = vanished.value ? "it went away without being ejected" : missed == nil
-                ? "too many arrived after \(applied)"
-                : unsettled ? "they were still arriving" : "it isn't followed any more"
-            log.info("\(self.volume.string, privacy: .public) may have changes not in its index: \(why, privacy: .public)")
+        let dirty: String? = vanished.value
+            ? "unplugged without being ejected"
+            : missed == nil || unsettled
+                ? "unmounted while changes were still arriving"
+                : unwatched ? "live updates were off" : nil
+        if let dirty, ending {
+            log.info("\(self.volume.string, privacy: .public) may have changes not in its index: \(dirty, privacy: .public)")
         }
         return FollowedPosition(mounted: mounted, eventID: applied, dirty: dirty, missed: missed)
     }
@@ -471,9 +484,9 @@ final class WalkWatch: @unchecked Sendable {
         self.changed = changed
     }
 
-    /// Stops, and gives the paths to walk again: the outermost folders that changed, or everything at the top of the
-    /// drive when changes were dropped or more folders changed than are kept, since then nothing says where.
-    func finish() -> [String] {
+    /// Stops, and gives the paths to walk again: the outermost folders that changed. Nil when changes were dropped or
+    /// more folders changed than are kept, since then nothing says where, and only the whole drive walked again would.
+    func finish() -> [String]? {
         stream.stop()
         return changed.toWalk()
     }
@@ -483,7 +496,7 @@ final class WalkWatch: @unchecked Sendable {
             self.root = root
         }
 
-        /// Past this many, the whole drive is walked again instead.
+        /// Past this many, the drive is left needing a walk instead.
         static let most = 20000
 
         func note(_ events: [FSChange]) {
@@ -508,11 +521,9 @@ final class WalkWatch: @unchecked Sendable {
             }
         }
 
-        func toWalk() -> [String] {
+        func toWalk() -> [String]? {
             let (lost, folders) = lock.withLock { (lostTrack, folders) }
-            guard lost else { return FSEventsHistory.outermost(Array(folders)) }
-            let top = (try? FileManager.default.contentsOfDirectory(atPath: root)) ?? []
-            return top.filter { !metadata.contains($0) }.map { root + "/" + $0 }
+            return lost ? nil : FSEventsHistory.outermost(Array(folders))
         }
 
         private let root: String
@@ -524,6 +535,81 @@ final class WalkWatch: @unchecked Sendable {
 
     private let stream: FSChangeStream
     private let changed: ChangedFolders
+}
+
+// MARK: - DriveQuiet
+
+/// Tells when a drive has gone `after` seconds without a change, once, for a walk nobody asked for to start then.
+final class DriveQuiet: @unchecked Sendable {
+    init?(volume: FilePath, device: dev_t, then: @escaping @Sendable () -> Void) {
+        let queue = DispatchQueue(label: "com.lowtechguys.Cling.driveQuiet", qos: .background)
+        let changed = Changed()
+        guard let stream = FSChangeStream(device: device, root: volume.string, since: nil, latency: VolumeWatcher.latency, queue: queue, handler: { _ in
+            changed.now()
+        }) else {
+            return nil
+        }
+        self.stream = stream
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + Self.after, repeating: 10)
+        timer.setEventHandler { [weak self] in
+            guard let self, changed.quietFor >= Self.after else { return }
+            cancel()
+            then()
+        }
+        self.timer = timer
+        timer.resume()
+    }
+
+    static let after: TimeInterval = 60
+
+    func cancel() {
+        let first = lock.withLock {
+            defer { cancelled = true }
+            return !cancelled
+        }
+        guard first else { return }
+        timer.cancel()
+        stream.stop()
+    }
+
+    private final class Changed: @unchecked Sendable {
+        var quietFor: TimeInterval {
+            CFAbsoluteTimeGetCurrent() - lock.withLock { last }
+        }
+
+        func now() {
+            lock.withLock { last = CFAbsoluteTimeGetCurrent() }
+        }
+
+        private let lock = NSLock()
+        private var last = CFAbsoluteTimeGetCurrent()
+    }
+
+    private let stream: FSChangeStream
+    private var timer: DispatchSourceTimer!
+    private let lock = NSLock()
+    private var cancelled = false
+}
+
+// MARK: - DriveWalksNeeded
+
+/// The drives whose indexes may be missing changes only a walk would find, with why, beside the indexes.
+enum DriveWalksNeeded {
+    static let file = indexFolder / "drive-walks-needed.json"
+
+    static func read() -> [FilePath: String] {
+        guard let data = try? Data(contentsOf: file.url), let drives = try? JSONDecoder().decode([String: String].self, from: data) else {
+            return [:]
+        }
+        return Dictionary(uniqueKeysWithValues: drives.compactMap { path, reason in path.filePath.map { ($0, reason) } })
+    }
+
+    static func save(_ drives: [FilePath: String]) {
+        let drives = Dictionary(uniqueKeysWithValues: drives.map { ($0.key.string, $0.value) })
+        guard let data = try? JSONEncoder().encode(drives) else { return }
+        try? data.write(to: file.url, options: .atomic)
+    }
 }
 
 // MARK: - DriveRelease
@@ -646,12 +732,13 @@ extension FuzzyClient {
         volumesStartingToFollow.insert(volume)
         Task.detached(priority: .background) {
             let mounted = MountedVolume.read(volume)
+            // After the save the drive's last unmount queued, if it is still going.
+            let saved = mounted?.isLocal == true && walkedFrom == nil ? volumeSaveQueue.sync { VolumeLiveState.read(volume) } : nil
             let plan: VolumeCatchUp? = mounted.flatMap { mounted in
                 guard mounted.isLocal else { return nil }
-                // After the save the drive's last unmount queued, if it is still going.
-                let saved = volumeSaveQueue.sync { VolumeLiveState.read(volume) }
                 return walkedFrom.map { .replay($0, missed: [:]) } ?? VolumeCatchUp.plan(saved: saved, mounted: mounted)
             }
+            let walkNeeded = mounted.flatMap { VolumeCatchUp.walkNeeded(saved: saved, mounted: $0) }
             let rules = plan != nil ? volumeWalkRules(volume) : nil
             await MainActor.run {
                 self.volumesStartingToFollow.remove(volume)
@@ -667,13 +754,12 @@ extension FuzzyClient {
                       !self.unfollowedVolumes.contains(volume), !DriveRelease.shared.isReleasing(volume.string)
                 else { return }
 
+                if let walkNeeded {
+                    self.noteWalkNeeded(volume, walkNeeded)
+                }
                 let since: UInt64?
                 var missed: [String: UInt32] = [:]
                 switch plan {
-                case let .walk(reason):
-                    log.info("\(volume.string, privacy: .public): walking again, \(reason, privacy: .public)")
-                    self.indexVolume(volume, priority: .background)
-                    return
                 case let .replay(id, missedPaths):
                     since = id
                     missed = missedPaths
@@ -742,16 +828,77 @@ extension FuzzyClient {
         volumeWatchers.values.reduce(0) { $0 + $1.updater.changes }
     }
 
-    /// FSEvents has no history to give for the drive and asks for all of it to be read again. Held to once a day: a
-    /// walk is followed from where it started, which could ask again.
+    /// FSEvents has no history to give for the drive and asks for all of it to be read again. Not within a day of a
+    /// walk: one is followed from where it started, which could ask again.
     func volumeHistoryLost(_ volume: FilePath) {
         let walked = IndexWalks.read().walks[IndexWalks.Key.volume(volume).string]?.finished ?? .distantPast
         guard Date().timeIntervalSince(walked) > 24 * 60 * 60 else {
             log.info("\(volume.string, privacy: .public): FSEvents asked for a walk, the last one was \(walked.formatted())")
             return
         }
-        log.info("\(volume.string, privacy: .public): FSEvents asked for a walk")
-        indexVolume(volume, priority: .background)
+        noteWalkNeeded(volume, "FSEvents lost track of its changes")
+    }
+
+    /// Records that only a walk would find what the drive's index may be missing, for searching it to offer. Kept
+    /// across launches, until the drive is walked or the offer is turned down.
+    func noteWalkNeeded(_ volume: FilePath, _ reason: String) {
+        log.info("\(volume.string, privacy: .public) needs a walk: \(reason, privacy: .public)")
+        guard volumesNeedingWalk[volume] != reason else { return }
+        volumesNeedingWalk[volume] = reason
+        DriveWalksNeeded.save(volumesNeedingWalk)
+    }
+
+    /// The drive was walked, or the walk it was offered was turned down: its index stays as it is until its reindex
+    /// interval comes around.
+    func forgetWalkNeeded(_ volume: FilePath) {
+        guard volumesNeedingWalk.removeValue(forKey: volume) != nil else { return }
+        DriveWalksNeeded.save(volumesNeedingWalk)
+    }
+
+    /// The mounted drives the current search reaches through a drive filter, among the ones needing a walk.
+    var searchedDrivesNeedingWalk: [FilePath] {
+        guard proactive, let volumeFilter, !volumesNeedingWalk.isEmpty else { return [] }
+        let searched = volumeFilter == .allDrives ? connectedDrives : [volumeFilter]
+        return searched.filter { volumesNeedingWalk[$0] != nil && externalVolumes.contains($0) && !volumesIndexing.contains($0) }
+    }
+
+    /// Walks the drives nobody asked to walk once each has gone a minute without changes: a walk under a copy slows
+    /// both, and what the copy changes meanwhile has to be read again. A network share's changes can't be seen, and it
+    /// is walked at once.
+    func walkWhenQuiet(_ volumes: [FilePath]) {
+        for volume in volumes where !volumesIndexing.contains(volume) && !volumesWaitingForQuiet.contains(volume) {
+            volumesWaitingForQuiet.insert(volume)
+            Task.detached(priority: .background) {
+                let mounted = MountedVolume.read(volume)
+                await MainActor.run {
+                    guard self.volumesWaitingForQuiet.contains(volume) else { return }
+                    guard let mounted, mounted.isLocal, let quiet = DriveQuiet(volume: volume, device: mounted.device, then: {
+                        Task { @MainActor in self.quietEnough(volume) }
+                    }) else {
+                        self.volumesWaitingForQuiet.remove(volume)
+                        if mounted != nil {
+                            self.indexVolumes([volume], priority: .background)
+                        }
+                        return
+                    }
+                    self.quietWaits[volume] = quiet
+                    log.info("\(volume.string, privacy: .public): waiting for it to go quiet before walking it")
+                }
+            }
+        }
+    }
+
+    func stopWaitingForQuiet(_ volume: FilePath) {
+        volumesWaitingForQuiet.remove(volume)
+        quietWaits.removeValue(forKey: volume)?.cancel()
+    }
+
+    private func quietEnough(_ volume: FilePath) {
+        guard volumesWaitingForQuiet.contains(volume) else { return }
+        stopWaitingForQuiet(volume)
+        guard enabledVolumes.contains(volume), externalVolumes.contains(volume) else { return }
+        log.info("\(volume.string, privacy: .public) went quiet, walking it")
+        indexVolumes([volume], priority: .background)
     }
 
     /// For `cling status`: whether a drive's changes are followed, and whether it is still catching up with what
@@ -764,12 +911,15 @@ extension FuzzyClient {
     /// What following the drive has cost lately, while it is followed.
     func followedDriveHealth(_ volume: FilePath) -> DriveHealth.Snapshot? {
         guard volumeWatchers[volume] != nil else { return nil }
-        return DriveHealth.existing(volume.string)?.snapshot
+        return DriveHealth.existing(volume.string)?.snapshot()
     }
 
     /// The drives whose live updates can be turned on or off: indexed, connected and local.
     var followableVolumes: [FilePath] {
-        enabledVolumes.filter { externalVolumes.contains($0) && !networkVolumes.contains($0) && (volumeEngines[$0] != nil || volumesIndexing.contains($0)) }
+        // Read for its change when a drive's index loads or is replaced, which redraws whatever lists these: the
+        // engines themselves aren't observed.
+        _ = indexedCount
+        return enabledVolumes.filter { externalVolumes.contains($0) && !networkVolumes.contains($0) && (volumeEngines[$0] != nil || volumesIndexing.contains($0)) }
             .sorted { $0.name.string.localizedStandardCompare($1.name.string) == .orderedAscending }
     }
 
@@ -777,6 +927,7 @@ extension FuzzyClient {
     /// refuses leaves the drive mounted, and it is followed again.
     func driveWillUnmount(_ volume: FilePath) {
         stopFollowing(volume)
+        stopWaitingForQuiet(volume)
         if volumesIndexing.contains(volume) {
             cancelVolumeIndexing(volume: volume)
         }

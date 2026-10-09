@@ -683,6 +683,10 @@ extension CLIConfig {
         let following: String?
         /// Whether the drive's live updates are on; nil for a network share, which has none.
         let liveUpdates: Bool?
+        /// Why its index may be missing changes only a reindex would find, which Cling doesn't start on its own for.
+        let needsReindex: String?
+        /// Its interval reindex is due and waits for the drive to go a minute without changes.
+        let waitingForQuiet: Bool?
         let health: VolumeHealthInfo?
     }
 
@@ -770,6 +774,8 @@ extension CLIConfig {
                 readOnly: FUZZY.readOnlyVolumes.contains(v),
                 following: FUZZY.followingStatus(v),
                 liveUpdates: local == false ? nil : !FUZZY.unfollowedVolumes.contains(v),
+                needsReindex: FUZZY.volumesNeedingWalk[v],
+                waitingForQuiet: FUZZY.volumesWaitingForQuiet.contains(v) ? true : nil,
                 health: FUZZY.followedDriveHealth(v).map(VolumeHealthInfo.init)
             )
         }.map(withSavedSize)
@@ -780,7 +786,8 @@ extension CLIConfig {
                 let state = !v.enabled ? "disabled" : v.indexing ? "indexing" : v.indexed ? "\(v.count.formatted()) entries" : "not indexed"
                 let size = v.saved.map { ", \($0) on disk" } ?? ""
                 let live = v.following.map { ", \($0)" } ?? (v.enabled && v.mounted && v.liveUpdates == false ? ", live updates off" : "")
-                let line = "\(v.name) (\(v.path))\(v.mounted ? "" : " [disconnected]"): \(state)\(size)\(live), reindexed every \(v.reindexInterval)"
+                let reindex = v.needsReindex.map { ", needs a reindex (\($0))" } ?? (v.waitingForQuiet == true ? ", reindex waiting for the drive to go quiet" : "")
+                let line = "\(v.name) (\(v.path))\(v.mounted ? "" : " [disconnected]"): \(state)\(size)\(live)\(reindex), reindexed every \(v.reindexInterval)"
                 return v.health.map { line + "\n  " + $0.line } ?? line
             }
         if !proactive {
@@ -836,6 +843,9 @@ extension CLIConfig {
             } else if !Defaults[.unfollowedVolumes].contains(volume) {
                 Defaults[.unfollowedVolumes].append(volume)
             }
+        case "skip-reindex":
+            // What Skip does where searching the drive offers its reindex.
+            FUZZY.forgetWalkNeeded(volume)
         case "interval":
             guard let seconds = req.key.flatMap(TimeInterval.init), volumeIntervalRange.contains(seconds) else {
                 return ClingResponse(error: "interval takes seconds from \(Int(volumeIntervalRange.lowerBound)) (1 hour) to \(Int(volumeIntervalRange.upperBound)) (4 weeks). Got '\(req.key ?? "")'")

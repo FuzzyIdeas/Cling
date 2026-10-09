@@ -119,6 +119,8 @@ extension SearchBarController {
         case .window: switchToWindow()
         case .syntax: toggleSyntaxReference()
         case .settings: WM.open("settings")
+        case .reindexDrives: FUZZY.reindexDrives(FUZZY.searchedDrivesNeedingWalk)
+        case .skipDriveReindex: FUZZY.skipDriveReindex(FUZZY.searchedDrivesNeedingWalk)
         }
     }
 

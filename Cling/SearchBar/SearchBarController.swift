@@ -86,6 +86,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         var fieldOnly: Bool
         /// The stash is all there is to show, and the bar is only as tall as it needs.
         var stashOnly: Bool
+        /// Drives searched through a drive filter whose indexes may need a reindex.
+        var staleDrives: [FilePath]
     }
 
     /// Shortcut labels and the paste target for the hint bar, read once per summon: both come from
@@ -1142,7 +1144,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             everythingBlocked: EVERYTHING.blockedReason,
             everythingAvailable: EVERYTHING.available,
             fieldOnly: defaultList && defaultResults == .empty && STASH.files.isEmpty,
-            stashOnly: defaultList && defaultResults == .empty && !STASH.files.isEmpty
+            stashOnly: defaultList && defaultResults == .empty && !STASH.files.isEmpty,
+            staleDrives: fuzzy.searchedDrivesNeedingWalk
         )
     }
 
@@ -1263,6 +1266,15 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         }
         let count = inputs.list.count
         root.hintBar.status = inputs.defaultList ? "" : (count == 1 ? "1 result" : "\(count.formatted()) results")
+        root.hintBar.notice = inputs.staleDrives.isEmpty
+            ? nil
+            : SearchBarNotice(
+                text: FuzzyClient.reindexNotice(inputs.staleDrives), help: FUZZY.reindexReasons(inputs.staleDrives),
+                actions: [
+                    .init(id: .reindexDrives, title: "Reindex", help: nil),
+                    .init(id: .skipDriveReindex, title: "Skip", help: FuzzyClient.skipReindexHelp),
+                ]
+            )
     }
 
     // MARK: Selection, preview and QuickLook

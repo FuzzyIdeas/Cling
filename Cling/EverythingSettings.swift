@@ -11,7 +11,7 @@ import SwiftUI
 struct EverythingSettingsSection: View {
     var body: some View {
         Section("Everything") {
-            Toggle("Enable Everything", isOn: Binding(
+            Toggle("Enable Everything index", isOn: Binding(
                 get: { everythingEnabled },
                 set: { on in
                     if !on, everything.savedBytes > 0 {
