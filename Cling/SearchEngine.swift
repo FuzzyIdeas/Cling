@@ -1580,14 +1580,14 @@ final class SearchEngine: @unchecked Sendable {
 
     /// Thread-safe add for use during parallel walks and FSEvents.
     @discardableResult
-    func addPath(_ path: String, isDir: Bool) -> Int {
+    func addPath(_ path: String, isDir: Bool) -> Int? {
         lock.withLock { _addPath(path, isDir: isDir) }
     }
 
     /// Adds a path the index doesn't hold yet, saying whether it did.
     func addPathIfMissing(_ path: String, isDir: Bool) -> Bool {
         lock.withLock {
-            guard lookup(path) == nil else { return false }
+            guard lookup(path) == nil, hasRoom(for: path) else { return false }
             indexInsert(_insertPath(path, isDir: isDir))
             return true
         }
@@ -1857,6 +1857,12 @@ final class SearchEngine: @unchecked Sendable {
                 maxExt = max(maxExt, extIDs[i])
             }
             i &+= 1
+        }
+        // The file addresses path bytes with 32-bit offsets, which an engine never outgrows since `hasRoom(for:)`
+        // stops it at the limit; one that did anyway is left unsaved rather than crashing (CLING-AY).
+        guard liveBytes <= Int(UInt32.max) else {
+            slog.error("saveBinaryIndex: \(liveBytes) path bytes don't fit the file's 32-bit offsets, \(url.path) left as it was")
+            return false
         }
         let keep = !compacting
         let count = keep ? n : live
@@ -5405,16 +5411,23 @@ final class SearchEngine: @unchecked Sendable {
 
     // MARK: - Unlocked internals (caller must hold lock)
 
-    private func _addPath(_ path: String, isDir: Bool) -> Int {
+    private func _addPath(_ path: String, isDir: Bool) -> Int? {
         if let existing = lookup(path) {
             return existing
         }
+        guard hasRoom(for: path) else { return nil }
         let id = _insertPath(path, isDir: isDir)
         indexInsert(id)
         return id
     }
 
     /// Fills a freed slot or appends, with no duplicate check and no path index update. Caller must hold the lock.
+    /// Paths are found by 32-bit offsets into their bytes, so an engine takes paths up to 4 GB of them (tens of
+    /// millions of files) and stops there, rather than storing offsets that wrap around onto other paths.
+    private func hasRoom(for path: String) -> Bool {
+        allBytes.count + path.utf8.count <= Int(UInt32.max)
+    }
+
     private func _insertPath(_ path: String, isDir: Bool) -> Int {
         let byteOff = allBytes.count
         var bnStart = 0, segCount = 1
@@ -5545,6 +5558,7 @@ final class SearchEngine: @unchecked Sendable {
 
     /// Caller must hold the lock.
     private func _appendPath(_ path: String, isDir: Bool) {
+        guard hasRoom(for: path) else { return }
         let id = _insertPath(path, isDir: isDir)
         if pathIndexBuilt {
             indexInsert(id)
