@@ -21,7 +21,7 @@ struct Open: ParsableCommand {
         abstract: "Open files the way Cling's toolbar does",
         discussion: """
         With no flag, each path opens in its default app. The terminal, editor and shelf are the ones set in \
-        Cling Settings, Apps. The paths count as opened from Cling, so they rank higher in search and show in \
+        Cling Settings > Open With. The paths count as opened from Cling, so they rank higher in search and show in \
         recent files.
         """
     )

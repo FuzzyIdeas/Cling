@@ -809,7 +809,7 @@ private struct GeneralSettingsPane: View {
             }
 
             Section("Launchers") {
-                SettingRow(title: "Alfred workflow", detail: "Needs Alfred's Powerpack") {
+                SettingRow(title: "Alfred workflow") {
                     if Launchers.canInstallAlfredWorkflow {
                         Button("Install") { Launchers.installAlfredWorkflow() }
                     } else {

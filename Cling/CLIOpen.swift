@@ -45,14 +45,14 @@ extension FuzzyClient {
             revealInFinder(urls)
         case .terminal:
             guard let terminal = Defaults[.terminalApp].existingFilePath?.url else {
-                return "no terminal app is set in Cling Settings, Apps"
+                return "no terminal app is set in Cling Settings > Open With"
             }
             // A terminal opens folders, so a file opens its folder.
             let dirs = paths.map { $0.isDir ? $0.url : $0.dir.url }.uniqued
             NSWorkspace.shared.open(dirs, withApplicationAt: terminal, configuration: .init(), completionHandler: { _, _ in })
         case .editor:
             guard let editor = Defaults[.editorApp].existingFilePath?.url else {
-                return "no editor app is set in Cling Settings, Apps"
+                return "no editor app is set in Cling Settings > Open With"
             }
             NSWorkspace.shared.open(urls, withApplicationAt: editor, configuration: .init(), completionHandler: { _, _ in })
         case .shelve:
@@ -62,7 +62,7 @@ extension FuzzyClient {
                 return nil
             }
             guard let shelf = shelfApp.existingFilePath?.url else {
-                return "no shelf app is set in Cling Settings, Apps"
+                return "no shelf app is set in Cling Settings > Open With"
             }
             let config = NSWorkspace.OpenConfiguration()
             config.activates = false

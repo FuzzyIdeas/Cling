@@ -217,6 +217,6 @@ struct AlfredApps {
     }
 
     private func unset(_ what: String) -> [String: Any] {
-        ["subtitle": "Set \(what) in Cling Settings, Apps", "valid": false]
+        ["subtitle": "Set \(what) in Cling Settings > Open With", "valid": false]
     }
 }

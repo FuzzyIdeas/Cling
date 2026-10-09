@@ -457,7 +457,7 @@ esac &gt;/dev/null 2&gt;&amp;1
 [[ -n $cli ]] || exit
 paths=("${(@ps:\t:)1}")
 names=(${paths:t})
-"$cli" index remove "${paths[@]}" &gt;/dev/null &amp;&amp; print -r -- "${(j:, :)names}"
+"$cli" ignore exclude -- "${paths[@]}" &gt;/dev/null &amp;&amp; print -r -- "${(j:, :)names}"
 </string>
 				<key>scriptargtype</key>
 				<integer>1</integer>
@@ -581,7 +581,7 @@ Quick Look, Copy (`⌘C`) and Alfred's File Actions work on every result.
 
 ## Universal Actions
 
-* **Exclude from Cling's Index** on files
+* **Exclude from Cling's Index** on files, which stay out until their rule is removed in Cling's Settings &gt; Excluded Paths
 * **Search with Cling** on text
 
 Add **Search Cling** to Alfred's fallback searches to run it when nothing else matches.
