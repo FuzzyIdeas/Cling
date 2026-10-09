@@ -70,68 +70,120 @@ func encodedSpec(_ spec: some Encodable) throws -> String {
 // MARK: - Changes
 
 struct Changes: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        abstract: "What the live index recorded, as the window's live changes pane lists it",
-        discussion: """
-        Oldest first. Lists what the pane shows with Indexed only on: nothing blocked, ignored or hidden from the \
-        pane. --all lists those too, each marked with what leaves it out.
-        """
-    )
+    struct List: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "What the live index recorded, as the window's live changes pane lists it",
+            discussion: """
+            Oldest first. Lists what the pane shows with Indexed only on: nothing blocked, ignored or hidden from \
+            the pane. --all lists those too, each marked with what leaves it out.
+            """
+        )
 
-    @Option(name: .long, help: "Only changes from the last N seconds")
-    var since: Double?
+        @Option(name: .long, help: "Only changes from the last N seconds")
+        var since: Double?
 
-    @Option(name: .customLong("for"), help: "Wait this many seconds, then list what changed meanwhile")
-    var duration: Double?
+        @Option(name: .customLong("for"), help: "Wait this many seconds, then list what changed meanwhile")
+        var duration: Double?
 
-    @Flag(name: .long, help: "Print changes as they happen, until interrupted")
-    var follow = false
+        @Flag(name: .long, help: "Print changes as they happen, until interrupted")
+        var follow = false
 
-    @Option(name: .shortAndLong, help: "Most changes to list")
-    var count = 200
+        @Option(name: .shortAndLong, help: "Most changes to list")
+        var count = 200
 
-    @Flag(name: .long, help: "Also list what the pane leaves out")
-    var all = false
+        @Flag(name: .long, help: "Also list what the pane leaves out")
+        var all = false
 
-    @Flag(name: .long, help: "Output as JSON")
-    var json = false
+        @Flag(name: .long, help: "Output as JSON")
+        var json = false
 
-    mutating func run() throws {
-        let started = Date().timeIntervalSince1970
-        var after = since.map { started - $0 } ?? 0
-        if let duration {
-            after = started - (since ?? 0)
-            Thread.sleep(forTimeInterval: max(duration, 0))
-        }
-
-        var response = try ask(request(after: after))
-        guard follow else {
-            let status = response.status ?? ""
-            print(json ? (response.payload ?? "{}") : (status.isEmpty ? "No changes" : status))
-            return
-        }
-        // Each answer says when it was read, so the next one picks up exactly there.
-        while true {
-            if let status = response.status, !status.isEmpty {
-                print(json ? (response.payload ?? "{}") : status)
-                fflush(stdout)
+        mutating func run() throws {
+            let started = Date().timeIntervalSince1970
+            var after = since.map { started - $0 } ?? 0
+            if let duration {
+                after = started - (since ?? 0)
+                Thread.sleep(forTimeInterval: max(duration, 0))
             }
-            after = readTime(response) ?? Date().timeIntervalSince1970
-            Thread.sleep(forTimeInterval: 1)
-            response = try ask(request(after: after))
+
+            var response = try ask(request(after: after))
+            guard follow else {
+                let status = response.status ?? ""
+                print(json ? (response.payload ?? "{}") : (status.isEmpty ? "No changes" : status))
+                return
+            }
+            // Each answer says when it was read, so the next one picks up exactly there.
+            while true {
+                if let status = response.status, !status.isEmpty {
+                    print(json ? (response.payload ?? "{}") : status)
+                    fflush(stdout)
+                }
+                after = readTime(response) ?? Date().timeIntervalSince1970
+                Thread.sleep(forTimeInterval: 1)
+                response = try ask(request(after: after))
+            }
+        }
+
+        private func request(after: Double) -> ClingRequest {
+            ClingRequest(command: .changes, maxResults: count, verbose: all, action: "list", since: after)
+        }
+
+        private func readTime(_ response: ClingResponse) -> Double? {
+            guard let payload = response.payload,
+                  let object = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any]
+            else { return nil }
+            return object["now"] as? Double
         }
     }
 
-    private func request(after: Double) -> ClingRequest {
-        ClingRequest(command: .changes, maxResults: count, verbose: all, since: after)
+    struct Hide: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Hide paths from the live changes pane, and everything in them when they are folders. They stay searchable."
+        )
+
+        @Argument(help: "Paths or folders")
+        var paths: [String]
+
+        @Flag(name: .long, help: "Output as JSON")
+        var json = false
+
+        mutating func run() throws {
+            try runConfig(ClingRequest(command: .changes, paths: paths.map(absolutePath), action: "hide"), json: json)
+        }
     }
 
-    private func readTime(_ response: ClingResponse) -> Double? {
-        guard let payload = response.payload,
-              let object = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any]
-        else { return nil }
-        return object["now"] as? Double
+    struct Unhide: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Show these paths in the live changes pane again, taking away whatever hides them, folders above them included"
+        )
+
+        @Argument(help: "Paths or folders")
+        var paths: [String]
+
+        @Flag(name: .long, help: "Output as JSON")
+        var json = false
+
+        mutating func run() throws {
+            try runConfig(ClingRequest(command: .changes, paths: paths.map(absolutePath), action: "unhide"), json: json)
+        }
     }
+
+    struct Hidden: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "What the live changes pane hides")
+
+        @Flag(name: .long, help: "Output as JSON")
+        var json = false
+
+        mutating func run() throws {
+            try runConfig(ClingRequest(command: .changes, action: "hidden"), json: json)
+        }
+    }
+
+    static let configuration = CommandConfiguration(
+        commandName: "changes",
+        abstract: "What the live index recorded, as the window's live changes pane lists it, and what the pane hides",
+        subcommands: [List.self, Hide.self, Unhide.self, Hidden.self],
+        defaultSubcommand: List.self
+    )
 }
 
 // MARK: - Why

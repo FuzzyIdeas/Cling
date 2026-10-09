@@ -430,6 +430,11 @@ class FuzzyClient {
 
     /// A file change waiting on `fsEventsQueue` to be shown: one the scope indexes took, with what it did to them, or
     /// one outside them (no kind), which is worked out from what was seen before.
+    struct LiveChangeCounts: Equatable {
+        var shown = 0
+        var hidden = 0
+    }
+
     struct PendingFSChange {
         let path: FilePath
         let exists: Bool
@@ -490,7 +495,8 @@ class FuzzyClient {
     /// Thread-safe coordinator for CLI and multi-engine search
     @ObservationIgnored let searchCoordinator = SearchCoordinator()
 
-    var liveIndexChanges: [IndexChange] = []
+    /// What the live changes pane lists, and what its hide list keeps out of it, for the status bar's button.
+    private(set) var liveChangeCounts = LiveChangeCounts()
     var showLiveIndex = false
     var showActivityLog = false
     var showRunHistory = false
@@ -503,7 +509,6 @@ class FuzzyClient {
     var indexedCount = 0
     var clopIsAvailable = false
     var removedFiles: Set<String> = []
-    var excludedPaths: Set<String> = []
     var results: [FilePath] = []
     var seenPaths: Set<String> = []
     var operation = ""
@@ -528,7 +533,6 @@ class FuzzyClient {
     /// How long the last finished search took in milliseconds, from the query reaching the engines to its results
     /// being on screen, without the typing pause before it.
     var lastSearchMs: Double?
-
     var hasFullDiskAccess: Bool = FullDiskAccess.isGranted
     var disabledVolumes: [FilePath] = Defaults[.disabledVolumes]
     /// iCloud Drive and the folders in ~/Library/CloudStorage, see `CloudStorage`. Looked for at launch, before
@@ -630,6 +634,16 @@ class FuzzyClient {
     @ObservationIgnored var ongoingOperationCounts: [String: Int] = [:]
     var ongoingOperationsList: [(key: String, message: String)] = []
 
+    var liveIndexChanges: [IndexChange] = [] {
+        didSet { scheduleLiveChangeCount() }
+    }
+    /// The live changes pane's Indexed only switch, kept here so the status bar counts what the pane lists.
+    var liveChangesIndexedOnly = true {
+        didSet { scheduleLiveChangeCount() }
+    }
+    var excludedPaths: Set<String> = [] {
+        didSet { scheduleLiveChangeCount() }
+    }
     /// `lastSearchMs` rounded the way it reads at a glance, `~90ms` or `~1.2s`, and as VoiceOver says it.
     var lastSearchTime: (text: String, spoken: String)? {
         guard let ms = lastSearchMs else { return nil }
@@ -1185,6 +1199,9 @@ class FuzzyClient {
                 syncScopeEngines()
                 performSearch()
             }.store(in: &observers)
+        pub(.hiddenLiveEventPaths)
+            .sink { [self] _ in scheduleLiveChangeCount() }
+            .store(in: &observers)
         pub(.literalSearch)
             .sink { [self] _ in
                 // The query string is unchanged, so performSearch would skip the re-run.
@@ -3287,6 +3304,45 @@ class FuzzyClient {
         }
     }
 
+    /// Counts the live changes again a moment after they or what filters them changed, off the main thread, where the
+    /// blocklist and ignore checks for each change don't hold up a status bar redraw. A burst of changes shares one count.
+    func scheduleLiveChangeCount() {
+        guard !liveCountScheduled else { return }
+        liveCountScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in
+            MainActor.assumeIsolated {
+                liveCountScheduled = false
+                let paths = liveIndexChanges.map(\.path)
+                let hidden = PathMatcher(Defaults[.hiddenLiveEventPaths])
+                let excluded = PathMatcher(excludedPaths)
+                let indexedOnly = liveChangesIndexedOnly
+                let home = HOME.string
+                DispatchQueue.global(qos: .utility).async {
+                    // The pane's own order: out when excluded or not indexed, then hidden by the hide list, so the
+                    // hidden count is what Show hidden would bring into the list.
+                    var counts = LiveChangeCounts()
+                    for path in paths where !excluded.contains(path) {
+                        if indexedOnly, isPathBlocked(path) || path.hasPrefix(home) && path.isIgnored(in: fsignoreString) {
+                            continue
+                        }
+                        if hidden.contains(path) {
+                            counts.hidden += 1
+                        } else {
+                            counts.shown += 1
+                        }
+                    }
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            if self.liveChangeCounts != counts {
+                                self.liveChangeCounts = counts
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// User-triggered compaction (the live-changes "Compact" button). Same dedup as the automatic pass, but
     /// on demand regardless of the threshold, and it reports how many duplicate events were collapsed.
     func compactLiveChangesManually() {
@@ -3383,6 +3439,8 @@ class FuzzyClient {
         }
         return nil
     }
+
+    @ObservationIgnored private var liveCountScheduled = false
 
     @ObservationIgnored private var _lastOperationUpdate: CFAbsoluteTime = 0
     @ObservationIgnored private var _operationThrottle: Task<Void, Never>?

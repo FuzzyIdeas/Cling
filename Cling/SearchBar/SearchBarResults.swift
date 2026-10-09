@@ -8,6 +8,7 @@
 //
 
 import AppKit
+import Defaults
 import Lowtech
 import System
 import UniformTypeIdentifiers
@@ -80,6 +81,15 @@ final class SearchBarRowStyle {
     var onRastersReady: (() -> Void)?
 
     private(set) var folderIconSide: CGFloat = 16
+
+    /// Paths start with their folder's icon (Settings > Style).
+    var showsFolderIcons = Defaults[.searchBarFolderIcons] {
+        didSet {
+            if showsFolderIcons != oldValue {
+                generation += 1
+            }
+        }
+    }
 
     /// Results can come from more than one drive, so a row from an external one names it where the kind goes.
     var showsDrives = false {
@@ -732,7 +742,7 @@ final class SearchBarRowContent: NSView {
         let style = SearchBarRowStyle.shared
         if style.generation != drawnGeneration || (drawnMeta != nil && metaLine(path) != drawnMeta) {
             needsDisplay = true
-        } else if drawnIdentity(folderIcon(for: path.dir, style: style)) !== drawnFolderIcon {
+        } else if style.showsFolderIcons, drawnIdentity(folderIcon(for: path.dir, style: style)) !== drawnFolderIcon {
             needsDisplay = true
         }
     }
@@ -766,6 +776,11 @@ final class SearchBarRowContent: NSView {
     /// same place, also while an icon is still being rendered.
     private func drawFolder(_ dir: FilePath, in rect: NSRect, style: SearchBarRowStyle, text: SearchBarTextCache) {
         let dirShown = dir.shellString
+        guard style.showsFolderIcons else {
+            drawnFolderIcon = nil
+            text.draw(dirShown, style: .detail, in: rect, color: .secondaryLabelColor)
+            return
+        }
         let found = folderIcon(for: dir, style: style)
         drawnFolderIcon = drawnIdentity(found)
         let mark = found?.mark ?? FolderIcons.shared.lineMark(in: dir)

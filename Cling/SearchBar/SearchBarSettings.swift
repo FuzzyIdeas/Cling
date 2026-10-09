@@ -35,6 +35,8 @@ extension Defaults.Keys {
     /// Bottom-left corner of the compact field in global screen coordinates, empty until it is first dragged.
     static let searchBarPillOrigin = Key<[Double]>("searchBarPillOrigin", default: [])
     static let searchBarShowPreview = Key<Bool>("searchBarShowPreview", default: true)
+    /// Result paths start with their folder's icon, in the rows and the preview's header. Off, they're plain text.
+    static let searchBarFolderIcons = Key<Bool>("searchBarFolderIcons", default: true)
     /// Width and height of the expanded bar, empty for the default.
     static let searchBarSize = Key<[Double]>("searchBarSize", default: [])
     /// Where the unpinned bar sits, as fractions of its display's usable area: centre x and top edge.

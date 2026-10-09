@@ -49,7 +49,10 @@ struct StatusBarView: View {
                         Circle()
                             .fill(fuzzy.showLiveIndex ? .green : .secondary)
                             .frame(width: 5, height: 5)
-                        Text("\(fuzzy.liveIndexChanges.count) changes")
+                        // Only what the pane would list, so a quiet count says there's nothing worth a look.
+                        let counts = fuzzy.liveChangeCounts
+                        let changes = "\(counts.shown.spaced) change\(counts.shown == 1 ? "" : "s")"
+                        Text(counts.hidden > 0 ? "\(changes) (\(counts.hidden.spaced) hidden)" : changes)
                     }
                 }
                 .buttonStyle(.text(borderColor: .clear, active: fuzzy.showLiveIndex, activeTint: .green))

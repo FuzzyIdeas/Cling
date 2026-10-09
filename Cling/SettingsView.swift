@@ -373,6 +373,7 @@ private struct InterfaceSettingsPane: View {
                     }
                 }
                 if hotkeyTarget == .searchBar {
+                    Toggle("Folder icons", isOn: $searchBarFolderIcons)
                     Toggle("Pin to desktop", isOn: $searchBarPinned)
                     if searchBarPinned {
                         Toggle("Keep above windows", isOn: $searchBarAboveWindows)
@@ -447,6 +448,7 @@ private struct InterfaceSettingsPane: View {
     @Default(.defaultResultsMode) private var defaultResultsMode
     @Default(.searchBarPinned) private var searchBarPinned
     @Default(.searchBarAboveWindows) private var searchBarAboveWindows
+    @Default(.searchBarFolderIcons) private var searchBarFolderIcons
     @Default(.fontScale) private var fontScale
     @Default(.windowAppearance) private var windowAppearance
     @Default(.dimStatusBar) private var dimStatusBar

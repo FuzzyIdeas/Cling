@@ -67,10 +67,51 @@ extension CLIConfig {
         let changes: [LiveChangeInfo]
     }
 
+    private struct HiddenLiveChanges: Encodable {
+        let hidden: [String]
+    }
+
+    @MainActor static func liveChanges(_ req: ClingRequest) -> ClingResponse {
+        switch req.action ?? "list" {
+        case "list":
+            return listLiveChanges(req)
+        case "hidden":
+            return hiddenLiveChangesResponse()
+        case "hide":
+            guard let paths = req.paths?.map(eventSpelling), !paths.isEmpty else { return ClingResponse(error: "no paths to hide") }
+            // The same list the pane's Hide from Events writes, so the pane follows at once.
+            Defaults[.hiddenLiveEventPaths] = (Defaults[.hiddenLiveEventPaths] + paths).uniqued
+            return hiddenLiveChangesResponse()
+        case "unhide":
+            guard let paths = req.paths?.map(eventSpelling), !paths.isEmpty else { return ClingResponse(error: "no paths to unhide") }
+            // Like the pane's Unhide: every entry hiding one of them goes, a folder above it included.
+            Defaults[.hiddenLiveEventPaths].removeAll { entry in paths.contains { PathMatcher([entry]).contains($0) } }
+            return hiddenLiveChangesResponse()
+        default:
+            return ClingResponse(error: "unknown action '\(req.action ?? "")'. Use list, hidden, hide or unhide.")
+        }
+    }
+
+    /// File events name the real folder behind /var, /tmp and /etc, which the command line's path tidying takes
+    /// away, so a hidden entry is kept the way the pane's rows spell it.
+    private static func eventSpelling(_ path: String) -> String {
+        for firmlink in ["/var", "/tmp", "/etc"] where path == firmlink || path.hasPrefix(firmlink + "/") {
+            return "/private" + path
+        }
+        return path
+    }
+
+    @MainActor private static func hiddenLiveChangesResponse() -> ClingResponse {
+        let hidden = Defaults[.hiddenLiveEventPaths]
+        let home = HOME.string
+        let lines = hidden.map { $0.hasPrefix(home + "/") ? "~" + $0.dropFirst(home.count) : $0 }
+        return ClingResponse(status: lines.isEmpty ? "Nothing hidden" : lines.joined(separator: "\n"), payload: payloadJSON(HiddenLiveChanges(hidden: hidden)))
+    }
+
     /// The live index's changes the way the window's pane lists them with "Indexed only" on, oldest first: none from
     /// a path excluded since, hidden from the pane, blocked or ignored. `verbose` asks for those too, each marked.
     /// With no window on screen the newest are still held back from the list, and they count as well.
-    @MainActor static func liveChanges(_ req: ClingRequest) -> ClingResponse {
+    @MainActor private static func listLiveChanges(_ req: ClingRequest) -> ClingResponse {
         let now = Date().timeIntervalSince1970
         let since = req.since ?? 0
         let all = req.verbose == true

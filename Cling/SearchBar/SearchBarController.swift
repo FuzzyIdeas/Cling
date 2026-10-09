@@ -221,6 +221,12 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         pub(.searchBarShowPreview).sink { [weak self] _ in
             mainAsync { self?.updatePreviewVisibility() }
         }.store(in: &observers)
+        pub(.searchBarFolderIcons).sink { [weak self] change in
+            mainAsync {
+                SearchBarRowStyle.shared.showsFolderIcons = change.newValue
+                self?.results.refreshVisibleRows()
+            }
+        }.store(in: &observers)
         pub(.searchBarDefaultResults).sink { [weak self] change in
             mainAsync {
                 if change.newValue == .recentFiles {

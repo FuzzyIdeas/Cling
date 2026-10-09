@@ -117,9 +117,17 @@ extension MCPServer {
     }
 
     static func liveChanges(_ a: [String: Any]) throws -> ToolOutput {
+        switch a["action"] as? String ?? "list" {
+        case "hide", "unhide":
+            return try run(["changes", a["action"] as? String ?? "hide"], tail: paths(a))
+        case "hidden":
+            return try run(["changes", "hidden"])
+        default:
+            break
+        }
         let wait = min(max((a["waitSeconds"] as? NSNumber)?.doubleValue ?? 0, 0), 600)
         return try run(
-            ["changes"]
+            ["changes", "list"]
                 + opt(a, "--since", "since")
                 + opt(a, "--count", "count")
                 + flag(a, "all", "--all")
@@ -573,13 +581,18 @@ extension MCPServer {
                 + "keep changing and clutter the index: logs, caches, databases rewritten every few seconds. "
                 + "cling_ignore exclude then keeps them out, and cling_explain_path says which rule already covers one. "
                 + "waitSeconds waits and returns what changed during the wait. all also lists the changes the pane "
-                + "leaves out (blocked, ignored, or hidden from the pane), each with hiddenBy saying why. It "
-                + "changes nothing.",
+                + "leaves out (blocked, ignored, or hidden from the pane), each with hiddenBy saying why. "
+                + "action hide and unhide change what the pane shows the user, never what is indexed: for files that "
+                + "are useful to find but drown out the changes worth seeing. A folder covers everything in it, and "
+                + "unhide also takes away a folder above the path that hides it. To keep a file out of the index, use "
+                + "cling_ignore instead. hidden lists what the pane hides. hide and unhide: " + gate,
             inputSchema: ["type": "object", "properties": [
                 "since": ["type": "number", "description": "seconds back to list from, default all that is kept"],
                 "waitSeconds": ["type": "number", "description": "wait this long, then list what changed meanwhile (up to 600)"],
                 "count": ["type": "integer", "description": "most changes to list, default 200"],
                 "all": ["type": "boolean", "description": "also list the changes the pane leaves out"],
+                "action": ["type": "string", "enum": ["list", "hide", "unhide", "hidden"], "description": "list (default), hide, unhide, or hidden"],
+                "paths": ["type": "array", "items": ["type": "string"], "description": "for hide and unhide: files or folders; a folder covers everything in it"],
             ]],
             handler: liveChanges
         ),

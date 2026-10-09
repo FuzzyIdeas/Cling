@@ -90,8 +90,10 @@ Library/Application Support/Adobe/Common/Media Cache/
 Library/Application Support/Code*/Backups
 Library/Application Support/Code*/CachedData
 Library/Application Support/Code*/User/globalStorage
+Library/Application Support/Code*/User/sync/
 Library/Application Support/Code*/User/workspaceStorage
 Library/Application Support/com.hegenberg.bettertouchtool*/com.mentalfaculty.ensembles.eventdata
+Library/Application Support/com.raycast.macos/index/
 Library/Application Support/com.raycast.macos/posthog.queueFolder/
 
 #:group id=claude-code name=Claude Code
@@ -103,6 +105,7 @@ Library/Application Support/com.raycast.macos/posthog.queueFolder/
 .claude*/paste-cache/
 .claude*/plugins/**/.in_use/
 .claude*/plugins/.in_use-links/
+.claude*/plugins/store/
 .claude*/session-env/
 .claude*/sessions/
 .claude*/shell-snapshots/
@@ -116,6 +119,7 @@ Library/Application Support/com.raycast.macos/posthog.queueFolder/
 **/Network Persistent State
 **/TransportSecurity
 Library/**/IndexedDB/
+Library/Application Support/*/WebStorage/
 Library/**/Google/Chrome*/Cache
 Library/**/Google/Chrome*/leveldb
 Library/**/Firefox/Profiles/**/sessionstore-backups
@@ -139,7 +143,8 @@ Library/Application Support/Firefox/Profiles/*/weave/
 io.tailscale.ipn.macos
 Library/Application Support/*/logs/
 Library/Application Support/*/sentry/
-Library/Application Support/Spotify/PersistentCache/Users/*-user/*.tmp
+Library/Application Support/Claude/local-agent-mode-sessions/
+Library/Application Support/Spotify/PersistentCache/
 
 #:group id=library name=User Library caches & data
 Cache
@@ -149,10 +154,18 @@ Library/**/*.chrono-timeline
 Library/**/Data/tmp/
 Library/**/WebKit/
 Library/Application Support/**/.*
+Library/Application Support/com.apple.sharedfilelist/
+Library/Application Support/Knowledge/
 Library/Assistant/SiriVocabulary/**/index-*
 Library/Biome/
 Library/Daemon Containers/
+Library/DataDeliveryServices/
 Library/DuetExpertCenter/
+Library/Group Containers/group.com.apple.coreservices.useractivityd/
+Library/Group Containers/group.com.apple.icloud.searchpartyuseragent/
+Library/Group Containers/group.com.apple.loginwindow.persistent-apps/
+Library/Group Containers/group.com.apple.PegasusConfiguration/
+Library/Group Containers/group.com.apple.usernoted/
 Library/HomeKit/metricsCounters/*.counters
 Library/HTTPStorages/
 Library/IdentityServices/

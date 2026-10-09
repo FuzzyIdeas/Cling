@@ -137,6 +137,12 @@ enum MCPSettingsBridge {
             note: "The search bar's own default results. The window's are defaultResultsMode. Empty opens the bar as a lone field.",
             keywords: ["search bar", "recent", "empty"], ui: true
         )),
+        bool("searchBarFolderIcons", .searchBarFolderIcons, row(
+            .interface, "Interface", "Folder icons",
+            note: "Only shown while hotkeyTarget is searchBar. Off shows the search bar's result paths, and the path in "
+                + "its preview's header, as plain text without the folder's icon. The window's preview keeps its icons.",
+            keywords: ["search bar", "folder", "icon", "path"], ui: true
+        )),
         bool("searchBarPinned", .searchBarPinned, row(
             .interface, "Interface", "Pin to desktop",
             note: "Only shown while hotkeyTarget is searchBar. Keeps the compact field on screen while the bar is collapsed.",
@@ -847,8 +853,10 @@ extension ClingRequest {
     /// changes, so they can find out why something is the way it is before asking for anything.
     var changesSomething: Bool {
         switch command {
-        case .search, .status, .recents, .indexHas, .explain, .why, .changes:
+        case .search, .status, .recents, .indexHas, .explain, .why:
             false
+        case .changes:
+            ["hide", "unhide"].contains(action)
         case .index, .reindex, .cancelIndex, .indexAdd, .indexRemove, .open:
             true
         case .settings:

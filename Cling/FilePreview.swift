@@ -416,6 +416,7 @@ struct FilePreviewPanel: View {
     @Default(.fontScale) private var fontScale
 
     @Default(.filePreviewHintSeenCount) private var hintSeenCount
+    @Default(.searchBarFolderIcons) private var searchBarFolderIcons
 
     private var showHideHint: Bool {
         hintSeenCount < Self.hintRetireCount
@@ -510,7 +511,8 @@ struct FilePreviewPanel: View {
                     .font(.scaled(12, .secondary, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                PreviewFolderLine(dir: path.dir)
+                // The search bar's preview follows its Folder icons setting; the window's has no such setting.
+                PreviewFolderLine(dir: path.dir, showsIcon: !plain || searchBarFolderIcons)
             }
             Spacer(minLength: 0)
             if paths.count > 1 {
@@ -601,8 +603,19 @@ struct FilePreviewPanel: View {
 /// The file's folder under its name, after the icon of its deepest folder with one of its own, like a result row's.
 private struct PreviewFolderLine: View {
     let dir: FilePath
+    var showsIcon = true
 
     var body: some View {
+        if showsIcon {
+            withIcon
+        } else {
+            line(dir.shellString).help(dir.shellString)
+        }
+    }
+
+    @State private var loaded: (dir: FilePath, mark: FolderIcons.Mark?)?
+
+    @ViewBuilder private var withIcon: some View {
         // The lookup's answer for this folder, or the cached one or the fallback while a newer folder's is on its way.
         let mark = loaded?.dir == dir ? loaded?.mark ?? FolderIcons.fallback(for: dir) : FolderIcons.shared.lineMark(in: dir)
         HStack(spacing: FontScale.length(3, .secondary)) {
@@ -617,8 +630,6 @@ private struct PreviewFolderLine: View {
             loaded = await (dir, FolderIcons.shared.lineMarkWhenKnown(in: dir))
         }
     }
-
-    @State private var loaded: (dir: FilePath, mark: FolderIcons.Mark?)?
 
     private func line(_ text: String) -> some View {
         Text(text)

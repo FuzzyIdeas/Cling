@@ -390,7 +390,6 @@ struct ContentView: View {
     @State private var excludeRequest: ExcludeSheetRequest?
 
     @State private var liveChangeSortOrder = [KeyPathComparator(\FuzzyClient.IndexChange.date, order: .reverse)]
-    @State private var liveChangesIndexedOnly = true
     /// The list as it was when Pause was pressed, shown instead of the live one until Resume, so rows don't move under
     /// a selection.
     @State private var pausedLiveChanges: [FuzzyClient.IndexChange]?
@@ -566,7 +565,7 @@ struct ContentView: View {
         } else {
             filtered = changes.filter(listed)
         }
-        let afterBlock: [FuzzyClient.IndexChange] = if liveChangesIndexedOnly {
+        let afterBlock: [FuzzyClient.IndexChange] = if fuzzy.liveChangesIndexedOnly {
             filtered.filter { change in
                 !isPathBlocked(change.path) && !(change.path.hasPrefix(HOME.string) && change.path.isIgnored(in: fsignoreString))
             }
@@ -774,7 +773,7 @@ struct ContentView: View {
                         .disabled(fuzzy.liveIndexChanges.isEmpty)
                         .help("Collapse duplicate events, keeping the latest change per file")
                         .padding(.vertical, 4)
-                    Toggle("Indexed only", isOn: $liveChangesIndexedOnly)
+                    Toggle("Indexed only", isOn: $fuzzy.liveChangesIndexedOnly)
                         .toggleStyle(.switch)
                         .controlSize(.mini)
                         .font(.system(size: 10))

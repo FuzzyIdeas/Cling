@@ -90,6 +90,10 @@ enum Migration {
     **/SDKExplicitPrecompiledModules/
     **/SourcePackages/
 
+    #:group id=devtools name=Developer app state
+    Library/Application Support/Code*/User/sync/
+    Library/Application Support/com.raycast.macos/index/
+
     #:group id=claude-code name=Claude Code
     .claude*/backups/
     .claude*/cache/
@@ -99,6 +103,7 @@ enum Migration {
     .claude*/paste-cache/
     .claude*/plugins/**/.in_use/
     .claude*/plugins/.in_use-links/
+    .claude*/plugins/store/
     .claude*/session-env/
     .claude*/sessions/
     .claude*/shell-snapshots/
@@ -107,6 +112,7 @@ enum Migration {
 
     #:group id=browser name=Browser caches & state
     Library/**/IndexedDB/
+    Library/Application Support/*/WebStorage/
     Library/Application Support/Firefox/Profiles/*/weave/
 
     #:group id=appstate name=App caches & telemetry
@@ -119,10 +125,20 @@ enum Migration {
     .local/state/
     Library/Application Support/*/logs/
     Library/Application Support/*/sentry/
+    Library/Application Support/Claude/local-agent-mode-sessions/
+    Library/Application Support/Spotify/PersistentCache/
 
     #:group id=library name=User Library caches & data
     Library/**/WebKit/
+    Library/Application Support/com.apple.sharedfilelist/
+    Library/Application Support/Knowledge/
     Library/Daemon Containers/
+    Library/DataDeliveryServices/
+    Library/Group Containers/group.com.apple.coreservices.useractivityd/
+    Library/Group Containers/group.com.apple.icloud.searchpartyuseragent/
+    Library/Group Containers/group.com.apple.loginwindow.persistent-apps/
+    Library/Group Containers/group.com.apple.PegasusConfiguration/
+    Library/Group Containers/group.com.apple.usernoted/
     Library/HTTPStorages/
     Library/IdentityServices/
     """

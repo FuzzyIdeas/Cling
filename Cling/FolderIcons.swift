@@ -34,11 +34,12 @@ final class FolderIcons {
     }
 
     struct Mark {
-        init(folder: String, icon: NSImage, glyph: Bool, inside: Bool = false) {
+        init(folder: String, icon: NSImage, glyph: Bool, inside: Bool = false, name: String? = nil) {
             self.folder = folder
             self.icon = icon
             self.glyph = glyph
             self.inside = inside
+            self.name = name ?? (folder as NSString).lastPathComponent
             prefix = folder + "/"
         }
 
@@ -48,20 +49,23 @@ final class FolderIcons {
         /// The icon is one of Cling's blue tiles (a symbol or emoji picked in Finder, Home's, the startup disk's or a
         /// drive's), which is drawn as it is rather than rendered once, as drawing it costs no more.
         let glyph: Bool
+        /// What the line reads for the folder itself: Finder's name for it, or the cloud service's.
+        let name: String
 
         /// `shown`, the `~` form of `dir`, as it reads after the icon: whole, without the `~/`, `/` or `/Volumes/` it
-        /// starts with, which the icon stands for (`Pictures/Shoot/2026`, `Users/Shared`, `Photos/Archive`), and empty
-        /// for Home or `/` itself. Takes the `~` form from the caller, which has it already, as making it costs a regex.
+        /// starts with, which the icon stands for (`Pictures/Shoot/2026`, `Users/Shared`, `Photos/Archive`), and the
+        /// folder's name for Home, `/` or a cloud folder itself, where no path would follow the icon. Takes the `~`
+        /// form from the caller, which has it already, as making it costs a regex.
         func shownPath(of dir: FilePath, shown: String) -> String? {
             guard folder == "/" || dir.string == folder || dir.string.hasPrefix(prefix) else { return nil }
             if inside {
-                return dir.string == folder ? "" : String(dir.string.dropFirst(prefix.count))
+                return dir.string == folder ? name : String(dir.string.dropFirst(prefix.count))
             }
             if shown.hasPrefix(FolderIcons.volumes) {
                 return String(shown.dropFirst(FolderIcons.volumes.count))
             }
             if shown == "~" || shown == "/" {
-                return ""
+                return name
             }
             if shown.hasPrefix("~/") {
                 return String(shown.dropFirst(2))
@@ -133,8 +137,11 @@ final class FolderIcons {
 
     private nonisolated static let probe = Probe()
     private static let library = NSHomeDirectory() + "/Library/"
-    private static let homeMark = Mark(folder: NSHomeDirectory(), icon: symbolTile("house") ?? NSImage(), glyph: true)
-    private static let rootMark = Mark(folder: "/", icon: symbolTile("number") ?? NSImage(), glyph: true)
+    private static let homeMark = Mark(
+        folder: NSHomeDirectory(), icon: symbolTile("house") ?? NSImage(), glyph: true,
+        name: FileManager.default.displayName(atPath: NSHomeDirectory())
+    )
+    private static let rootMark = Mark(folder: "/", icon: symbolTile("number") ?? NSImage(), glyph: true, name: FileManager.default.displayName(atPath: "/"))
 
     private let queue = DispatchQueue(label: "com.lowtechguys.Cling.folderIcons", qos: .userInitiated)
     private var marks: [String: Mark?] = [:]
@@ -146,21 +153,21 @@ final class FolderIcons {
     private var waiters: [String: [CheckedContinuation<Mark?, Never>]] = [:]
     private var readyNotificationScheduled = false
 
-    /// Each cloud folder's service icon, under its real path and the Home folder links that lead to it (`~/Dropbox`),
-    /// which is how results show it. The same image every time, so the rows' rendered copy of it is reused.
-    private lazy var cloudIcons: [String: NSImage] = {
-        var icons: [String: NSImage] = [:]
+    /// Each cloud folder's service icon and name, under its real path and the Home folder links that lead to it
+    /// (`~/Dropbox`), which is how results show it. The same image every time, so the rows' rendered copy of it is reused.
+    private lazy var cloudIcons: [String: (icon: NSImage, name: String)] = {
+        var icons: [String: (icon: NSImage, name: String)] = [:]
         for location in FUZZY.cloudLocations {
-            let icon = location.icon
-            icons[location.root.string] = icon
+            let service = (icon: location.icon, name: location.name)
+            icons[location.root.string] = service
             if location.appPath == nil {
                 // iCloud Drive's files are in its own folder inside Mobile Documents.
-                icons[(location.root / "com~apple~CloudDocs").string] = icon
+                icons[(location.root / "com~apple~CloudDocs").string] = service
             }
         }
         for link in SearchEngine.homeFolderLinks() {
-            if let icon = icons[link.real] {
-                icons[link.shown] = icon
+            if let service = icons[link.real] {
+                icons[link.shown] = service
             }
         }
         return icons
@@ -195,8 +202,11 @@ final class FolderIcons {
                         return
                     }
                     let mark = found.flatMap { found in
-                        (found.icon ?? cloud[found.folder]).map {
-                            Mark(folder: found.folder, icon: $0, glyph: found.glyph, inside: found.icon == nil && found.folder.hasPrefix(Self.library))
+                        (found.icon ?? cloud[found.folder]?.icon).map {
+                            Mark(
+                                folder: found.folder, icon: $0, glyph: found.glyph,
+                                inside: found.icon == nil && found.folder.hasPrefix(Self.library), name: cloud[found.folder]?.name
+                            )
                         }
                     }
                     // A folder is a few dozen bytes here; the cap only matters after hours of scrolling through new ones.
