@@ -1,3 +1,54 @@
+# 3.2.0
+
+**[Download Cling 3.2.0 →](https://files.lowtechguys.com/releases/Cling-3.2.0.dmg)**
+## Features
+
+- **Live updates on external drives**: files added, renamed or deleted on a connected drive show up in search within seconds, instead of at its next reindex. You can see how each drive keeps up, and turn its live updates off, in Settings > Drives & Volumes
+
+![live updates](https://files.lowtechguys.com/changelog/cling/3.2.0-live-updates.png)
+
+- **App launcher**: the search bar prioritizes apps if the query seems to hint at that
+
+![app launcher](https://files.lowtechguys.com/changelog/cling/3.2.0-app-launcher.png)
+
+- **Folder icons**: paths in the search bar show the folder icon
+
+![folder icons](https://files.lowtechguys.com/changelog/cling/3.2.0-folder-icons.jpeg)
+
+- **Option to turn off the Everything index**: hides its asterisk and shortcut everywhere, and can delete its saved index to free the space. You can turn it off in Settings > Search
+
+![delete the Everything index](https://files.lowtechguys.com/changelog/cling/3.2.0-everything-off.png)
+
+- **Index sizes**: size on disk for each scope, drive and Everything index
+
+![index sizes](https://files.lowtechguys.com/changelog/cling/3.2.0-index-sizes.png)
+
+- **Alfred workflow**: search Cling from Alfred with `cl` and reindex with `clreindex`. You can install it, and the Raycast extension, in Settings > General
+
+![Alfred workflow](https://files.lowtechguys.com/changelog/cling/3.2.0-alfred.jpeg)
+
+![install the Alfred workflow and the Raycast extension](https://files.lowtechguys.com/changelog/cling/3.2.0-launchers.png)
+
+## Fixes
+
+- Fixed a possible crash when dragging the results table's header past the last column
+- Fixed a possible crash when previewing code
+- Fixed a possible crash when applying a quick filter while Cling is indexing
+- Fixed a possible crash while saving the index of a very large drive
+- Fixed a possible freeze at launch when a drive is slow to answer
+
+## Improvements
+
+- Searching a drive that was unplugged without ejecting, offers to reindex it, in case its index missed the last changes
+
+![reindex offer in the search window](https://files.lowtechguys.com/changelog/cling/3.2.0-reindex-notice.png)
+
+![reindex offer in the search bar](https://files.lowtechguys.com/changelog/cling/3.2.0-reindex-notice-bar.png)
+
+- Status bar shows how long the last search took
+- Periodic reindexing waits for the drive to settle, so it doesn't slow down I/O workload
+- CLI stuff: `cling open`, `cling everything on|off|delete`, `cling volume follow|unfollow|skip-reindex` and `cling search --search-bar`
+
 # 3.1.1
 
 **[Download Cling 3.1.1 →](https://files.lowtechguys.com/releases/Cling-3.1.1.dmg)**
@@ -15,7 +66,7 @@
 
 - **Cloud Storage**: online-only files in iCloud Drive, Dropbox, Google Drive and other cloud folders show up in search, and download from the preview on-demand. You can turn each folder off in Settings > Drives & Volumes
 
-![Cloud Storage preview](https://files.lowtechguys.com/changelog/cling/3.1.0-cloud-preview.jpeg)
+![Cloud Storage preview](https://files.lowtechguys.com/changelog/cling/3.1.0-cloud-storage.jpeg)
 
 ![Cloud Storage in Settings](https://files.lowtechguys.com/changelog/cling/3.1.0-cloud-settings.jpeg)
 
