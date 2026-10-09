@@ -1374,6 +1374,11 @@ final class SearchEngine: @unchecked Sendable {
     /// `-mapIndexFiles NO` reads them into the heap, for comparing the two.
     nonisolated(unsafe) static var mapIndexFiles = UserDefaults.standard.object(forKey: "mapIndexFiles") as? Bool ?? true
 
+    /// Fills a freed slot or appends, with no duplicate check and no path index update. Caller must hold the lock.
+    /// Told once per engine, with its path count and path bytes, when it reaches the 32-bit limit, so a full index
+    /// reaches Sentry instead of only the log: past it, new files are left out of searches without a word.
+    nonisolated(unsafe) static var onFull: ((_ paths: Int, _ bytes: Int) -> Void)?
+
     /// Memory held by the file extension table every engine shares, built from the first index loaded: its three
     /// dictionaries, and the names too long for a String to keep inline (stored once, both dictionaries holding them).
     static var extensionTableBytes: Int {
@@ -1862,6 +1867,7 @@ final class SearchEngine: @unchecked Sendable {
         // stops it at the limit; one that did anyway is left unsaved rather than crashing (CLING-AY).
         guard liveBytes <= Int(UInt32.max) else {
             slog.error("saveBinaryIndex: \(liveBytes) path bytes don't fit the file's 32-bit offsets, \(url.path) left as it was")
+            reportFull(bytes: liveBytes)
             return false
         }
         let keep = !compacting
@@ -2897,6 +2903,8 @@ final class SearchEngine: @unchecked Sendable {
 
     /// Lock for thread-safe mutations during parallel walks
     private let lock = NSLock()
+
+    private var reportedFull = false
 
     /// Entries that hold a path. Removed ones stay behind as holes until the next save.
     private var liveCount = 0 {
@@ -5421,11 +5429,21 @@ final class SearchEngine: @unchecked Sendable {
         return id
     }
 
-    /// Fills a freed slot or appends, with no duplicate check and no path index update. Caller must hold the lock.
     /// Paths are found by 32-bit offsets into their bytes, so an engine takes paths up to 4 GB of them (tens of
     /// millions of files) and stops there, rather than storing offsets that wrap around onto other paths.
     private func hasRoom(for path: String) -> Bool {
-        allBytes.count + path.utf8.count <= Int(UInt32.max)
+        guard allBytes.count + path.utf8.count <= Int(UInt32.max) else {
+            reportFull(bytes: allBytes.count)
+            return false
+        }
+        return true
+    }
+
+    private func reportFull(bytes: Int) {
+        guard !reportedFull else { return }
+        reportedFull = true
+        slog.error("Index full: \(self.liveCount) paths in \(bytes) bytes, new paths are left out")
+        Self.onFull?(liveCount, bytes)
     }
 
     private func _insertPath(_ path: String, isDir: Bool) -> Int {

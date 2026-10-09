@@ -116,6 +116,18 @@ extension MCPServer {
         )
     }
 
+    static func liveChanges(_ a: [String: Any]) throws -> ToolOutput {
+        let wait = min(max((a["waitSeconds"] as? NSNumber)?.doubleValue ?? 0, 0), 600)
+        return try run(
+            ["changes"]
+                + opt(a, "--since", "since")
+                + opt(a, "--count", "count")
+                + flag(a, "all", "--all")
+                + (wait > 0 ? ["--for=\(wait)"] : []),
+            timeout: wait + 30
+        )
+    }
+
     static func why(_ a: [String: Any]) throws -> ToolOutput {
         let folders = list(a, "folders")
         let scopes = list(a, "scopes")
@@ -283,12 +295,12 @@ extension MCPServer {
 
     static func volumes(_ a: [String: Any]) throws -> ToolOutput {
         let action = argument(a["action"] ?? "list")
-        guard ["list", "enable", "disable", "follow", "unfollow", "skip-reindex", "interval", "remove"].contains(action) else {
-            throw ClingMCPError("action must be list, enable, disable, follow, unfollow, skip-reindex, interval or remove")
+        guard ["list", "enable", "disable", "follow", "unfollow", "skip-reindex", "interval", "icon", "remove"].contains(action) else {
+            throw ClingMCPError("action must be list, enable, disable, follow, unfollow, skip-reindex, interval, icon or remove")
         }
         let volume = a["volume"].map { argument($0) } ?? ""
-        let seconds = a["seconds"].map { argument($0) } ?? ""
-        return try run(["volume", action], tail: [volume, seconds].filter { !$0.isEmpty })
+        let value = (action == "icon" ? a["symbol"] : a["seconds"]).map { argument($0) } ?? ""
+        return try run(["volume", action], tail: [volume, value].filter { !$0.isEmpty })
     }
 
     static func cloud(_ a: [String: Any]) throws -> ToolOutput {
@@ -555,6 +567,23 @@ extension MCPServer {
             handler: { a in try run(["explain"], tail: paths(a), terminator: false) }
         ),
         MCPTool(
+            name: "cling_live_changes",
+            description: "The files the live index added, changed or removed recently, as the search window's live "
+                + "changes pane lists them (with its Indexed only toggle on), oldest first. Use it to find files that "
+                + "keep changing and clutter the index: logs, caches, databases rewritten every few seconds. "
+                + "cling_ignore exclude then keeps them out, and cling_explain_path says which rule already covers one. "
+                + "waitSeconds waits and returns what changed during the wait. all also lists the changes the pane "
+                + "leaves out (blocked, ignored, or hidden from the pane), each with hiddenBy saying why. It "
+                + "changes nothing.",
+            inputSchema: ["type": "object", "properties": [
+                "since": ["type": "number", "description": "seconds back to list from, default all that is kept"],
+                "waitSeconds": ["type": "number", "description": "wait this long, then list what changed meanwhile (up to 600)"],
+                "count": ["type": "integer", "description": "most changes to list, default 200"],
+                "all": ["type": "boolean", "description": "also list the changes the pane leaves out"],
+            ]],
+            handler: liveChanges
+        ),
+        MCPTool(
             name: "cling_explain_search",
             description: "How Cling reads a query and where a file ranks for it. Lists what every token means "
                 + "(fuzzy text, literal text, extension, folder, in:, depth:, exclusions), the effective query "
@@ -682,13 +711,16 @@ extension MCPServer {
                 + "(waitingForQuiet). skip-reindex clears needsReindex, as Skip does. "
                 + "interval sets how often it is walked again, which is what finds "
                 + "changes made while the drive was connected to another computer, in seconds from 3600 (1 hour) to "
-                + "2419200 (4 weeks). remove deletes a disconnected volume's saved index; a connected one can only be "
+                + "2419200 (4 weeks). icon sets the SF Symbol that starts the folder line of each search result on the drive "
+                + "(the drive's folders are not looked into for icons of their own); none goes back to the icon of its kind "
+                + "(internal disk, external disk, USB stick, SD card, disk image, network share). remove deletes a disconnected volume's saved index; a connected one can only be "
                 + "disabled. To walk one now, use cling_reindex with its path. Whether new volumes are indexed on "
                 + "their own is the disableAutomaticVolumeIndexing setting. list: open; the rest need Pro and: " + gate,
             inputSchema: ["type": "object", "properties": [
-                "action": ["type": "string", "enum": ["list", "enable", "disable", "follow", "unfollow", "skip-reindex", "interval", "remove"]],
+                "action": ["type": "string", "enum": ["list", "enable", "disable", "follow", "unfollow", "skip-reindex", "interval", "icon", "remove"]],
                 "volume": ["type": "string", "description": "its name or its path under /Volumes"],
                 "seconds": ["type": "integer", "description": "for interval"],
+                "symbol": ["type": "string", "description": "for icon: an SF Symbol name (externaldrive.fill, camera, music.note), or none"],
             ]],
             handler: volumes
         ),

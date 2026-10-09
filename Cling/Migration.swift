@@ -9,7 +9,7 @@ private let log = Logger(subsystem: clingSubsystem, category: "Migration")
 // MARK: - Migration
 
 enum Migration {
-    static let CURRENT_VERSION = 4
+    static let CURRENT_VERSION = 5
 
     static let OLD_DEFAULT_SCRIPTS = [
         "Copy to temporary folder.zsh",
@@ -35,6 +35,9 @@ enum Migration {
         }
         if version < 4 {
             migrateV4(existingInstall: existingInstall)
+        }
+        if version < 5 {
+            migrateV5()
         }
 
         Defaults[.migrationVersion] = CURRENT_VERSION
@@ -77,6 +80,66 @@ enum Migration {
         ".app/Contents/SharedSupport/",
         ".lproj/",
     ]
+
+    /// Default rules first shipped in v5, for files that change all the time and that nobody goes looking for:
+    /// SQLite side files, Claude Code's sessions and history, apps' own logs, cookie stores and crash reporter state,
+    /// web view and browser storage, Xcode build folders outside DerivedData, system daemons' containers and the
+    /// system's logs. Grouped like the shipped defaults, so each lands in the group it belongs to.
+    private static let V5_HOME_RULES = """
+    #:group id=build name=Build & index artifacts
+    **/SDKExplicitPrecompiledModules/
+    **/SourcePackages/
+
+    #:group id=claude-code name=Claude Code
+    .claude*/backups/
+    .claude*/cache/
+    .claude*/debug/
+    .claude*/file-history/
+    .claude*/ide/
+    .claude*/paste-cache/
+    .claude*/plugins/**/.in_use/
+    .claude*/plugins/.in_use-links/
+    .claude*/session-env/
+    .claude*/sessions/
+    .claude*/shell-snapshots/
+    .claude*/telemetry/
+    .claude/context-mode/
+
+    #:group id=browser name=Browser caches & state
+    Library/**/IndexedDB/
+    Library/Application Support/Firefox/Profiles/*/weave/
+
+    #:group id=appstate name=App caches & telemetry
+    *-shm
+    *-wal
+    **/.gnupg/*.lock
+    **/.gnupg/*.tmp
+    **/.gnupg/.#lk*
+    **/.gnupg/S.*
+    .local/state/
+    Library/Application Support/*/logs/
+    Library/Application Support/*/sentry/
+
+    #:group id=library name=User Library caches & data
+    Library/**/WebKit/
+    Library/Daemon Containers/
+    Library/HTTPStorages/
+    Library/IdentityServices/
+    """
+
+    private static let V5_BLOCKED_PREFIXES = """
+    #:group id=ephemeral name=Temporary & ephemeral
+    /tmp/cc-socks/
+    /tmp/claude-
+    /tmp/context-mode-
+
+    #:group id=system-state name=System logs & state
+    /Library/Tailscale/
+    /var/db/com.apple.backgroundtaskmanagement/
+    /var/db/diagnostics/
+    /var/db/uuidtext/
+    /var/protected/
+    """
 
     /// v1: Update fsignore, delete old scripts, reinstall defaults
     private static func migrateV1() {
@@ -164,6 +227,31 @@ enum Migration {
         guard existingInstall, stored?[Defaults.Keys.hotkeyTarget.name] == nil else { return }
         Defaults[.hotkeyTarget] = .window
         log.info("Migration v4: kept the search window as the hotkey target")
+    }
+
+    /// v5: Add the new default rules to the blocklist and the home ignore file, into their groups. They were never
+    /// shipped before, so none of them can be one the user removed on purpose.
+    private static func migrateV5() {
+        var prefixes = IgnoreDocument.parse(Defaults[.blockedPrefixes])
+        prefixes.add(IgnoreDocument.parse(V5_BLOCKED_PREFIXES), placedLike: IgnoreDocument.parse(Defaults.Keys.blockedPrefixes.defaultValue))
+        // Unchanged on a new install, whose defaults have them already: left unstored, it keeps following the defaults.
+        if prefixes.serialize() != Defaults[.blockedPrefixes] {
+            Defaults[.blockedPrefixes] = prefixes.serialize()
+            PathBlocklist.shared.rebuild()
+        }
+
+        guard fsignore.exists, let current = try? String(contentsOfFile: fsignore.string, encoding: .utf8) else { return }
+        var home = IgnoreDocument.parse(current)
+        let template = (try? String(contentsOf: FS_IGNORE.url, encoding: .utf8)).map(IgnoreDocument.parse)
+        home.add(IgnoreDocument.parse(V5_HOME_RULES), placedLike: template)
+        let updated = home.serialize()
+        guard updated != current else { return }
+        do {
+            try updated.write(toFile: fsignore.string, atomically: true, encoding: .utf8)
+            log.info("Migration v5: added the new default ignore rules to fsignore")
+        } catch {
+            log.error("Migration v5: failed to update fsignore: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Surgical helpers

@@ -26,7 +26,9 @@ struct IgnoreDocument {
         /// The rule items together with their position in `items` (so the UI can toggle them in place).
         var rules: [(index: Int, pattern: String, enabled: Bool)] {
             items.enumerated().compactMap { idx, item in
-                if case let .rule(pattern, enabled) = item { return (idx, pattern, enabled) }
+                if case let .rule(pattern, enabled) = item {
+                    return (idx, pattern, enabled)
+                }
                 return nil
             }
         }
@@ -60,7 +62,9 @@ struct IgnoreDocument {
         var current: Group?
 
         func flush() {
-            if let g = current { groups.append(g); current = nil }
+            if let g = current {
+                groups.append(g); current = nil
+            }
         }
 
         for line in text.components(separatedBy: "\n") {
@@ -148,6 +152,40 @@ struct IgnoreDocument {
     mutating func setAll(enabled: Bool) {
         for gi in groups.indices {
             setGroup(gi, enabled: enabled)
+        }
+    }
+
+    /// Adds the rules of `additions` this document has nowhere yet, on or off, each to the end of the group with the
+    /// same id, or to a new group. A new group goes where `reference` (the shipped defaults) has it: after the nearest
+    /// group before it there that this document has too, otherwise ahead of the user's own rules. Shipping new default
+    /// rules into a file the user may have edited this way leaves every line already there as it was.
+    mutating func add(_ additions: IgnoreDocument, placedLike reference: IgnoreDocument? = nil) {
+        var present = Set(groups.flatMap { $0.rules.map(\.pattern) })
+        present.formUnion(preamble.map { $0.trimmingCharacters(in: .whitespaces) })
+
+        for addition in additions.groups where !addition.isCustom {
+            var missing: [Item] = []
+            for pattern in addition.rules.map(\.pattern) where present.insert(pattern).inserted {
+                missing.append(.rule(pattern: pattern, enabled: true))
+            }
+            guard !missing.isEmpty else { continue }
+
+            if let gi = groups.firstIndex(where: { !$0.isCustom && $0.id == addition.id }) {
+                // After the group's last line, ahead of the blank lines that part it from the next group.
+                let end = (groups[gi].items.lastIndex { $0 != .blank } ?? -1) + 1
+                groups[gi].items.insert(contentsOf: missing, at: end)
+            } else {
+                var at = groups.firstIndex(where: \.isCustom) ?? groups.count
+                if let reference, let place = reference.groups.firstIndex(where: { $0.id == addition.id }) {
+                    for prior in reference.groups[..<place].reversed() {
+                        if let gi = groups.firstIndex(where: { !$0.isCustom && $0.id == prior.id }) {
+                            at = gi + 1
+                            break
+                        }
+                    }
+                }
+                groups.insert(Group(id: addition.id, name: addition.name, isCustom: false, items: missing + [.blank]), at: at)
+            }
         }
     }
 

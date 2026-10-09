@@ -276,6 +276,22 @@ final class SearchBarHintBar: NSView {
         }
     }
 
+    /// The gear at the far end, which Settings > Style can take off the bar.
+    var showsGear = true {
+        didSet {
+            guard showsGear != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
+    /// The tooltip over the status, when it says more than the result count.
+    var statusHelp: String? {
+        didSet {
+            guard statusHelp != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
     var notice: SearchBarNotice? {
         didSet {
             guard notice != oldValue else { return }
@@ -335,13 +351,15 @@ final class SearchBarHintBar: NSView {
             width: gear.size.width, height: gear.size.height
         )
         context.setAlpha(textAlpha)
-        // An image draws at its own fraction, whatever the context's alpha: faded like the keycaps when dimmed.
-        gear.draw(in: gearRect, from: .zero, operation: .sourceOver, fraction: capAlpha, respectFlipped: true, hints: nil)
+        if showsGear {
+            // An image draws at its own fraction, whatever the context's alpha: faded like the keycaps when dimmed.
+            gear.draw(in: gearRect, from: .zero, operation: .sourceOver, fraction: capAlpha, respectFlipped: true, hints: nil)
+        }
 
         let statusText = flashText ?? status
         let statusStyle: SearchBarTextCache.Style = flashText == nil ? .status : .flash
         let statusSize = text.size(statusText, style: statusStyle)
-        let statusX = gearRect.minX - statusSize.width - 12
+        let statusX = (showsGear ? gearRect.minX - 12 : bounds.width - 14) - statusSize.width
         text.draw(
             statusText, style: statusStyle, at: NSPoint(x: statusX, y: (bounds.height - statusSize.height) / 2),
             color: flashText == nil ? .tertiaryLabelColor : .controlAccentColor
@@ -355,6 +373,9 @@ final class SearchBarHintBar: NSView {
             max(text.size(hint.key, style: .hintKey).width + 8, capHeight) + 5 + text.size(hint.title, style: .hintTitle).width
         }
         var tips: [(NSRect, String)] = []
+        if flashText == nil, let statusHelp {
+            tips.append((NSRect(x: statusX, y: 0, width: statusSize.width, height: bounds.height), statusHelp))
+        }
         if let notice {
             let noticeSize = text.size(notice.text, style: .hintTitle)
             context.setAlpha(textAlpha)
@@ -406,7 +427,9 @@ final class SearchBarHintBar: NSView {
             rects.append((hint.id, NSRect(x: x - 4, y: 0, width: width + 8, height: bounds.height)))
             x += width + 16
         }
-        rects.append((.settings, NSRect(x: gearRect.minX - 6, y: 0, width: gearRect.width + 12, height: bounds.height)))
+        if showsGear {
+            rects.append((.settings, NSRect(x: gearRect.minX - 6, y: 0, width: gearRect.width + 12, height: bounds.height)))
+        }
         // Cursor rects are part of the window's structural regions, which AppKit recomputes in
         // full when they're invalidated, so only when the hints actually moved.
         if !rects.elementsEqual(hintRects, by: { $0.0 == $1.0 && $0.1 == $1.1 }) || !tips.elementsEqual(noticeTips, by: { $0.0 == $1.0 && $0.1 == $1.1 }) {
@@ -414,7 +437,7 @@ final class SearchBarHintBar: NSView {
             noticeTips = tips
             window?.invalidateCursorRects(for: self)
             removeAllToolTips()
-            if let gearHit = rects.last?.1 {
+            if showsGear, let gearHit = rects.last?.1 {
                 addToolTip(gearHit, owner: self, userData: nil)
             }
             for (rect, _) in tips {

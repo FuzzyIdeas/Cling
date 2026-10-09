@@ -417,7 +417,8 @@ class FuzzyClient {
         let id = UUID()
         let path: String
         let kind: Kind
-        let date = Date()
+        /// When the change happened, which for one held back while no window was on screen is before it was listed.
+        var date = Date()
 
         var name: String {
             (path as NSString).lastPathComponent
@@ -433,6 +434,7 @@ class FuzzyClient {
         let path: FilePath
         let exists: Bool
         var kind: IndexChange.Kind?
+        var date = Date()
     }
 
     struct ActivityEntry: Identifiable {
@@ -523,6 +525,10 @@ class FuzzyClient {
     @ObservationIgnored var appRefreshTask: DispatchWorkItem?
     var noQuery = true
     var searching = false
+    /// How long the last finished search took in milliseconds, from the query reaching the engines to its results
+    /// being on screen, without the typing pause before it.
+    var lastSearchMs: Double?
+
     var hasFullDiskAccess: Bool = FullDiskAccess.isGranted
     var disabledVolumes: [FilePath] = Defaults[.disabledVolumes]
     /// iCloud Drive and the folders in ~/Library/CloudStorage, see `CloudStorage`. Looked for at launch, before
@@ -551,7 +557,6 @@ class FuzzyClient {
     @ObservationIgnored var quickFilterPool: [Int]? // Legacy, for CLI
     @ObservationIgnored var quickFilterPools: [String: [Int]] = [:] // Per-engine pools
     var filteredSubsetCount: Int?
-
     @ObservationIgnored var scopeIndexTask: Task<Void, Never>?
     @ObservationIgnored var volumeIndexTasks: [FilePath: Task<Void, Never>] = [:]
     var volumesIndexing: Set<FilePath> = []
@@ -587,7 +592,7 @@ class FuzzyClient {
     @ObservationIgnored nonisolated(unsafe) var replayingHistory = false
     /// Changes inside the scopes that arrived while no Cling window was on screen, path to the order they last
     /// happened in, shown once a window is (see `followChanges`). Touched only on `fsEventsQueue`.
-    @ObservationIgnored nonisolated(unsafe) var hiddenChanges: [String: (order: Int, kind: IndexChange.Kind)] = [:]
+    @ObservationIgnored nonisolated(unsafe) var hiddenChanges: [String: (order: Int, kind: IndexChange.Kind, date: Date)] = [:]
     /// Entries the scope indexes gained since the count on screen last moved. Only touched on `fsEventsQueue`.
     @ObservationIgnored nonisolated(unsafe) var pendingCountDelta = 0
     @ObservationIgnored nonisolated(unsafe) var hiddenChangeOrder = 0
@@ -624,6 +629,19 @@ class FuzzyClient {
     @ObservationIgnored var ongoingOperations: [String: String] = [:]
     @ObservationIgnored var ongoingOperationCounts: [String: Int] = [:]
     var ongoingOperationsList: [(key: String, message: String)] = []
+
+    /// `lastSearchMs` rounded the way it reads at a glance, `~90ms` or `~1.2s`, and as VoiceOver says it.
+    var lastSearchTime: (text: String, spoken: String)? {
+        guard let ms = lastSearchMs else { return nil }
+        // From 995 ms on, rounding to tens would read "~1000ms".
+        if ms >= 995 {
+            // A decimal point whatever the region writes: `formatted()` gives "~2,7s" in a region with decimal commas.
+            let seconds = String(format: "%.1f", ms / 1000)
+            return ("~\(seconds)s", "\(seconds) seconds")
+        }
+        let rounded = ms < 20 ? max(Int(ms.rounded()), 1) : Int((ms / 10).rounded()) * 10
+        return ("~\(rounded)ms", "\(rounded) milliseconds")
+    }
 
     /// The scopes search uses: the enabled ones, and without Pro only the free ones. Nothing else is walked, loaded,
     /// followed or saved, since its results would never be shown.
@@ -1446,13 +1464,13 @@ class FuzzyClient {
                 let opKey = "load:\(scope.rawValue)"
                 if eng.loadBinaryIndex(from: file.url, progress: { count in
                     Task { @MainActor in
-                        self.logActivity("Loading \(scope.label): \(count.formatted()) entries", ongoing: true, operationKey: opKey, count: count)
+                        self.logActivity("Loading \(scope.label): \(count.spaced) entries", ongoing: true, operationKey: opKey, count: count)
                     }
                 }) {
                     await MainActor.run {
                         releaseInBackground(self.scopeEngines.updateValue(eng, forKey: scope))
                         self.updateIndexedCount()
-                        self.logActivity("Loaded \(scope.label): \(eng.count.formatted()) entries", operationKey: opKey)
+                        self.logActivity("Loaded \(scope.label): \(eng.count.spaced) entries", operationKey: opKey)
                     }
                 } else {
                     log.error("Discarding unreadable index for \(scope.label), rebuilding it")
@@ -1480,13 +1498,13 @@ class FuzzyClient {
                 let opKey = "load:\(scope.rawValue)"
                 if eng.loadBinaryIndex(from: file.url, progress: { count in
                     Task { @MainActor in
-                        self.logActivity("Loading \(scope.label): \(count.formatted()) entries", ongoing: true, operationKey: opKey, count: count)
+                        self.logActivity("Loading \(scope.label): \(count.spaced) entries", ongoing: true, operationKey: opKey, count: count)
                     }
                 }) {
                     await MainActor.run {
                         releaseInBackground(self.scopeEngines.updateValue(eng, forKey: scope))
                         self.updateIndexedCount()
-                        self.logActivity("Loaded \(scope.label): \(eng.count.formatted()) entries", operationKey: opKey)
+                        self.logActivity("Loaded \(scope.label): \(eng.count.spaced) entries", operationKey: opKey)
                     }
                 } else {
                     log.error("Discarding unreadable index for \(scope.label), rebuilding it")
@@ -1594,7 +1612,7 @@ class FuzzyClient {
             await MainActor.run {
                 self.loadingIndex = false
                 if self.indexedCount > 0 {
-                    self.logActivity("Loaded \(self.indexedCount.formatted()) entries")
+                    self.logActivity("Loaded \(self.indexedCount.spaced) entries")
                     let indexedCount = self.indexedCount
                     let scopeCount = self.scopeEngines.count
                     let volumeCount = self.volumeEngines.count
@@ -1793,7 +1811,7 @@ class FuzzyClient {
                             let opKey = "scope:\(scope.rawValue)"
                             scopeEngine.walkDirectory(dir.dir, ignoreFile: ignore, ignoreRoot: ignoreRoot, skipDir: skipDir, applyBlocklist: true, discoverGitignore: honorGitignore, progress: { count, _ in
                                 Task { @MainActor in
-                                    self.logActivity("Indexing \(scope.label): \((before + count).formatted()) files", ongoing: true, operationKey: opKey, count: before + count)
+                                    self.logActivity("Indexing \(scope.label): \((before + count).spaced) files", ongoing: true, operationKey: opKey, count: before + count)
                                 }
                             })
                         }
@@ -1825,7 +1843,7 @@ class FuzzyClient {
                         self.scopesIndexing.remove(scope)
                         self.updateIndexedCount()
                         IndexWalks.record(.scope(scope), started: started)
-                        self.logActivity("Indexed \(scope.label): \(added.formatted()) files (\(self.indexedCount.formatted()) total)", operationKey: "scope:\(scope.rawValue)")
+                        self.logActivity("Indexed \(scope.label): \(added.spaced) files (\(self.indexedCount.spaced) total)", operationKey: "scope:\(scope.rawValue)")
                         if scope == .cloud {
                             self.listCloudFolders()
                         }
@@ -2083,9 +2101,10 @@ class FuzzyClient {
             if batch.changed > 0 {
                 indexChangedOffScreen.value = true
             }
+            let now = Date()
             for (path, kind) in batch.paths {
                 hiddenChangeOrder += 1
-                hiddenChanges[path] = (hiddenChangeOrder, IndexChange.Kind(kind))
+                hiddenChanges[path] = (hiddenChangeOrder, IndexChange.Kind(kind), now)
             }
             if hiddenChanges.count >= Self.hiddenChangesMax {
                 showHiddenChanges()
@@ -2151,9 +2170,15 @@ class FuzzyClient {
         hiddenChanges = [:]
         for (path, change) in changes {
             guard let filePath = path.filePath else { continue }
-            pendingFSChanges.append(PendingFSChange(path: filePath, exists: change.kind != .removed, kind: change.kind))
+            pendingFSChanges.append(PendingFSChange(path: filePath, exists: change.kind != .removed, kind: change.kind, date: change.date))
         }
         scheduleFSFlush()
+    }
+
+    /// The changes held back while no window is on screen, which the live changes list doesn't have yet. Read where they
+    /// are kept: the queue never waits on the main thread, so a caller there only waits out the batch it is on.
+    nonisolated func heldChanges() -> [(path: String, kind: IndexChange.Kind, date: Date)] {
+        fsEventsQueue.sync { hiddenChanges.map { ($0.key, $0.value.kind, $0.value.date) } }
     }
 
     /// Follows whether the main or Settings window is on screen, from the windows' own occlusion changes, which
@@ -2269,7 +2294,7 @@ class FuzzyClient {
                 if change.kind == nil {
                     indexedCount = max(0, indexedCount &- 1)
                 }
-                appendLiveChange(IndexChange(path: pathStr, kind: .removed))
+                appendLiveChange(IndexChange(path: pathStr, kind: .removed, date: change.date))
                 if let index = scoredResults.firstIndex(of: change.path) {
                     scoredResults.remove(at: index)
                     resultsChanged = true
@@ -2285,7 +2310,7 @@ class FuzzyClient {
             // shows it. Un-remove it so the UI and index agree again.
             removedFiles.remove(pathStr)
             if let kind = change.kind {
-                appendLiveChange(IndexChange(path: pathStr, kind: kind))
+                appendLiveChange(IndexChange(path: pathStr, kind: kind, date: change.date))
                 continue
             }
             let isNew = !seenPaths.contains(pathStr)
@@ -2293,7 +2318,7 @@ class FuzzyClient {
             if isNew {
                 indexedCount &+= 1
             }
-            appendLiveChange(IndexChange(path: pathStr, kind: isNew ? .added : .modified))
+            appendLiveChange(IndexChange(path: pathStr, kind: isNew ? .added : .modified, date: change.date))
         }
 
         if resultsChanged {
@@ -2451,6 +2476,7 @@ class FuzzyClient {
         }
 
         searching = true
+        let started = CFAbsoluteTimeGetCurrent()
         searchTask = Task.detached(priority: .userInitiated) {
             guard !engines.isEmpty else {
                 await MainActor.run {
@@ -2539,6 +2565,7 @@ class FuzzyClient {
                 finalShown = true
                 self.scoredResults = bar ? Self.launcherOrder(finalPaths, apps: apps.compactMap(\.filePath), path: \.string) : finalPaths
                 self.results = self.sortedResults()
+                self.lastSearchMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
                 self.searching = false
                 if !self.emptyQuery || wantVolumeFilter {
                     self.noQuery = false

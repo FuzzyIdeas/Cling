@@ -353,7 +353,7 @@ extension FuzzyClient {
                 volume: volume, engine: volumeEngine, ignoreChecker: ignoreChecker,
                 progress: { count, _ in
                     Task { @MainActor in
-                        self.logActivity("Indexing \(volumeName): \(count.formatted()) files", ongoing: true, operationKey: opKey, count: count)
+                        self.logActivity("Indexing \(volumeName): \(count.spaced) files", ongoing: true, operationKey: opKey, count: count)
                     }
                 },
                 cancelled: { Task.isCancelled || DriveRelease.shared.isReleasing(volume.string) }
@@ -401,7 +401,7 @@ extension FuzzyClient {
                     if walkAgain == nil {
                         self.noteWalkNeeded(volume, "too much changed during its last reindex")
                     }
-                    self.logActivity("Indexed volume: \(volumeName) (\(result.added.formatted()) files)", operationKey: opKey)
+                    self.logActivity("Indexed volume: \(volumeName) (\(result.added.spaced) files)", operationKey: opKey)
                     if !Defaults[.metadataPrunedVolumes].contains(volume) {
                         Defaults[.metadataPrunedVolumes].append(volume)
                     }

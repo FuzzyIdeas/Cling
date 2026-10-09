@@ -1056,7 +1056,7 @@ final class WebAccessServer: @unchecked Sendable {
             do {
                 archive = try ZipArchive(items: items)
             } catch {
-                return .html(WebPage.message(title: "Too many files to zip (more than \(ZipArchive.maxEntries.formatted()))", body: "", assetVersion: assetVersion, home: true), status: 413)
+                return .html(WebPage.message(title: "Too many files to zip (more than \(ZipArchive.maxEntries.spaced))", body: "", assetVersion: assetVersion, home: true), status: 413)
             }
             lock.withLock {
                 plans = plans.filter { Date().timeIntervalSince($0.value.made) < 600 }

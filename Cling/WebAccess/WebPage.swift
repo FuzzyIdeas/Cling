@@ -603,8 +603,9 @@ enum WebPage {
             + (item.fetchFirst ? " data-cloud" : "")
     }
 
+    /// With a decimal point whatever the region writes, like the sizes in the app; `ByteCountFormatter` follows the region.
     static func formatBytes(_ bytes: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
+        bytes < 1000 ? "\(bytes) bytes" : IndexStats.diskSize(Int(clamping: bytes))
     }
 
     static func relativeDate(_ date: Date) -> String {

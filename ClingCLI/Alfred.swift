@@ -57,7 +57,7 @@ extension Alfred {
                     + volumes.reduce(0) { $0 + ($1.indexing ? $1.operationCount ?? 0 : 0) }
                 items.append([
                     "title": "Reindexing \(walking.joined(separator: ", "))",
-                    "subtitle": "\(walked.formatted()) files so far, ↩ to stop",
+                    "subtitle": "\(walked.spaced) files so far, ↩ to stop",
                     "arg": "", "variables": ["reindex": "cancel"],
                 ])
             }
@@ -65,7 +65,7 @@ extension Alfred {
             let total = scopes.reduce(0) { $0 + $1.count }
             items.append([
                 "title": "Reindex everything",
-                "subtitle": "\(total.formatted()) files in \(scopes.count) scopes",
+                "subtitle": "\(total.spaced) files in \(scopes.count) scopes",
                 "arg": "", "variables": ["reindex": "all"],
             ])
             for scope in scopes {
@@ -82,7 +82,7 @@ extension Alfred {
             for volume in volumes {
                 items.append([
                     "title": "Reindex \(volume.name)",
-                    "subtitle": "\(volume.path), \(volume.count.formatted()) files",
+                    "subtitle": "\(volume.path), \(volume.count.spaced) files",
                     "arg": "", "variables": ["reindex": volume.path],
                     "icon": ["type": "fileicon", "path": volume.path],
                 ])
@@ -136,11 +136,11 @@ enum AlfredOutput {
     }
 
     static func scopeDetail(_ count: Int, _ lastIndexedAt: Double?) -> String {
-        guard let lastIndexedAt else { return "\(count.formatted()) files" }
+        guard let lastIndexedAt else { return "\(count.spaced) files" }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
         let when = formatter.localizedString(for: Date(timeIntervalSince1970: lastIndexedAt), relativeTo: Date())
-        return "\(count.formatted()) files, indexed \(when)"
+        return "\(count.spaced) files, indexed \(when)"
     }
 
     static func print(_ items: [[String: Any]], extra: [String: Any] = [:]) {

@@ -237,7 +237,7 @@ struct IndexStatsView: View {
     private func group(_ name: String, _ items: [IndexStats.Item]) -> some View {
         GridRow {
             Text(name)
-            Text(IndexStats.sum(items) { $0.files }.formatted())
+            Text(IndexStats.sum(items) { $0.files }.spaced)
             Text(disk(IndexStats.sum(items) { $0.diskBytes }))
             Text(memory(IndexStats.sum(items) { $0.memoryBytes }))
             Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
@@ -252,7 +252,7 @@ struct IndexStatsView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .padding(.leading, indented ? 14 : 0)
-            Text(item.files?.formatted() ?? "")
+            Text(item.files?.spaced ?? "")
             Text(disk(item.diskBytes))
             if let bytes = item.memoryBytes {
                 Text(memory(bytes))

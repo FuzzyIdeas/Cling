@@ -67,6 +67,73 @@ func encodedSpec(_ spec: some Encodable) throws -> String {
     try String(decoding: JSONEncoder().encode(spec), as: UTF8.self)
 }
 
+// MARK: - Changes
+
+struct Changes: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "What the live index recorded, as the window's live changes pane lists it",
+        discussion: """
+        Oldest first. Lists what the pane shows with Indexed only on: nothing blocked, ignored or hidden from the \
+        pane. --all lists those too, each marked with what leaves it out.
+        """
+    )
+
+    @Option(name: .long, help: "Only changes from the last N seconds")
+    var since: Double?
+
+    @Option(name: .customLong("for"), help: "Wait this many seconds, then list what changed meanwhile")
+    var duration: Double?
+
+    @Flag(name: .long, help: "Print changes as they happen, until interrupted")
+    var follow = false
+
+    @Option(name: .shortAndLong, help: "Most changes to list")
+    var count = 200
+
+    @Flag(name: .long, help: "Also list what the pane leaves out")
+    var all = false
+
+    @Flag(name: .long, help: "Output as JSON")
+    var json = false
+
+    mutating func run() throws {
+        let started = Date().timeIntervalSince1970
+        var after = since.map { started - $0 } ?? 0
+        if let duration {
+            after = started - (since ?? 0)
+            Thread.sleep(forTimeInterval: max(duration, 0))
+        }
+
+        var response = try ask(request(after: after))
+        guard follow else {
+            let status = response.status ?? ""
+            print(json ? (response.payload ?? "{}") : (status.isEmpty ? "No changes" : status))
+            return
+        }
+        // Each answer says when it was read, so the next one picks up exactly there.
+        while true {
+            if let status = response.status, !status.isEmpty {
+                print(json ? (response.payload ?? "{}") : status)
+                fflush(stdout)
+            }
+            after = readTime(response) ?? Date().timeIntervalSince1970
+            Thread.sleep(forTimeInterval: 1)
+            response = try ask(request(after: after))
+        }
+    }
+
+    private func request(after: Double) -> ClingRequest {
+        ClingRequest(command: .changes, maxResults: count, verbose: all, since: after)
+    }
+
+    private func readTime(_ response: ClingResponse) -> Double? {
+        guard let payload = response.payload,
+              let object = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any]
+        else { return nil }
+        return object["now"] as? Double
+    }
+}
+
 // MARK: - Why
 
 struct Why: ParsableCommand {
@@ -492,31 +559,33 @@ struct VolumeCommand: ParsableCommand {
         case unfollow
         case skipReindex = "skip-reindex"
         case interval
+        case icon
         case remove
     }
 
     static let configuration = CommandConfiguration(
         commandName: "volume",
-        abstract: "List external volumes, turn their indexing or live updates on or off, and set how often they are reindexed (Pro).",
+        abstract: "List external volumes, turn their indexing or live updates on or off, set how often they are reindexed and their icon (Pro).",
         discussion: """
         cling volume list
         cling volume enable|disable <volume>
         cling volume follow|unfollow <volume>        live updates on or off; the reindex interval still applies
         cling volume skip-reindex <volume>           keep its index until the next scheduled reindex
         cling volume interval <volume> <seconds>     3600 (1 hour) to 2419200 (4 weeks)
+        cling volume icon <volume> <symbol>          the SF Symbol its paths start with in results; none for its kind's
         cling volume remove <volume>                 a disconnected volume's index
         Reindex a volume now with: cling reindex --scope /Volumes/<name>
         """
     )
 
-    @Argument(help: "list, enable, disable, follow, unfollow, skip-reindex, interval or remove")
+    @Argument(help: "list, enable, disable, follow, unfollow, skip-reindex, interval, icon or remove")
     var action: Action = .list
 
     @Argument(help: "The volume's name or path")
     var volume: String?
 
-    @Argument(help: "For interval: seconds between reindexes")
-    var seconds: Int?
+    @Argument(help: "For interval: seconds between reindexes. For icon: an SF Symbol name, or none")
+    var value: String?
 
     @Flag(name: .long, help: "Output as JSON")
     var json = false
@@ -525,10 +594,13 @@ struct VolumeCommand: ParsableCommand {
         if action != .list, volume == nil {
             throw CLIError("\(action.rawValue) needs a volume")
         }
-        if action == .interval, seconds == nil {
+        if action == .interval, value.flatMap(Int.init) == nil {
             throw CLIError("interval needs a number of seconds")
         }
-        try runConfig(ClingRequest(command: .volumes, action: action.rawValue, key: seconds.map(String.init), value: volume), json: json)
+        if action == .icon, value == nil {
+            throw CLIError("icon needs an SF Symbol name, or none")
+        }
+        try runConfig(ClingRequest(command: .volumes, action: action.rawValue, key: value, value: volume), json: json)
     }
 }
 

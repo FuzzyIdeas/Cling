@@ -11,6 +11,7 @@ import LowtechPro
 import LowtechProSentry
 import OSLog
 import Paddle
+import Sentry
 import Sparkle
 import SwiftUI
 import System
@@ -163,6 +164,11 @@ class AppDelegate: LowtechProAppDelegate {
             if Defaults[.enableSentry] {
                 LowtechSentry.sentryDSN = "https://cb2335583d0612b61abb5d902ac97560@o84592.ingest.us.sentry.io/4511614814060544"
                 LowtechSentry.configureSentry(restartOnHang: false, getUser: LowtechSentry.getSentryUser)
+                SearchEngine.onFull = { paths, bytes in
+                    SentrySDK.capture(message: "Index full") { scope in
+                        scope.setExtras(["paths": paths, "bytes": bytes])
+                    }
+                }
             }
         }
 

@@ -46,7 +46,7 @@ struct ClingCLI: ParsableCommand {
         commandName: "cling",
         abstract: "Cling: fast fuzzy file search from the command line",
         subcommands: [
-            Search.self, Reindex.self, Status.self, Recents.self, Index.self, Open.self, Explain.self, Why.self,
+            Search.self, Reindex.self, Status.self, Recents.self, Changes.self, Index.self, Open.self, Explain.self, Why.self,
             SettingsCommand.self, FilterCommand.self, ScriptCommand.self, VolumeCommand.self, CloudCommand.self, ScopeCommand.self,
             EverythingCommand.self, IgnoreCommand.self, ShortcutCommand.self, MCPCommand.self, Logs.self, CatchUp.self, Alfred.self,
         ],
@@ -497,21 +497,21 @@ struct Reindex: ParsableCommand {
 
             let scopeParts = matchingScopes.compactMap { s -> String? in
                 if let opCount = s.operationCount {
-                    return "[\(s.name)] \(opCount.formatted()) files"
+                    return "[\(s.name)] \(opCount) files"
                 }
                 if let op = s.operation {
                     return "[\(s.name)] \(op)"
                 }
-                return !s.indexing && seenScopes.contains(s.rawValue) ? "[\(s.name)] \(s.count.formatted()) files" : nil
+                return !s.indexing && seenScopes.contains(s.rawValue) ? "[\(s.name)] \(s.count) files" : nil
             }
             let volumeParts = matchingVolumes.compactMap { v -> String? in
                 if let opCount = v.operationCount {
-                    return "[\(v.name)] \(opCount.formatted()) files"
+                    return "[\(v.name)] \(opCount) files"
                 }
                 if let op = v.operation {
                     return "[\(v.name)] \(op)"
                 }
-                return !v.indexing && seenVolumes.contains(v.path) ? "[\(v.name)] \(v.count.formatted()) files" : nil
+                return !v.indexing && seenVolumes.contains(v.path) ? "[\(v.name)] \(v.count) files" : nil
             }
             let progressLine = (scopeParts + volumeParts).joined(separator: "  ")
             let liveCount = matchingScopes.reduce(0) { $0 + ($1.operationCount ?? 0) }
@@ -555,7 +555,7 @@ struct Reindex: ParsableCommand {
             if !stillIndexing, sawIndexing || completedFast {
                 fputs("\n", stderr)
                 let reportCount = finalCount > 0 ? finalCount : liveCount
-                print("indexed: \(reportCount.formatted()) entries in \(Int(CFAbsoluteTimeGetCurrent() - t0))s")
+                print("indexed: \(reportCount) entries in \(Int(CFAbsoluteTimeGetCurrent() - t0))s")
                 break
             }
             if !sawIndexing, pollsWithoutIndexing >= gracePolls {
@@ -602,12 +602,12 @@ extension Reindex {
                 if showedProgress {
                     fputs("\n", stderr)
                 }
-                print("everything: \(count.formatted()) entries in \(Int(CFAbsoluteTimeGetCurrent() - t0))s")
+                print("everything: \(count) entries in \(Int(CFAbsoluteTimeGetCurrent() - t0))s")
                 return
             }
             // The walk's own count: the index it replaces stays searchable, at its full size, until the walk is done.
             let walked = status.everythingWalked ?? count
-            fputs("\r\u{1B}[Kindexing everything: \(walked.formatted()) entries (\(Int(CFAbsoluteTimeGetCurrent() - t0))s)", stderr)
+            fputs("\r\u{1B}[Kindexing everything: \(walked) entries (\(Int(CFAbsoluteTimeGetCurrent() - t0))s)", stderr)
             showedProgress = true
         }
     }

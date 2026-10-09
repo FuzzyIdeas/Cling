@@ -787,6 +787,8 @@ extension Defaults.Keys {
     static let searchScopes = Key<[SearchScope]>("searchScopes", default: [.home, .library, .applications, .system, .root])
     static let quickFilters = Key<[QuickFilter]>("quickFilters", default: DEFAULT_QUICK_FILTERS)
     static let reindexTimeIntervalPerVolume = Key<[FilePath: Double]>("reindexTimeIntervalPerVolume", default: [:])
+    /// The SF Symbol each drive's paths start with in results, by its path; a drive missing here shows its kind's.
+    static let volumeIcons = Key<[FilePath: String]>("volumeIcons", default: [:])
     static let windowAppearance = Key<WindowAppearance>("windowAppearance", default: WindowAppearance.defaultValue)
     static let migrationVersion = Key<Int>("migrationVersion", default: 0)
     static let onboardingCompleted = Key<Bool>("onboardingCompleted", default: false)
@@ -803,10 +805,20 @@ extension Defaults.Keys {
     /// the parser (PathBlocklist.split skips "#" and blank lines). Prefixes match the start of an absolute path.
     static let blockedPrefixes = Key<String>("blockedPrefixes", default: """
     #:group id=ephemeral name=Temporary & ephemeral
+    /tmp/cc-socks/
+    /tmp/claude-
     /tmp/com.apple.
+    /tmp/context-mode-
     /var/folders/
     /private/var/vm/
     /cores/
+
+    #:group id=system-state name=System logs & state
+    /Library/Tailscale/
+    /var/db/com.apple.backgroundtaskmanagement/
+    /var/db/diagnostics/
+    /var/db/uuidtext/
+    /var/protected/
 
     #:group id=shared name=System shared data
     /usr/share/
@@ -875,6 +887,8 @@ extension Defaults.Keys {
     /// once and then stop needing, so they sit back out of the way and come to full strength on
     /// hover, which is the only time you are looking for them.
     static let dimStatusBar = Key<Bool>("dimStatusBar", default: true)
+    static let hiddenStatusBarItems = Key<Set<StatusBarItem>>("hiddenStatusBarItems", default: [])
+    static let hiddenSearchBarFooterItems = Key<Set<SearchBarFooterItem>>("hiddenSearchBarFooterItems", default: [])
     /// Washes the window in the active filter's colour. Off leaves the filter's icon coloured as it
     /// is and only drops the background wash, for anyone who finds a tinted window distracting to
     /// read results against.

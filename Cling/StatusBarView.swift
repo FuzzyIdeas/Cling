@@ -11,7 +11,7 @@ import SwiftUI
 struct StatusBarView: View {
     var body: some View {
         let bar = HStack {
-            if !fuzzy.backgroundIndexing {
+            if !fuzzy.backgroundIndexing, !hidden.contains(.reindex) {
                 Button(action: {
                     if fuzzy.volumeFilter == .allDrives {
                         fuzzy.indexVolumes(fuzzy.connectedDrives)
@@ -21,34 +21,20 @@ struct StatusBarView: View {
                         fuzzy.refresh()
                     }
                 }) {
-                    Image(systemName: "arrow.clockwise").bold()
+                    Text(Image(systemName: "arrow.clockwise")).bold()
                 }
                 .help(fuzzy.volumeFilter == .allDrives ? "Reindex connected drives" : fuzzy.volumeFilter != nil ? "Reindex \(fuzzy.volumeFilter!.name.string)" : "Reindex files")
                 .buttonStyle(.text(borderColor: .clear))
             }
 
-            // Text only while something runs; the activity log behind it says what ran.
-            Button(action: { toggle(\.showActivityLog) }) {
-                HStack(spacing: 4) {
-                    if let runningAction {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle())
-                            .controlSize(.mini)
-                        Text(runningAction)
-                            .truncationMode(.middle)
-                            .lineLimit(1)
-                    } else {
-                        Image(systemName: "list.bullet.rectangle")
-                    }
-                }
+            // Text only while something runs; the activity log behind it says what ran. Hidden, it still shows while
+            // something runs, as the only sign that indexing is under way.
+            if !hidden.contains(.activityLog) || runningAction != nil {
+                activityLogButton
             }
-            .buttonStyle(.text(borderColor: .clear, active: fuzzy.showActivityLog, activeTint: .blue))
-            .accessibilityLabel("Activity log")
-            .accessibilityToggle(isOn: fuzzy.showActivityLog)
-            .help("Toggle activity log")
 
             // The count is what people click to find out where all those files come from.
-            if let countText {
+            if let countText, !hidden.contains(.fileCount) {
                 Button(action: { toggle(\.showIndexBrowser) }) {
                     Text(countText)
                 }
@@ -57,7 +43,7 @@ struct StatusBarView: View {
                 .help("Toggle index size view")
             }
 
-            if !fuzzy.liveIndexChanges.isEmpty {
+            if !fuzzy.liveIndexChanges.isEmpty, !hidden.contains(.liveChanges) {
                 Button(action: { toggle(\.showLiveIndex) }) {
                     HStack(spacing: 2) {
                         Circle()
@@ -71,10 +57,10 @@ struct StatusBarView: View {
                 .help("Toggle live index view")
             }
 
-            if !RH.entries.isEmpty {
+            if !RH.entries.isEmpty, !hidden.contains(.runHistory) {
                 Button(action: { toggle(\.showRunHistory) }) {
                     HStack(spacing: 2) {
-                        Image(systemName: "clock.arrow.circlepath")
+                        Text(Image(systemName: "clock.arrow.circlepath"))
                         Text("\(RH.entries.count) runs")
                     }
                 }
@@ -83,28 +69,47 @@ struct StatusBarView: View {
                 .help("Toggle run history")
             }
 
+            if let searchTime, !hidden.contains(.searchTime) {
+                Text(searchTime.text)
+                    .monospacedDigit()
+                    .help("How long the last search took")
+                    .accessibilityLabel("Last search took about \(searchTime.spoken)")
+            }
+
             Spacer()
 
-            if let rowsToggleSymbol {
+            let showsSwitch = !hidden.contains(.searchBarHint)
+            let showsShortcut = !hidden.contains(.showHideHint)
+            if let rowsToggleSymbol, !hidden.contains(.actionsHint) {
                 Text("double tap **`\(rowsToggleSymbol)`** to \(toolbarRowsHidden ? "show" : "hide") actions")
-                Divider().frame(height: 10)
+                if showsSwitch || showsShortcut {
+                    Divider().frame(height: 10)
+                }
             }
-            Button {
-                SB.switchFromWindow()
-            } label: {
-                Text("**`⌃ Tab`** to switch to the floating bar")
+            if showsSwitch {
+                Button {
+                    SB.switchFromWindow()
+                } label: {
+                    Text("**`⌃ Tab`** to switch to the floating bar")
+                }
+                .buttonStyle(.text(borderColor: .clear))
+                if showsShortcut {
+                    Divider().frame(height: 10)
+                }
             }
-            .buttonStyle(.text(borderColor: .clear))
-            Divider().frame(height: 10)
-            Text("**`\(showHideShortcut)`** to show/hide Cling").padding(.trailing, 2)
+            if showsShortcut {
+                Text("**`\(showHideShortcut)`** to show/hide Cling").padding(.trailing, 2)
+            }
 
-            Button {
-                WM.open("settings")
-            } label: {
-                Image(systemName: "gearshape").bold()
+            if !hidden.contains(.settings) {
+                Button {
+                    WM.open("settings")
+                } label: {
+                    Text(Image(systemName: "gearshape")).bold()
+                }
+                .buttonStyle(.text(borderColor: .clear))
+                .accessibilityLabel("Settings")
             }
-            .buttonStyle(.text(borderColor: .clear))
-            .accessibilityLabel("Settings")
         }
         .font(.scaled(10, .chrome))
         .foregroundStyle(.secondary)
@@ -117,6 +122,11 @@ struct StatusBarView: View {
                 let modifier = Defaults[.rowsToggleModifier]
                 rowsToggleSymbol = modifier == .disabled ? nil : modifier.symbol
                 showHideShortcut = "\(Defaults[.triggerKeys].shortReadableStr) + \(Defaults[.showAppKey].character)"
+            }
+        }
+        .task {
+            for await items in Defaults.updates(.hiddenStatusBarItems) {
+                hidden = items
             }
         }
         .animation(.easeOut(duration: 0.12), value: hoveringStatusBar)
@@ -139,6 +149,8 @@ struct StatusBarView: View {
     /// which the status bar does a lot of: it also shows indexedCount and the live change count.
     @State private var showHideShortcut = ""
     @State private var rowsToggleSymbol: String?
+    /// Read like the shortcut above, so the bar decodes it only when it changes.
+    @State private var hidden: Set<StatusBarItem> = []
 
     /// Observed so the view redraws when the text size changes; the sizes themselves come
     /// from FontScale.
@@ -150,7 +162,7 @@ struct StatusBarView: View {
     /// What is running right now, shown on the activity log button.
     private var runningAction: String? {
         if everything.enabled, everything.loading || everything.building {
-            return everything.loading ? "Loading Everything…" : "Indexing everything: \(everything.count.formatted()) files"
+            return everything.loading ? "Loading Everything…" : "Indexing everything: \(everything.count.spaced) files"
         }
         return fuzzy.operation.isEmpty ? nil : fuzzy.operation
     }
@@ -158,12 +170,39 @@ struct StatusBarView: View {
     /// The count on the index size button, left out while Everything is still loading or being built.
     private var countText: String? {
         if everything.enabled {
-            return everything.loading || everything.building ? nil : "\(everything.count.formatted()) files in Everything"
+            return everything.loading || everything.building ? nil : "\(everything.count.spaced) files in Everything"
         }
         if let subset = fuzzy.filteredSubsetCount {
-            return "Searching \(subset.formatted()) files"
+            return "Searching \(subset.spaced) files"
         }
-        return "\(fuzzy.indexedCount.formatted()) files indexed"
+        return "\(fuzzy.indexedCount.spaced) files indexed"
+    }
+
+    /// The last search's time, shown only while a query is typed, since the recents under an empty query come from no
+    /// search.
+    private var searchTime: (text: String, spoken: String)? {
+        fuzzy.noQuery ? nil : fuzzy.lastSearchTime
+    }
+
+    private var activityLogButton: some View {
+        Button(action: { toggle(\.showActivityLog) }) {
+            HStack(spacing: 4) {
+                if let runningAction {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                        .controlSize(.mini)
+                    Text(runningAction)
+                        .truncationMode(.middle)
+                        .lineLimit(1)
+                } else {
+                    Text(Image(systemName: "list.bullet.rectangle"))
+                }
+            }
+        }
+        .buttonStyle(.text(borderColor: .clear, active: fuzzy.showActivityLog, activeTint: .blue))
+        .accessibilityLabel("Activity log")
+        .accessibilityToggle(isOn: fuzzy.showActivityLog)
+        .help("Toggle activity log")
     }
 
     /// Opens one of the panels in place of the results, closing the others, and puts the query back when it closes.

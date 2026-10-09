@@ -401,7 +401,7 @@ extension FuzzyClient {
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             return ClingResponse(
                 results: results.map { ClingSearchResult(path: $0.path, isDir: $0.isDir, score: $0.score, quality: $0.quality) },
-                status: building ? "Everything is still being indexed, \(engine.count.formatted()) files so far" : nil,
+                status: building ? "Everything is still being indexed, \(engine.count) files so far" : nil,
                 indexCount: engine.count,
                 searchMs: ms
             )
@@ -664,7 +664,7 @@ extension FuzzyClient {
                 let state = FUZZY.indexing ? "indexing" : FUZZY.backgroundIndexing ? "background indexing" : (c > 0 ? "ready" : "empty")
                 stateOut = state
                 lines.append("status: \(state)")
-                lines.append("total: \(c.formatted()) entries")
+                lines.append("total: \(c) entries")
 
                 // Scope details
                 let enabledScopes = Defaults[.searchScopes]
@@ -681,7 +681,7 @@ extension FuzzyClient {
                     let scopeOp = ops[scopeKey] ?? ops[loadKey]
                     let scopeOpCount = opCounts[scopeKey] ?? opCounts[loadKey]
                     let scopeIndexing = scopeOp != nil
-                    let status = !enabled ? "disabled" : scopeIndexing ? (scopeOp ?? "indexing...") : !indexed ? "not indexed" : "\(count.formatted()) entries"
+                    let status = !enabled ? "disabled" : scopeIndexing ? (scopeOp ?? "indexing...") : !indexed ? "not indexed" : "\(count) entries"
                     lines.append("  \(scope.label): \(status)")
                     let scopeFile = scopeIndexFile(scope)
                     let lastIndexedAt = scopeFile.exists ? scopeFile.timestamp : nil
@@ -710,7 +710,7 @@ extension FuzzyClient {
                         let indexing = FUZZY.volumesIndexing.contains(volume) || volumeOp != nil
                         let count = FUZZY.volumeEngines[volume]?.count ?? 0
                         let indexed = FUZZY.volumeEngines[volume] != nil
-                        let status = !enabled ? "disabled" : indexing ? (volumeOp ?? "indexing...") : !indexed ? "not indexed" : "\(count.formatted()) entries"
+                        let status = !enabled ? "disabled" : indexing ? (volumeOp ?? "indexing...") : !indexed ? "not indexed" : "\(count) entries"
                         let following = FUZZY.followingStatus(volume)
                         let health = FUZZY.followedDriveHealth(volume)?.level.verdict
                         let unwell = health.flatMap { $0 == DriveHealth.Level.good.verdict ? nil : ", \($0)" } ?? ""
@@ -737,8 +737,8 @@ extension FuzzyClient {
                 lines.append("")
                 if let replay = FUZZY.liveUpdater?.replay {
                     lines.append(replay.caughtUp
-                        ? "live: following changes (caught up after \(replay.events.formatted()) events in \(String(format: "%.1f", replay.seconds))s)"
-                        : "live: replaying changes, \(replay.events.formatted()) events so far")
+                        ? "live: following changes (caught up after \(replay.events) events in \(String(format: "%.1f", replay.seconds))s)"
+                        : "live: replaying changes, \(replay.events) events so far")
                 } else {
                     lines.append("live: off")
                 }
@@ -751,9 +751,9 @@ extension FuzzyClient {
                 case "loading":
                     lines.append("everything: loading")
                 case "indexing" where !EVERYTHING.building:
-                    lines.append("everything: indexing, \(EVERYTHING.walked.formatted()) entries walked, \(EVERYTHING.count.formatted()) searchable until it finishes")
+                    lines.append("everything: indexing, \(EVERYTHING.walked) entries walked, \(EVERYTHING.count) searchable until it finishes")
                 default:
-                    lines.append("everything: \(EVERYTHING.state), \(EVERYTHING.count.formatted()) entries")
+                    lines.append("everything: \(EVERYTHING.state), \(EVERYTHING.count) entries")
                 }
 
                 // Current operation
@@ -851,7 +851,7 @@ extension FuzzyClient {
             return ClingResponse(status: messages.joined(separator: "\n"), indexCount: coord.count)
 
         case .explain where request.action == "diagnose", .why, .settings, .filters, .scripts, .volumes, .cloud, .scopes, .ignore, .shortcuts,
-             .everything:
+             .everything, .changes:
             return CLIConfig.handle(request, coordinator: coord)
 
         case .explain:

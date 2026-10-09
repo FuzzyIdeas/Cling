@@ -396,7 +396,7 @@ struct IndexBrowserView: View {
                 .font(.scaled(12))
             }
             TableColumn("Files") { node in
-                Text(node.count.formatted())
+                Text(node.count.spaced)
                     .font(.scaled(12).monospacedDigit())
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
@@ -465,7 +465,7 @@ struct IndexBrowserView: View {
                             .font(.scaled(11))
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        Text("\(item.count.formatted()) files · \(item.rule.storeLabel)")
+                        Text("\(item.count.spaced) files · \(item.rule.storeLabel)")
                             .font(.scaled(10))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)

@@ -53,6 +53,8 @@ Pods/
 *.xcworkspace/xcuserdata
 **/.local/fsindex*
 **/TextIndex/
+**/SDKExplicitPrecompiledModules/
+**/SourcePackages/
 **/Sublime Text */Index
 
 #:group id=photos name=Photo & video libraries
@@ -92,13 +94,28 @@ Library/Application Support/Code*/User/workspaceStorage
 Library/Application Support/com.hegenberg.bettertouchtool*/com.mentalfaculty.ensembles.eventdata
 Library/Application Support/com.raycast.macos/posthog.queueFolder/
 
+#:group id=claude-code name=Claude Code
+.claude*/backups/
+.claude*/cache/
+.claude*/debug/
+.claude*/file-history/
+.claude*/ide/
+.claude*/paste-cache/
+.claude*/plugins/**/.in_use/
+.claude*/plugins/.in_use-links/
+.claude*/session-env/
+.claude*/sessions/
+.claude*/shell-snapshots/
+.claude*/telemetry/
+.claude/context-mode/
+
 #:group id=browser name=Browser caches & state
 *.com.google.Chrome
 **/Cookies-journal
 **/Local Storage/leveldb/
 **/Network Persistent State
 **/TransportSecurity
-webappsstore.sqlite-wal
+Library/**/IndexedDB/
 Library/**/Google/Chrome*/Cache
 Library/**/Google/Chrome*/leveldb
 Library/**/Firefox/Profiles/**/sessionstore-backups
@@ -106,26 +123,39 @@ Library/**/Firefox/Profiles/**/storage/default
 Library/**/Firefox/Profiles/**/storage/permanent
 Library/Application Support/Firefox/Profiles/**/datareporting/
 Library/Application Support/Firefox/Profiles/**/saved-telemetry-pings/
+Library/Application Support/Firefox/Profiles/*/weave/
 
 #:group id=appstate name=App caches & telemetry
+*-shm
+*-wal
+**/.gnupg/*.lock
+**/.gnupg/*.tmp
+**/.gnupg/.#lk*
+**/.gnupg/S.*
 **/sentry/scope*.json
 **/Spotify/Users/*/pending-messages*
 **/wharf/
+.local/state/
 io.tailscale.ipn.macos
+Library/Application Support/*/logs/
+Library/Application Support/*/sentry/
 Library/Application Support/Spotify/PersistentCache/Users/*-user/*.tmp
 
 #:group id=library name=User Library caches & data
 Cache
 Caches
 doc
-Library/**/*-shm
 Library/**/*.chrono-timeline
 Library/**/Data/tmp/
+Library/**/WebKit/
 Library/Application Support/**/.*
 Library/Assistant/SiriVocabulary/**/index-*
 Library/Biome/
+Library/Daemon Containers/
 Library/DuetExpertCenter/
 Library/HomeKit/metricsCounters/*.counters
+Library/HTTPStorages/
+Library/IdentityServices/
 Library/Metadata/CoreSpotlight/*/
 Library/Developer/CoreSimulator/
 Library/Developer/Xcode/iOS DeviceSupport/

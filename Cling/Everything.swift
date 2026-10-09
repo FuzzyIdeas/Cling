@@ -613,7 +613,7 @@ final class EverythingIndex {
                 self.building = false
                 self.walked = n
                 IndexWalks.record(.everything, started: began)
-                FUZZY.logActivity("Everything indexed: \(n.formatted()) files")
+                FUZZY.logActivity("Everything indexed: \(n.spaced) files")
                 guard self.engine != nil else { return }
                 self.stopWatching()
                 self.snapshot = started
@@ -1064,7 +1064,7 @@ extension CLIConfig {
         )
         info.freedBytes = freed
         let text = said ?? [
-            "everything: " + (ev.available ? "on, \(ev.state)" : "off") + (loaded ? ", \(ev.count.formatted()) entries" : ""),
+            "everything: " + (ev.available ? "on, \(ev.state)" : "off") + (loaded ? ", \(ev.count) entries" : ""),
             "saved index: " + (info.saved ?? "none"),
         ].joined(separator: "\n")
         return ClingResponse(status: text, payload: payloadJSON(info))

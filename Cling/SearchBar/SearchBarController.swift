@@ -71,6 +71,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         var list: [FilePath]
         var defaultList: Bool
         var searching: Bool
+        /// How long the last search took, `~90ms`, after the result count.
+        var searchTime: String?
         var stash: [FilePath]
         var query: String
         var filterText: String
@@ -102,6 +104,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     /// Everything the bar shows that comes from the shared search state.
     static let everythingTip = "Everything: every file on the local disks, nothing excluded (⌘⇧E)"
     static let filterTip = "Quick Filters: narrow down results without typing often used queries"
+    static let searchTimeTip = "How long the last search took"
 
     static let shared = SearchBarController()
 
@@ -208,6 +211,9 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         // Style's Window section, which the bar follows too.
         pub(.dimStatusBar).sink { [weak self] change in
             mainAsync { self?.root?.hintBar.dims = change.newValue }
+        }.store(in: &observers)
+        pub(.hiddenSearchBarFooterItems).sink { [weak self] change in
+            mainAsync { self?.footerItemsChanged(change.newValue) }
         }.store(in: &observers)
         pub(.filterWindowTintStrength).sink { [weak self] change in
             mainAsync { self?.root?.wash.strength = change.newValue }
@@ -695,7 +701,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             hints.append(.init(id: .syntax, key: "⌘/", title: "Syntax"))
         }
         hints.append(.init(id: .window, key: "⌃ Tab", title: "Table"))
-        root.hintBar.hints = hints
+        root.hintBar.hints = hints.filter { SearchBarFooterItem(hint: $0.id).map { !hiddenFooterItems.contains($0) } ?? true }
     }
 
     func refreshHintKeys() {
@@ -772,6 +778,8 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
     private static let springDuration: CFTimeInterval = 0.28
 
     private var hintKeys = HintKeys()
+    /// What the footer leaves out, kept here so a hint update doesn't decode the setting each time.
+    private var hiddenFooterItems = Defaults[.hiddenSearchBarFooterItems]
     private var restoreMainContentWork: DispatchWorkItem?
     private var pillPanel: SearchBarPillPanel?
     private var pillView: SearchBarPillView?
@@ -906,6 +914,16 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         return 1 - exp(-zeta * omega * t) * (cos(damped * t) + zeta * omega / damped * sin(damped * t))
     }
 
+    /// Applies the footer's hidden items from Settings > Style while the bar is up, as the next update would.
+    private func footerItemsChanged(_ hidden: Set<SearchBarFooterItem>) {
+        hiddenFooterItems = hidden
+        root?.hintBar.showsGear = !hidden.contains(.settings)
+        updateHints()
+        guard isExpanded else { return }
+        observationGeneration += 1
+        observe()
+    }
+
     // MARK: Bar and window
 
     /// Settings > Style switched between the bar and the window: the one no longer picked goes away.
@@ -1007,6 +1025,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
         root.resizeOverlay.onResizeEnd = { [weak self] in self?.storeSize() }
         root.hintBar.onHint = { [weak self] id in self?.performHint(id) }
         root.hintBar.dims = Defaults[.dimStatusBar]
+        root.hintBar.showsGear = !hiddenFooterItems.contains(.settings)
         root.wash.strength = Defaults[.filterWindowTintStrength]
 
         results.onSelectionChange = { [weak self] in self?.selectionChanged() }
@@ -1134,6 +1153,7 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             list: list,
             defaultList: defaultList,
             searching: fuzzy.searching,
+            searchTime: defaultList ? nil : fuzzy.lastSearchTime?.text,
             stash: STASH.files,
             query: fuzzy.query,
             filterText: fuzzy.filterLine ?? "",
@@ -1265,7 +1285,10 @@ final class SearchBarController: NSObject, NSWindowDelegate, NSTextFieldDelegate
             root.emptyLabel.isHidden = true
         }
         let count = inputs.list.count
-        root.hintBar.status = inputs.defaultList ? "" : (count == 1 ? "1 result" : "\(count.formatted()) results")
+        let countText = hiddenFooterItems.contains(.resultCount) ? nil : count == 1 ? "1 result" : "\(count.spaced) results"
+        let searchTime = hiddenFooterItems.contains(.searchTime) ? nil : inputs.searchTime
+        root.hintBar.status = inputs.defaultList ? "" : [countText, searchTime].compactMap(\.self).joined(separator: " · ")
+        root.hintBar.statusHelp = searchTime == nil ? nil : Self.searchTimeTip
         root.hintBar.notice = inputs.staleDrives.isEmpty
             ? nil
             : SearchBarNotice(

@@ -166,6 +166,16 @@ enum MCPSettingsBridge {
             note: "Fades the window's status bar and the search bar's hint bar until the pointer reaches them.",
             keywords: ["status bar", "hints", "fade"], ui: true
         )),
+        hiddenItems("hiddenStatusBarItems", .hiddenStatusBarItems, row(
+            .interface, "Status bar", "Window",
+            note: "Items left off the main window's status bar, at its bottom edge. activityLog, fileCount (index sizes), liveChanges and runHistory open their panels from nowhere else, so hiding one leaves its panel out of reach. A hidden activityLog still shows while indexing or another job runs.",
+            keywords: ["status bar", "hide", "show", "hints", "search time", "file count"], ui: true
+        )),
+        hiddenItems("hiddenSearchBarFooterItems", .hiddenSearchBarFooterItems, row(
+            .interface, "Status bar", "Search bar",
+            note: "Items left off the search bar's footer: key hints, the result count, the search time and the gear. A hidden key hint's shortcut still works.",
+            keywords: ["search bar", "footer", "hint bar", "hide", "show", "search time"], ui: true
+        )),
         double("filterWindowTintStrength", .filterWindowTintStrength, 0 ... 1, row(
             .interface, "Window", "Tint strength when a filter is active",
             note: "Applies to the window and the search bar. 0 turns the tint off and leaves only the filter's coloured icon.",
@@ -722,6 +732,31 @@ extension MCPSettingsBridge {
         }
     }
 
+    /// A set of items to leave off a bar, given as names separated by commas; an empty value shows everything.
+    private static func hiddenItems<Item: RawRepresentable & CaseIterable & Defaults.Serializable & Hashable>(
+        _ name: String, _ key: Defaults.Key<Set<Item>>, _ row: MCPSettingRow
+    ) -> MCPSettingKey where Item.RawValue == String {
+        let allowed = Item.allCases.map(\.rawValue)
+        return MCPSettingKey(name: name, type: "list", allowed: allowed, row: row) {
+            Defaults[key].map(\.rawValue).sorted().joined(separator: ", ")
+        } write: { raw in
+            var items = Set<Item>()
+            var unknown: [String] = []
+            for want in raw.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }).filter({ !$0.isEmpty }) {
+                if let item = Item.allCases.first(where: { $0.rawValue.lowercased() == want.lowercased() }) {
+                    items.insert(item)
+                } else {
+                    unknown.append(want)
+                }
+            }
+            guard unknown.isEmpty else {
+                return "\(name) does not know \(unknown.joined(separator: ", ")). It takes any of: \(allowed.joined(separator: ", "))"
+            }
+            Defaults[key] = items
+            return nil
+        }
+    }
+
     private static func actionIDs(_ raw: String) -> (ids: [ActionID], unknown: [String]) {
         var ids: [ActionID] = []
         var unknown: [String] = []
@@ -812,7 +847,7 @@ extension ClingRequest {
     /// changes, so they can find out why something is the way it is before asking for anything.
     var changesSomething: Bool {
         switch command {
-        case .search, .status, .recents, .indexHas, .explain, .why:
+        case .search, .status, .recents, .indexHas, .explain, .why, .changes:
             false
         case .index, .reindex, .cancelIndex, .indexAdd, .indexRemove, .open:
             true

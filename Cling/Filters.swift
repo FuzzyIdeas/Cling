@@ -1560,7 +1560,7 @@ struct DisconnectedVolumeRow: View {
                         .background(Color.orange.opacity(0.2), in: Capsule())
                         .foregroundStyle(.orange)
                     if let count = fuzzy.volumeEngines[volume]?.count {
-                        Text("\(count.formatted()) cached entries")
+                        Text("\(count.spaced) cached entries")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                     }

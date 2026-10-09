@@ -5,6 +5,7 @@ import LowtechIndie
 import LowtechPro
 import LowtechProSentry
 import SwiftUI
+import SymbolPicker
 
 extension Binding<Int> {
     var d: Binding<Double> {
@@ -429,6 +430,10 @@ private struct InterfaceSettingsPane: View {
                     }
                     .animation(.snappy(duration: 0.2), value: filterWindowTintStrength)
                 }
+            }
+
+            Section("Status bar") {
+                StatusBarEditor()
             }
         }
         .formStyle(.grouped)
@@ -1875,7 +1880,7 @@ struct CloudStorageList: View {
                     }
                     Spacer()
                     if let count = fuzzy.cloudListing[location.root.string] {
-                        Text("Listing… \(count.formatted()) files")
+                        Text("Listing… \(count.spaced) files")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
@@ -1965,7 +1970,7 @@ struct VolumeListView: View {
         VStack(alignment: .leading) {
             Toggle(isOn: volume.enabledVolumeBinding) {
                 HStack {
-                    Image(systemName: "externaldrive")
+                    VolumeIconButton(volume: volume)
                     Text(volume.name.string)
                     Spacer()
                     Text(volume.shellString)
@@ -2035,6 +2040,34 @@ struct VolumeListView: View {
 
 }
 
+// MARK: - VolumeIconButton
+
+/// The icon a drive's paths start with in results, and the picker for it. Without a pick it's the drive's kind's.
+private struct VolumeIconButton: View {
+    let volume: FilePath
+
+    var body: some View {
+        Button { picking = true } label: {
+            Image(systemName: picked ?? kind)
+                .frame(width: 18)
+        }
+        .buttonStyle(.plain)
+        .help("Icon for paths on this drive")
+        .accessibilityLabel("Icon")
+        .sheet(isPresented: $picking) { SymbolPicker(symbol: $volumeIcons[volume]) }
+        .task(id: volume) { kind = await FolderIcons.shared.kindSymbol(of: volume) }
+    }
+
+    @State private var picking = false
+    @State private var kind = "externaldrive"
+
+    @Default(.volumeIcons) private var volumeIcons
+
+    private var picked: String? {
+        volumeIcons[volume]
+    }
+}
+
 // MARK: - DriveLiveUpdatesView
 
 /// Each followed drive's live updates toggle, with what following it has cost over the last minutes, coloured so the
@@ -2061,7 +2094,7 @@ struct DriveLiveUpdatesView: View {
     }
 
     static func perMinute(_ rate: Double) -> String {
-        rate > 0 && rate < 0.5 ? "<1/min" : "\(Int(rate.rounded()).formatted())/min"
+        rate > 0 && rate < 0.5 ? "<1/min" : "\(Int(rate.rounded()).spaced)/min"
     }
 
     static func milliseconds(_ ms: Double) -> String {
@@ -2170,8 +2203,8 @@ struct DriveLiveUpdatesView: View {
     }
 
     private static func changesHelp(_ health: DriveHealth.Snapshot) -> String {
-        let since = "\(health.changes.formatted()) since \(health.since.formatted(date: .omitted, time: .shortened))"
-        return health.drops == 0 ? since : "\(since), \(health.drops.formatted()) \(health.drops == 1 ? "burst" : "bursts") too fast for macOS to report were walked again"
+        let since = "\(health.changes.spaced) since \(health.since.formatted(date: .omitted, time: .shortened))"
+        return health.drops == 0 ? since : "\(since), \(health.drops.spaced) \(health.drops == 1 ? "burst" : "bursts") too fast for macOS to report were walked again"
     }
 
     private func followBinding(_ volume: FilePath) -> Binding<Bool> {

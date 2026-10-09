@@ -32,8 +32,9 @@ struct CloudLocation: Hashable, Identifiable, Sendable {
         if let appPath {
             return NSWorkspace.shared.icon(forFile: appPath)
         }
-        // iCloud Drive's own folder has the iCloud icon.
-        return NSWorkspace.shared.icon(forFile: (root / "com~apple~CloudDocs").string)
+        // Finder's iCloud Drive item has the iCloud icon; its folder on disk is drawn as a plain folder.
+        let iCloudDrive = "/System/Library/CoreServices/Finder.app/Contents/Applications/iCloud Drive.app"
+        return NSWorkspace.shared.icon(forFile: FileManager.default.fileExists(atPath: iCloudDrive) ? iCloudDrive : (root / "com~apple~CloudDocs").string)
     }
 }
 
@@ -443,7 +444,7 @@ extension FuzzyClient {
                         Task { @MainActor in
                             guard self.cloudListing[root] != nil else { return }
                             self.cloudListing[root] = count
-                            self.logActivity("Listing \(location.label): \(count.formatted()) files", ongoing: true, operationKey: opKey, count: count)
+                            self.logActivity("Listing \(location.label): \(count.spaced) files", ongoing: true, operationKey: opKey, count: count)
                         }
                     },
                     cancelled: { Task.isCancelled }
@@ -458,7 +459,7 @@ extension FuzzyClient {
                         EVERYTHING.cloudFolderListed(root)
                     }
                     guard !cancelled else { return }
-                    self.logActivity("Listed \(location.label): \(walked.formatted()) files", operationKey: opKey)
+                    self.logActivity("Listed \(location.label): \(walked.spaced) files", operationKey: opKey)
                     self.updateIndexedCount()
                     self.invalidateSearch()
                     self.performSearch()

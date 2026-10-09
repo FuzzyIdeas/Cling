@@ -79,7 +79,7 @@ final class SearchBarRowStyle {
     /// Called once a burst of background renders has landed, so the visible rows redraw once.
     var onRastersReady: (() -> Void)?
 
-    private(set) var folderIconSide: CGFloat = 14
+    private(set) var folderIconSide: CGFloat = 16
 
     /// Results can come from more than one drive, so a row from an external one names it where the kind goes.
     var showsDrives = false {
@@ -234,7 +234,7 @@ final class SearchBarRowStyle {
         iconSide = FontScale.length(32)
         // Fits "999 MB · 30 Sep 2026 at 23:59" untruncated.
         metaWidth = FontScale.length(168)
-        folderIconSide = FontScale.length(14)
+        folderIconSide = FontScale.length(16)
 
         let nameFont = NSFont.systemFont(ofSize: FontScale.size(13), weight: .medium)
         let detailFont = NSFont.systemFont(ofSize: FontScale.size(11))
@@ -745,10 +745,10 @@ final class SearchBarRowContent: NSView {
         window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
     }
 
-    /// The deepest folder in `dir` with an icon of its own, once it's known and its icon is ready to draw: a rendered
-    /// copy, or a picked symbol or emoji, which is drawn as it is.
+    /// The icon `dir`'s line starts with, once it's ready to draw: a rendered copy, or a symbol or emoji, which is drawn
+    /// as it is.
     private func folderIcon(for dir: FilePath, style: SearchBarRowStyle) -> (mark: FolderIcons.Mark, raster: CGImage?)? {
-        guard let mark = FolderIcons.shared.mark(in: dir) else { return nil }
+        let mark = FolderIcons.shared.lineMark(in: dir)
         if mark.glyph {
             return (mark, nil)
         }
@@ -761,19 +761,18 @@ final class SearchBarRowContent: NSView {
         return found.raster ?? found.mark.icon
     }
 
-    /// The folder line, after the icon of its deepest folder with one of its own when there is one (see
-    /// `FolderIcons.Mark.shownPath(of:)` for the text).
+    /// The folder line, after the icon of its deepest folder with one of its own, Home's or the startup disk's (see
+    /// `FolderIcons.Mark.shownPath(of:)` for the text). The icon's slot is always there, so every path starts at the
+    /// same place, also while an icon is still being rendered.
     private func drawFolder(_ dir: FilePath, in rect: NSRect, style: SearchBarRowStyle, text: SearchBarTextCache) {
         let dirShown = dir.shellString
         let found = folderIcon(for: dir, style: style)
         drawnFolderIcon = drawnIdentity(found)
-        guard let found, let shown = found.mark.shownPath(of: dir, shown: dirShown) else {
-            text.draw(dirShown, style: .detail, in: rect, color: .secondaryLabelColor)
-            return
-        }
+        let mark = found?.mark ?? FolderIcons.shared.lineMark(in: dir)
+        let shown = mark.shownPath(of: dir, shown: dirShown) ?? dirShown
         let side = style.folderIconSide
         let iconRect = NSRect(x: rect.minX, y: rect.midY - side / 2, width: side, height: side)
-        if let raster = found.raster, let context = NSGraphicsContext.current?.cgContext {
+        if let found, let raster = found.raster, let context = NSGraphicsContext.current?.cgContext {
             // A CGImage draws upside down in this flipped view unless turned over.
             context.saveGState()
             context.translateBy(x: iconRect.minX, y: iconRect.maxY)
@@ -781,7 +780,7 @@ final class SearchBarRowContent: NSView {
             context.interpolationQuality = .high
             context.draw(raster, in: CGRect(origin: .zero, size: iconRect.size))
             context.restoreGState()
-        } else {
+        } else if let found, found.mark.glyph {
             found.mark.icon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         }
         let textX = rect.minX + side + FontScale.length(3)

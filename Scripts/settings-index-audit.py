@@ -33,6 +33,7 @@ PANE_FILES = [
     "Cling/ShortcutsSettingsPane.swift",
     "Cling/MCPSettingsPane.swift",
     "Cling/InterfacePicker.swift",
+    "Cling/StatusBarEditor.swift",
     "Cling/Filters.swift",
     "Cling/ScriptPickerView.swift",
     "Cling/WebAccess/WebAccessSettingsPane.swift",
@@ -45,6 +46,7 @@ HANDLED_ELSEWHERE = {
     "disabledCloudLocations": "cling_cloud",
     "reindexTimeIntervalPerVolume": "cling_volumes interval",
     "unfollowedVolumes": "cling_volumes follow and unfollow",
+    "volumeIcons": "cling_volumes icon",
     "blockedPrefixes": "cling_ignore, target blocklist-prefix",
     "blockedContains": "cling_ignore, target blocklist-contains",
     "quickFilters": "cling_filter_write and cling_filter_delete",
@@ -100,7 +102,7 @@ def main():
     registry = strip_comments(read("Cling/MCPSettings.swift"))
     keys_block = registry[registry.index("static let keys:"):registry.index("static var keysByName")]
     # bool("name", .key, ...) and the other builders that take a Defaults key.
-    typed = re.findall(r'\b(?:bool|int|double|presets|duration|rawValue|app|readOnly)\(\s*"(\w+)",\s*\.(\w+)', keys_block)
+    typed = re.findall(r'\b(?:bool|int|double|presets|duration|rawValue|app|readOnly|hiddenItems)\(\s*"(\w+)",\s*\.(\w+)', keys_block)
     # Builders for keys that need their own parsing name the key inside.
     custom = re.findall(r'MCPSettingKey\(name: "(\w+)"', registry)
     custom_keys = {"launchAtLogin": None, "showAppKey": "showAppKey", "triggerKeys": "triggerKeys",

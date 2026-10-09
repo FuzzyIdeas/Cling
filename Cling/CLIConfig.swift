@@ -41,10 +41,76 @@ enum CLIConfig {
             case .ignore: ignore(request)
             case .shortcuts: shortcuts(request)
             case .everything: everything(request)
+            case .changes: liveChanges(request)
             default: ClingResponse(error: "not a configuration command")
             }
         }
         return answer ?? ClingResponse(error: "Cling is busy and did not answer in time. Try again in a moment.")
+    }
+}
+
+// MARK: - Live changes
+
+extension CLIConfig {
+    private struct LiveChangeInfo: Encodable {
+        /// Epoch seconds.
+        let time: Double
+        let kind: String
+        let path: String
+        /// What keeps it out of the pane: only set when all of them are asked for.
+        let hiddenBy: String?
+    }
+
+    private struct LiveChangeList: Encodable {
+        /// Epoch seconds when this was read: the `since` that picks up after it.
+        let now: Double
+        let changes: [LiveChangeInfo]
+    }
+
+    /// The live index's changes the way the window's pane lists them with "Indexed only" on, oldest first: none from
+    /// a path excluded since, hidden from the pane, blocked or ignored. `verbose` asks for those too, each marked.
+    /// With no window on screen the newest are still held back from the list, and they count as well.
+    @MainActor static func liveChanges(_ req: ClingRequest) -> ClingResponse {
+        let now = Date().timeIntervalSince1970
+        let since = req.since ?? 0
+        let all = req.verbose == true
+        let excluded = PathMatcher(FUZZY.excludedPaths)
+        let hidden = PathMatcher(Defaults[.hiddenLiveEventPaths])
+        let home = HOME.string
+
+        let held = FUZZY.heldChanges().map { FuzzyClient.IndexChange(path: $0.path, kind: $0.kind, date: $0.date) }
+        var picked: [LiveChangeInfo] = []
+        for change in FUZZY.liveIndexChanges + held {
+            let time = change.date.timeIntervalSince1970
+            guard time > since, !excluded.contains(change.path) else { continue }
+            let hiddenBy: String? = if hidden.contains(change.path) {
+                "hidden from the pane"
+            } else if isPathBlocked(change.path) {
+                "blocklist"
+            } else if change.path.hasPrefix(home), change.path.isIgnored(in: fsignoreString) {
+                "~/.fsignore"
+            } else {
+                nil
+            }
+            guard all || hiddenBy == nil else { continue }
+            let kind = switch change.kind {
+            case .added: "added"
+            case .modified: "changed"
+            case .removed: "removed"
+            }
+            picked.append(LiveChangeInfo(time: time, kind: kind, path: change.path, hiddenBy: all ? hiddenBy : nil))
+        }
+        let shown = Array(picked.sorted { $0.time < $1.time }.suffix(max(req.maxResults ?? 200, 1)))
+
+        let clock = DateFormatter()
+        clock.locale = Locale(identifier: "en_US_POSIX")
+        clock.dateFormat = "HH:mm:ss"
+        let lines = shown.map { c in
+            let symbol = c.kind == "added" ? "+" : c.kind == "removed" ? "-" : "~"
+            let path = c.path.hasPrefix(home + "/") ? "~" + c.path.dropFirst(home.count) : c.path
+            return "\(clock.string(from: Date(timeIntervalSince1970: c.time)))  \(symbol)  \(path)\(c.hiddenBy.map { "  (\($0))" } ?? "")"
+        }
+        return ClingResponse(status: lines.joined(separator: "\n"), payload: payloadJSON(LiveChangeList(now: now, changes: shown)))
     }
 }
 
@@ -675,6 +741,8 @@ extension CLIConfig {
         let count: Int
         let reindexIntervalSeconds: Int
         let reindexInterval: String
+        /// The SF Symbol picked for its paths in results; absent while it shows its kind's.
+        let icon: String?
         let lastIndexedAt: Double?
         let local: Bool?
         let readOnly: Bool
@@ -769,6 +837,7 @@ extension CLIConfig {
                 enabled: FUZZY.enabledVolumes.contains(v), indexed: FUZZY.volumeEngines[v] != nil,
                 indexing: FUZZY.volumesIndexing.contains(v), count: FUZZY.volumeEngines[v]?.count ?? 0,
                 reindexIntervalSeconds: Int(interval), reindexInterval: interval.humanizedInterval,
+                icon: Defaults[.volumeIcons][v],
                 lastIndexedAt: file.exists ? file.timestamp : nil,
                 local: local,
                 readOnly: FUZZY.readOnlyVolumes.contains(v),
@@ -783,11 +852,12 @@ extension CLIConfig {
         var lines = volumes.isEmpty
             ? ["No external volumes."]
             : volumes.map { v in
-                let state = !v.enabled ? "disabled" : v.indexing ? "indexing" : v.indexed ? "\(v.count.formatted()) entries" : "not indexed"
+                let state = !v.enabled ? "disabled" : v.indexing ? "indexing" : v.indexed ? "\(v.count) entries" : "not indexed"
                 let size = v.saved.map { ", \($0) on disk" } ?? ""
                 let live = v.following.map { ", \($0)" } ?? (v.enabled && v.mounted && v.liveUpdates == false ? ", live updates off" : "")
                 let reindex = v.needsReindex.map { ", needs a reindex (\($0))" } ?? (v.waitingForQuiet == true ? ", reindex waiting for the drive to go quiet" : "")
-                let line = "\(v.name) (\(v.path))\(v.mounted ? "" : " [disconnected]"): \(state)\(size)\(live)\(reindex), reindexed every \(v.reindexInterval)"
+                let icon = v.icon.map { ", icon \($0)" } ?? ""
+                let line = "\(v.name) (\(v.path))\(v.mounted ? "" : " [disconnected]"): \(state)\(size)\(live)\(reindex), reindexed every \(v.reindexInterval)\(icon)"
                 return v.health.map { line + "\n  " + $0.line } ?? line
             }
         if !proactive {
@@ -851,6 +921,16 @@ extension CLIConfig {
                 return ClingResponse(error: "interval takes seconds from \(Int(volumeIntervalRange.lowerBound)) (1 hour) to \(Int(volumeIntervalRange.upperBound)) (4 weeks). Got '\(req.key ?? "")'")
             }
             Defaults[.reindexTimeIntervalPerVolume][volume] = seconds
+        case "icon":
+            // What the drive's icon button in Settings picks.
+            let symbol = req.key?.trimmingCharacters(in: .whitespaces) ?? ""
+            if symbol.isEmpty || symbol == "none" {
+                Defaults[.volumeIcons][volume] = nil
+            } else if NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil {
+                Defaults[.volumeIcons][volume] = symbol
+            } else {
+                return ClingResponse(error: "no SF Symbol named '\(symbol)'. Pass a name like externaldrive.fill or camera, or none for the icon of the drive's kind.")
+            }
         case "remove":
             guard FUZZY.disconnectedVolumes.contains(volume) else {
                 return ClingResponse(error: "\(volume.name.string) is connected. Settings only removes a disconnected volume; disable this one instead.")
@@ -889,7 +969,7 @@ extension CLIConfig {
         let lines = locations.isEmpty
             ? ["No cloud storage on this Mac."]
             : locations.map { l in
-                let state = !l.enabled ? "disabled" : l.listing ? "listing, \(l.count.formatted()) entries so far" : "indexed, \(l.count.formatted()) entries"
+                let state = !l.enabled ? "disabled" : l.listing ? "listing, \(l.count) entries so far" : "indexed, \(l.count) entries"
                 return "\(l.account.map { "\(l.name) \($0)" } ?? l.name) (\(l.path)): \(state)"
             }
         return ClingResponse(status: lines.joined(separator: "\n"), payload: payloadJSON(["locations": locations]))
@@ -978,7 +1058,7 @@ extension CLIConfig {
         }
         let text = scopes.map { s in
             let size = s.saved.map { ", \($0) on disk" } ?? ""
-            return "\(s.name): \(s.enabled ? "enabled" : "disabled")\(s.needsPro ? " (Pro)" : "")\(s.enabled && !s.searched ? ", not searched without Pro" : ""), \(s.indexed ? "\(s.count.formatted()) entries" : "not indexed")\(size)  \(s.roots.joined(separator: ", "))"
+            return "\(s.name): \(s.enabled ? "enabled" : "disabled")\(s.needsPro ? " (Pro)" : "")\(s.enabled && !s.searched ? ", not searched without Pro" : ""), \(s.indexed ? "\(s.count) entries" : "not indexed")\(size)  \(s.roots.joined(separator: ", "))"
         }.joined(separator: "\n")
         return ClingResponse(status: text, payload: payloadJSON(["scopes": scopes]))
     }

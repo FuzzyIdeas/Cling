@@ -195,7 +195,7 @@ enum FileInfo {
             // reach this point.
             if let listing = await SevenZip.cachedList(url).value {
                 let n = listing.entries.count
-                facts.primary.append("\(n.formatted())\(listing.truncated ? "+" : "") file\(n == 1 ? "" : "s")")
+                facts.primary.append("\(n.spaced)\(listing.truncated ? "+" : "") file\(n == 1 ? "" : "s")")
                 if listing.totalUncompressedSize > 0 {
                     // Truncated listings carry a partial sum, marked with "+"
                     // just like the file count.
@@ -300,7 +300,7 @@ enum FileInfo {
     private static func pdfFacts(_ url: URL) -> [String] {
         guard let doc = CGPDFDocument(url as CFURL) else { return [] }
         let pages = doc.numberOfPages
-        var facts = ["\(pages.formatted()) page\(pages == 1 ? "" : "s")"]
+        var facts = ["\(pages.spaced) page\(pages == 1 ? "" : "s")"]
         if doc.isEncrypted {
             facts.append("encrypted")
         }
@@ -332,10 +332,10 @@ enum FileInfo {
         for case _ as URL in enumerator {
             count += 1
             if count >= 2000 {
-                return ["\(2000.formatted())+ items"]
+                return ["\(2000.spaced)+ items"]
             }
         }
-        return ["\(count.formatted()) item\(count == 1 ? "" : "s")"]
+        return ["\(count.spaced) item\(count == 1 ? "" : "s")"]
     }
 
     /// Counts newlines with memchr over 256 KB chunks. No String decoding,
@@ -362,7 +362,7 @@ enum FileInfo {
         if lastByte != 0x0A {
             count += 1
         } // final line without trailing newline
-        return ["\(count.formatted()) line\(count == 1 ? "" : "s")"]
+        return ["\(count.spaced) line\(count == 1 ? "" : "s")"]
     }
 
     @MainActor

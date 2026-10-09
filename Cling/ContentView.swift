@@ -44,10 +44,11 @@ extension Int {
             return "\(num) KB"
         case 0 ..< 1_000_000_000:
             let num = d / 1_000_000
-            return "\(num < 10 ? num.str(decimals: 1) : num.intround.s) MB"
+            // `String(format:)` for a decimal point whatever the region writes; `str(decimals:)` follows the region.
+            return "\(num < 10 ? String(format: "%.1f", num) : num.intround.s) MB"
         default:
             let num = d / 1_000_000_000
-            return "\(num < 10 ? num.str(decimals: 1) : num.intround.s) GB"
+            return "\(num < 10 ? String(format: "%.1f", num) : num.intround.s) GB"
         }
     }
 }
@@ -2782,7 +2783,7 @@ struct RunHistoryRow: Identifiable {
 // MARK: - PathMatcher
 
 /// Paths matched as entries or through a folder above them: an entry stands for itself and everything in it.
-private struct PathMatcher {
+struct PathMatcher {
     init(_ paths: some Sequence<String>) {
         exact = Set(paths)
         folders = exact.map { $0 + "/" }
