@@ -19,9 +19,11 @@ final class RunHistory {
 
     private(set) var entries: [String: Entry] = Defaults[.runHistory]
 
-    func trackRun(_ paths: [FilePath]) {
+    /// `fromWindow` is false for paths opened from outside Cling, such as the Alfred workflow: the window's query
+    /// had nothing to do with them, so it stays out of the search history.
+    func trackRun(_ paths: [FilePath], fromWindow: Bool = true) {
         let query = FUZZY.query
-        if !query.isEmpty {
+        if fromWindow, !query.isEmpty {
             SearchHistory.shared.commit(query)
         }
 

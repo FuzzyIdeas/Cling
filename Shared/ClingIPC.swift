@@ -35,6 +35,9 @@ public enum ClingCommand: String, Codable {
     case shortcuts
     /// The Everything index's switch and its saved files.
     case everything
+    /// Opens paths the way the toolbar does: in their app, in Finder, the terminal, the editor or on the shelf
+    /// (`action`), and counts them as runs.
+    case open
 }
 
 // MARK: - ClingRequest

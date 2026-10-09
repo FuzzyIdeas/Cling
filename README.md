@@ -66,6 +66,10 @@ A Pro license costs **€15**, one-time purchase, for life. It can be activated 
 
 [Cling's Raycast extension](https://www.raycast.com/alin/cling) can fuzzy search files instantly, act on files and save often used queries from the same familiar Raycast interface.
 
+### Alfred workflow
+
+Cling ships an Alfred workflow that fuzzy searches files with `cl`, opens them in the editor, terminal or shelf app set in Cling, and reindexes with `clreindex`. Install it from **Settings > General** in Cling. It needs Alfred's Powerpack.
+
 ---
 
 ### Comparison with other apps

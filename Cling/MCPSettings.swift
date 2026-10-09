@@ -814,7 +814,7 @@ extension ClingRequest {
         switch command {
         case .search, .status, .recents, .indexHas, .explain, .why:
             false
-        case .index, .reindex, .cancelIndex, .indexAdd, .indexRemove:
+        case .index, .reindex, .cancelIndex, .indexAdd, .indexRemove, .open:
             true
         case .settings:
             action == "set"

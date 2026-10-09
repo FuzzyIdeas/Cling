@@ -46,9 +46,9 @@ struct ClingCLI: ParsableCommand {
         commandName: "cling",
         abstract: "Cling: fast fuzzy file search from the command line",
         subcommands: [
-            Search.self, Reindex.self, Status.self, Recents.self, Index.self, Explain.self, Why.self,
+            Search.self, Reindex.self, Status.self, Recents.self, Index.self, Open.self, Explain.self, Why.self,
             SettingsCommand.self, FilterCommand.self, ScriptCommand.self, VolumeCommand.self, CloudCommand.self, ScopeCommand.self,
-            EverythingCommand.self, IgnoreCommand.self, ShortcutCommand.self, MCPCommand.self, Logs.self, CatchUp.self,
+            EverythingCommand.self, IgnoreCommand.self, ShortcutCommand.self, MCPCommand.self, Logs.self, CatchUp.self, Alfred.self,
         ],
         defaultSubcommand: Search.self
     )

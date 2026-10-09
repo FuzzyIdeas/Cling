@@ -193,6 +193,7 @@
 				C76172112D50E43600D78B4F /* Resources */,
 				C7605CC72F77D86C0087B195 /* Copy CLI */,
 				C7CA7C0000000000000000A4 /* Copy Launch Agent */,
+				C7A1F00D0000000000000001 /* Bundle Alfred workflow */,
 				C7D0E6B12FB0000000DB6107 /* Persist debug logs */,
 			);
 			buildRules = (
@@ -279,6 +280,29 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		C7A1F00D0000000000000001 /* Bundle Alfred workflow */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Alfred/info.plist",
+				"$(SRCROOT)/Alfred/cling.zsh",
+				"$(SRCROOT)/Alfred/icon.png",
+			);
+			name = "Bundle Alfred workflow";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Cling.alfredworkflow",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Zips the Alfred workflow into the app, where Settings > General installs it from. Through stdout,\n# because the script sandbox only lets it write the declared output.\ncd \"$SRCROOT/Alfred\"\n/usr/bin/zip -q -X - info.plist cling.zsh icon.png > \"$SCRIPT_OUTPUT_FILE_0\"\n";
+			showEnvVarsInLog = 0;
+		};
 		C7D0E6B12FB0000000DB6107 /* Persist debug logs */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;

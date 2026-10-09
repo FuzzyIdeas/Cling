@@ -807,6 +807,20 @@ private struct GeneralSettingsPane: View {
                     subtitle: "Share anonymous crash and error reports so issues can be found and fixed faster."
                 )
             }
+
+            Section("Launchers") {
+                SettingRow(title: "Alfred workflow", detail: "Needs Alfred's Powerpack") {
+                    if Launchers.canInstallAlfredWorkflow {
+                        Button("Install") { Launchers.installAlfredWorkflow() }
+                    } else {
+                        Button("Get Alfred") { NSWorkspace.shared.open(Launchers.alfredSite) }
+                    }
+                }
+                SettingRow(title: "Raycast extension") {
+                    Button("Install") { Launchers.openRaycastExtension() }
+                        .help("Opens the extension in the Raycast Store")
+                }
+            }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)

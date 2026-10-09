@@ -66,6 +66,7 @@ CLI_WITHOUT_TOOL = {
     "logs": "covered by cling_debug_logs, which asks for root with a dialog instead of sudo",
     "catch-up": "run by the launch agent while Cling is closed",
     "mcp": "the server itself; cling_status reads mcp status",
+    "alfred": "Script Filter JSON for the Alfred workflow; an agent searches with cling_search and reindexes with cling_reindex",
 }
 
 

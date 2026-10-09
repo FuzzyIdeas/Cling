@@ -158,6 +158,14 @@ extension MCPServer {
         return try text(["index", action], tail: paths(a), terminator: false)
     }
 
+    static func open(_ a: [String: Any]) throws -> ToolOutput {
+        let how = argument(a["how"] ?? "open")
+        guard how == "open" || Open.How(rawValue: how) != nil else {
+            throw ClingMCPError("how must be open, reveal, terminal, editor or shelve")
+        }
+        return try text(["open"] + (how == "open" ? [] : ["--\(how)"]), tail: paths(a))
+    }
+
     static func everything(_ a: [String: Any]) throws -> ToolOutput {
         let action = argument(a["action"] ?? "status")
         guard EverythingCommand.Action(rawValue: action) != nil else {
@@ -503,6 +511,19 @@ extension MCPServer {
                 "paths": ["type": "array", "items": ["type": "string"]],
             ], "required": ["action", "paths"]],
             handler: indexPaths
+        ),
+        MCPTool(
+            name: "cling_open",
+            description: "Open files on the user's screen the way Cling's toolbar does. how: open (each in its default "
+                + "app, the default), reveal (select them in Finder), terminal (the terminal set in Cling, a file's "
+                + "folder for a file), editor (the editor set in Cling), shelve (the shelf app set in Cling, or Cling's "
+                + "own stash). The paths count as opened from Cling, so they rank higher in search and show in recent "
+                + "files. It does NOT run scripts on them; that is the search window's script actions. " + gate,
+            inputSchema: ["type": "object", "properties": [
+                "paths": ["type": "array", "items": ["type": "string"]],
+                "how": ["type": "string", "enum": ["open"] + Open.How.allCases.map(\.rawValue)],
+            ], "required": ["paths"]],
+            handler: open
         ),
         MCPTool(
             name: "cling_everything",

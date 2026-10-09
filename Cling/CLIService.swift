@@ -860,6 +860,9 @@ extension FuzzyClient {
             }
             let report = paths.map { explainPathExclusion($0, coord: coord) }.joined(separator: "\n\n")
             return ClingResponse(status: report, indexCount: coord.count)
+
+        case .open:
+            return openPaths(request)
         }
     }
 }
