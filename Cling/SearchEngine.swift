@@ -2898,9 +2898,11 @@ final class SearchEngine: @unchecked Sendable {
     }
 
     /// Per-engine accessors that delegate to global state
+    /// Read under `extLock` like every write: another engine can register an extension at any moment, and reading
+    /// the dictionary while it's being written crashes (CLING-AS, in a quick filter's prefilter).
     private var extToID: [String: UInt16] {
-        get { Self.globalExtToID }
-        set { Self.globalExtToID = newValue }
+        get { Self.extLock.withLock { Self.globalExtToID } }
+        set { Self.extLock.withLock { Self.globalExtToID = newValue } }
     }
     private var extHashToID: [UInt64: UInt16] {
         get { Self.globalExtHashToID }
