@@ -23,6 +23,7 @@
 - **Fuzzy search across millions of files** in under 100ms
 - **Search bar** that floats over any app like Spotlight, or sits pinned to the desktop as a small search field
 - **App launcher** in the search bar: installed apps whose names match come first
+- **Folder icons** on the search bar's paths, with an icon you pick for each drive
 - **Quick Filters** for file types (Images, Videos, Documents, Code, PDFs, etc.) and folder restrictions
 - **Act on files instantly** with hotkeys, scripts, drag and drop, or batch rename
 - **Smart defaults** showing your most recently changed files on launch
@@ -56,7 +57,7 @@ Cling is free to use with Home, Library, Cloud Storage and Applications search s
 
 ### Pricing
 
-Cling starts with a **14-day free trial** automatically, no payment details needed. After the trial, the app continues to work in **Free mode** with Home, Library and Applications scopes, up to 500 results.
+Cling starts with a **14-day free trial** automatically, no payment details needed. After the trial, the app continues to work in **Free mode** with Home, Library, Cloud Storage and Applications scopes, up to 500 results.
 
 A Pro license costs **€15**, one-time purchase, for life. It can be activated on up to **5 personal Mac devices**.
 
