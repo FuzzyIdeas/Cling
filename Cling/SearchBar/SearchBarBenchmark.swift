@@ -176,6 +176,11 @@
                 return
             }
             guard requested else { return }
+            // A crash during a run leaves its whole stack next to the results; the system log cuts it off.
+            NSSetUncaughtExceptionHandler { exception in
+                let stack = exception.callStackSymbols.joined(separator: "\n")
+                try? "\(exception.name.rawValue): \(exception.reason ?? "")\n\(stack)\n".write(toFile: SearchBarBenchmark.outPath + ".exception", atomically: true, encoding: .utf8)
+            }
             Task { @MainActor in
                 await run()
             }
