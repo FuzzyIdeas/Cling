@@ -63,7 +63,7 @@ CHANGELOG.md: $(RELEASE_NOTES_FILES)
 	tail -n +1 $$(ls ReleaseNotes/*.md | egrep '/[0-9]+(\.[0-9]+)*\.md$$' $(if $(BETA),| egrep -v '/$(VERSION)\.md$$') | sort -Vr) | sd '==> ReleaseNotes/(.+)\.md <==' '# $$1\n\n**[Download $(NAME) $$1 →](https://files.lowtechguys.com/releases/$(NAME)-$$1.dmg)**' > CHANGELOG.md
 
 Releases/changelog.html: CHANGELOG.md
-	pandoc -f gfm --section-divs -o $@ --standalone --metadata title="$(NAME) Changelog" --css "$(RELEASE_CSS)" --include-in-header=ReleaseNotes/changelog-head.html CHANGELOG.md
+	pandoc -f gfm --section-divs -o $@ --standalone --metadata title="$(NAME) Changelog" --css "$(RELEASE_CSS)" CHANGELOG.md
 
 changelog: Releases/changelog.html
 
