@@ -540,7 +540,9 @@ class FuzzyClient {
         let mounted = Set(initialVolumes)
         return Set(Defaults[.indexedVolumePaths].filter { !mounted.contains($0) && !Defaults[.disabledVolumes].contains($0) })
     }()
-    var readOnlyVolumes: [FilePath] = initialVolumes.filter(\.url.volumeIsReadOnly)
+    /// Read off the main thread like `networkVolumes`, empty until then: a stalled drive can take tens of seconds to
+    /// answer, which at launch held up the whole app (CLING-4Z, CLING-38).
+    var readOnlyVolumes: [FilePath] = []
     /// Mounted volumes on another computer, which FSEvents reports no changes on. Read off the main thread, empty until
     /// then.
     var networkVolumes: Set<FilePath> = []
@@ -1580,9 +1582,11 @@ class FuzzyClient {
             // The drives that are mounted pick up from where their saved indexes stand.
             let mounted = await MainActor.run { self.externalVolumes }
             let network = Set(mounted.filter { !$0.url.isLocalVolume })
+            let readOnly = mounted.filter(\.url.volumeIsReadOnly)
             await MainActor.run {
                 if self.externalVolumes == mounted {
                     self.networkVolumes = network
+                    self.readOnlyVolumes = readOnly
                 }
                 self.syncVolumeFollowing()
             }
