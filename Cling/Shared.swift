@@ -54,6 +54,29 @@ func guardEmptyTableAreaRightClicks() {
 
 @MainActor private var emptyTableAreaMonitor: Any?
 
+/// macOS 27's SwiftUI tables crash on a drag that starts in the header past the last column: AppKit asks whether
+/// column -1 may move, and SwiftUI's table looks that column up without checking (CLING-AX). There is no column there
+/// to move, so the answer is no without asking SwiftUI; every drag of a real column still reaches it unchanged.
+@MainActor
+func guardTableColumnReordering() {
+    let selector = NSSelectorFromString("outlineView:shouldReorderColumn:toColumn:")
+    guard #available(macOS 27, *), !tableColumnReorderingGuarded,
+          let coordinator = NSClassFromString("_TtC7SwiftUI29AppKitOutlineTableCoordinator"),
+          let method = class_getInstanceMethod(coordinator, selector)
+    else { return }
+    tableColumnReorderingGuarded = true
+
+    typealias ShouldReorder = @convention(c) (AnyObject, Selector, NSOutlineView, Int, Int) -> Bool
+    let original = unsafeBitCast(method_getImplementation(method), to: ShouldReorder.self)
+    let guarded: @convention(block) (AnyObject, NSOutlineView, Int, Int) -> Bool = { coordinator, outlineView, column, target in
+        guard (0 ..< outlineView.numberOfColumns).contains(column) else { return false }
+        return original(coordinator, selector, outlineView, column, target)
+    }
+    method_setImplementation(method, imp_implementationWithBlock(guarded))
+}
+
+@MainActor private var tableColumnReorderingGuarded = false
+
 private func findTableView(in view: NSView?) -> NSTableView? {
     guard let view else { return nil }
     if let table = view as? NSTableView {

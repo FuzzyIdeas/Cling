@@ -119,6 +119,7 @@ class AppDelegate: LowtechProAppDelegate {
         AppDelegate.shared = self
         swizzleDraggableToRealPath()
         guardEmptyTableAreaRightClicks()
+        guardTableColumnReordering()
         NSApp.disableRelaunchOnLogin()
         if !SWIFTUI_PREVIEW,
            let app = NSWorkspace.shared.runningApplications.first(where: {
