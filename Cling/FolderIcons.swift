@@ -5,8 +5,8 @@ import System
 // MARK: - FolderIcons
 
 /// Folders that look different from a plain folder in Finder: a custom icon, symbol or emoji, a cloud service's
-/// root, a system folder like Downloads, a drive or an app. A result's folder line starts at the deepest of them,
-/// behind its icon. Each folder is looked up once, off the main thread, and kept for the session, since its icon
+/// root, a system folder like Downloads, a drive or an app. A result's folder line shows the icon of the deepest
+/// of them before the path. Each folder is looked up once, off the main thread, and kept for the session, since its icon
 /// almost never changes.
 ///
 /// Telling one apart costs no drawing: a custom icon and a symbol or emoji both set the Finder flag that marks a
@@ -15,6 +15,13 @@ import System
 @MainActor
 final class FolderIcons {
     struct Mark {
+        init(folder: String, icon: NSImage, glyph: Bool) {
+            self.folder = folder
+            self.icon = icon
+            self.glyph = glyph
+            prefix = folder + "/"
+        }
+
         /// The folder's full path.
         let folder: String
         let icon: NSImage
@@ -22,13 +29,15 @@ final class FolderIcons {
         /// rendered once, so a symbol follows light and dark mode.
         let glyph: Bool
 
-        /// `dir` from this folder on, the folder's name first: `Dropbox/Studio` for `~/Dropbox/Studio`.
-        func path(from dir: FilePath) -> String? {
-            let folderShown = folder.shellString
-            let shown = dir.shellString
-            guard shown == folderShown || shown.hasPrefix(folderShown + "/") else { return nil }
-            return (folderShown as NSString).lastPathComponent + shown.dropFirst(folderShown.count)
+        /// `shown`, the `~` form of `dir`, as it reads after the icon: whole, without the `~/`, which the icon makes
+        /// redundant (`Pictures/Shoot/2026`). Takes the `~` form from the caller, which has it already, as making it
+        /// costs a regex.
+        func shownPath(of dir: FilePath, shown: String) -> String? {
+            guard dir.string == folder || dir.string.hasPrefix(prefix) else { return nil }
+            return shown.hasPrefix("~/") ? String(shown.dropFirst(2)) : shown
         }
+
+        private let prefix: String
     }
 
     static let shared = FolderIcons()
@@ -101,6 +110,10 @@ final class FolderIcons {
                     let mark = found.flatMap { found in
                         (found.icon ?? cloud[found.folder]).map { Mark(folder: found.folder, icon: $0, glyph: found.glyph) }
                     }
+                    // A folder is a few dozen bytes here; the cap only matters after hours of scrolling through new ones.
+                    if self.marks.count > 20000 {
+                        self.marks.removeAll(keepingCapacity: true)
+                    }
                     self.marks[key] = .some(mark)
                     for waiter in self.waiters.removeValue(forKey: key) ?? [] {
                         waiter.resume(returning: mark)
@@ -166,6 +179,9 @@ private final class Probe: @unchecked Sendable {
         var icon: (image: NSImage, glyph: Bool)?
         if marked(folder, network: network) {
             icon = pickedGlyph(folder).map { ($0, true) } ?? (NSWorkspace.shared.icon(forFile: folder), false)
+        }
+        if known.count > 50000 {
+            known.removeAll(keepingCapacity: true)
         }
         known[folder] = .some(icon)
         return icon

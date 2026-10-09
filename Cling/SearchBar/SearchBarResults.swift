@@ -761,13 +761,14 @@ final class SearchBarRowContent: NSView {
         return found.raster ?? found.mark.icon
     }
 
-    /// The folder line. Under a folder with an icon of its own, it starts at that folder, behind its icon:
-    /// `Dropbox/Studio` after Dropbox's icon rather than `~/Dropbox/Studio`.
+    /// The folder line, after the icon of its deepest folder with one of its own when there is one (see
+    /// `FolderIcons.Mark.shownPath(of:)` for the text).
     private func drawFolder(_ dir: FilePath, in rect: NSRect, style: SearchBarRowStyle, text: SearchBarTextCache) {
+        let dirShown = dir.shellString
         let found = folderIcon(for: dir, style: style)
         drawnFolderIcon = drawnIdentity(found)
-        guard let found, let shown = found.mark.path(from: dir) else {
-            text.draw(dir.shellString, style: .detail, in: rect, color: .secondaryLabelColor)
+        guard let found, let shown = found.mark.shownPath(of: dir, shown: dirShown) else {
+            text.draw(dirShown, style: .detail, in: rect, color: .secondaryLabelColor)
             return
         }
         let side = style.folderIconSide
