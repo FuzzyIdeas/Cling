@@ -79,6 +79,8 @@ final class SearchBarRowStyle {
     /// Called once a burst of background renders has landed, so the visible rows redraw once.
     var onRastersReady: (() -> Void)?
 
+    private(set) var folderIconSide: CGFloat = 14
+
     /// Results can come from more than one drive, so a row from an external one names it where the kind goes.
     var showsDrives = false {
         didSet {
@@ -90,6 +92,15 @@ final class SearchBarRowStyle {
 
     var textX: CGFloat {
         Self.iconX + iconSide + 10
+    }
+
+    /// A folder's icon for the path line, rendered off the main thread like a file's. Nil until it's ready.
+    func folderIconImage(_ icon: NSImage, side: CGFloat, scale: CGFloat) -> CGImage? {
+        if let ready = cachedRaster(icon, side: side, scale: scale) {
+            return ready
+        }
+        requestRaster(icon, side: side, scale: scale)
+        return nil
     }
 
     func rebuildIfNeeded() {
@@ -223,6 +234,7 @@ final class SearchBarRowStyle {
         iconSide = FontScale.length(32)
         // Fits "999 MB · 30 Sep 2026 at 23:59" untruncated.
         metaWidth = FontScale.length(168)
+        folderIconSide = FontScale.length(14)
 
         let nameFont = NSFont.systemFont(ofSize: FontScale.size(13), weight: .medium)
         let detailFont = NSFont.systemFont(ofSize: FontScale.size(11))
@@ -689,10 +701,9 @@ final class SearchBarRowContent: NSView {
         let top = (bounds.height - block) / 2
 
         text.draw(path.name.string, style: .name, in: NSRect(x: textX, y: top, width: textWidth, height: style.nameLineHeight), color: .labelColor)
-        text.draw(
-            path.dir.shellString, style: .detail,
-            in: NSRect(x: textX, y: top + style.nameLineHeight + gap, width: textWidth, height: style.detailLineHeight),
-            color: .secondaryLabelColor
+        drawFolder(
+            path.dir, in: NSRect(x: textX, y: top + style.nameLineHeight + gap, width: textWidth, height: style.detailLineHeight),
+            style: style, text: text
         )
 
         guard showMeta else {
@@ -718,13 +729,63 @@ final class SearchBarRowContent: NSView {
     /// Redraws only when the size and date line or the row style changed since the last draw.
     func refreshIfStale() {
         guard let path else { return }
-        if SearchBarRowStyle.shared.generation != drawnGeneration || (drawnMeta != nil && metaLine(path) != drawnMeta) {
+        let style = SearchBarRowStyle.shared
+        if style.generation != drawnGeneration || (drawnMeta != nil && metaLine(path) != drawnMeta) {
+            needsDisplay = true
+        } else if drawnIdentity(folderIcon(for: path.dir, style: style)) !== drawnFolderIcon {
             needsDisplay = true
         }
     }
 
     private var drawnMeta: String?
     private var drawnGeneration = -1
+    private var drawnFolderIcon: AnyObject?
+
+    private var backingScale: CGFloat {
+        window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    }
+
+    /// The deepest folder in `dir` with an icon of its own, once it's known and its icon is ready to draw: a rendered
+    /// copy, or a picked symbol or emoji, which is drawn as it is.
+    private func folderIcon(for dir: FilePath, style: SearchBarRowStyle) -> (mark: FolderIcons.Mark, raster: CGImage?)? {
+        guard let mark = FolderIcons.shared.mark(in: dir) else { return nil }
+        if mark.glyph {
+            return (mark, nil)
+        }
+        guard let image = style.folderIconImage(mark.icon, side: style.folderIconSide, scale: backingScale) else { return nil }
+        return (mark, image)
+    }
+
+    private func drawnIdentity(_ found: (mark: FolderIcons.Mark, raster: CGImage?)?) -> AnyObject? {
+        guard let found else { return nil }
+        return found.raster ?? found.mark.icon
+    }
+
+    /// The folder line. Under a folder with an icon of its own, it starts at that folder, behind its icon:
+    /// `Dropbox/Studio` after Dropbox's icon rather than `~/Dropbox/Studio`.
+    private func drawFolder(_ dir: FilePath, in rect: NSRect, style: SearchBarRowStyle, text: SearchBarTextCache) {
+        let found = folderIcon(for: dir, style: style)
+        drawnFolderIcon = drawnIdentity(found)
+        guard let found, let shown = found.mark.path(from: dir) else {
+            text.draw(dir.shellString, style: .detail, in: rect, color: .secondaryLabelColor)
+            return
+        }
+        let side = style.folderIconSide
+        let iconRect = NSRect(x: rect.minX, y: rect.midY - side / 2, width: side, height: side)
+        if let raster = found.raster, let context = NSGraphicsContext.current?.cgContext {
+            // A CGImage draws upside down in this flipped view unless turned over.
+            context.saveGState()
+            context.translateBy(x: iconRect.minX, y: iconRect.maxY)
+            context.scaleBy(x: 1, y: -1)
+            context.interpolationQuality = .high
+            context.draw(raster, in: CGRect(origin: .zero, size: iconRect.size))
+            context.restoreGState()
+        } else {
+            found.mark.icon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+        let textX = rect.minX + side + FontScale.length(3)
+        text.draw(shown, style: .detail, in: NSRect(x: textX, y: rect.minY, width: max(rect.maxX - textX, 0), height: rect.height), color: .secondaryLabelColor)
+    }
 
     /// The drive's name and icon in a capsule, so which drive a file is on reads at a glance down the list. An unplugged
     /// drive's is dimmed, with the crossed-out drive icon.
@@ -819,6 +880,9 @@ final class SearchBarResultsController: NSObject, NSTableViewDataSource, NSTable
         }
 
         SearchBarRowStyle.shared.onRastersReady = { [weak self] in
+            self?.refreshVisibleRows()
+        }
+        FolderIcons.shared.onMarksReady = { [weak self] in
             self?.refreshVisibleRows()
         }
     }

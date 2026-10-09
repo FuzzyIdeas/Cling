@@ -510,11 +510,7 @@ struct FilePreviewPanel: View {
                     .font(.scaled(12, .secondary, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(path.dir.shellString)
-                    .font(.scaled(10, .secondary))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                PreviewFolderLine(dir: path.dir)
             }
             Spacer(minLength: 0)
             if paths.count > 1 {
@@ -597,6 +593,44 @@ struct FilePreviewPanel: View {
             NSEvent.removeMonitor(arrowMonitor)
         }
         arrowMonitor = nil
+    }
+}
+
+// MARK: - PreviewFolderLine
+
+/// The file's folder under its name. Like a result row's, it starts at the deepest folder with an icon of its own,
+/// behind that icon.
+private struct PreviewFolderLine: View {
+    let dir: FilePath
+
+    var body: some View {
+        // The lookup's answer for this folder, or the cached one while a newer folder's is on its way.
+        let mark = loaded?.dir == dir ? loaded?.mark : FolderIcons.shared.mark(in: dir)
+        HStack(spacing: FontScale.length(3, .secondary)) {
+            if let mark, let shown = mark.path(from: dir) {
+                Image(nsImage: mark.icon)
+                    .resizable()
+                    .frame(width: FontScale.length(12, .secondary), height: FontScale.length(12, .secondary))
+                    .accessibilityHidden(true)
+                line(shown)
+            } else {
+                line(dir.shellString)
+            }
+        }
+        .help(dir.shellString)
+        .task(id: dir) {
+            loaded = await (dir, FolderIcons.shared.markWhenKnown(in: dir))
+        }
+    }
+
+    @State private var loaded: (dir: FilePath, mark: FolderIcons.Mark?)?
+
+    private func line(_ text: String) -> some View {
+        Text(text)
+            .font(.scaled(10, .secondary))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
     }
 }
 

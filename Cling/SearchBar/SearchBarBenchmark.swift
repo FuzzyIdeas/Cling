@@ -653,6 +653,17 @@
             scrollView.reflectScrolledClipView(clip)
         }
 
+        /// `-searchBarShowcaseFolder <path>[|<path>…]` searches only those folders, as a folder filter named after the
+        /// one folder or by `-searchBarShowcaseFolderName <name>`.
+        private static func showcaseFolderFilter() -> FolderFilter? {
+            guard let value = argument("-searchBarShowcaseFolder") else { return nil }
+            let paths = value.split(separator: "|").map { (String($0) as NSString).expandingTildeInPath }
+            guard let first = paths.first else { return nil }
+            let name = argument("-searchBarShowcaseFolderName")
+                ?? (first == NSHomeDirectory() ? "Home" : (first as NSString).lastPathComponent)
+            return FolderFilter(id: name, folders: paths.map { FilePath($0) }, key: nil)
+        }
+
         private static func showcase(_ query: String) async {
             if CommandLine.arguments.contains("-searchBarShowcaseDark") {
                 NSApp.appearance = NSAppearance(named: .darkAqua)
@@ -691,9 +702,8 @@
                     NSApp.activate(ignoringOtherApps: true)
                 }
                 WM.open("main")
-                if let folder = argument("-searchBarShowcaseFolder") {
-                    let path = (folder as NSString).expandingTildeInPath
-                    FUZZY.folderFilter = FolderFilter(id: (path as NSString).lastPathComponent, folders: [FilePath(path)], key: nil)
+                if let filter = showcaseFolderFilter() {
+                    FUZZY.folderFilter = filter
                 }
                 // Searched before the index loads, the window keeps whatever the first engines found.
                 let readyBy = Date().addingTimeInterval(120)
@@ -760,10 +770,8 @@
             if let id = argument("-searchBarShowcaseFilter") {
                 FUZZY.quickFilter = Defaults[.quickFilters].first { $0.id.lowercased() == id.lowercased() }
             }
-            if let folder = argument("-searchBarShowcaseFolder") {
-                let path = (folder as NSString).expandingTildeInPath
-                let name = path == NSHomeDirectory() ? "Home" : (path as NSString).lastPathComponent
-                FUZZY.folderFilter = FolderFilter(id: name, folders: [FilePath(path)], key: nil)
+            if let filter = showcaseFolderFilter() {
+                FUZZY.folderFilter = filter
             }
             // `-` leaves the bar closed, for the pinned field.
             guard query != "-" else { return }
